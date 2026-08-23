@@ -1501,14 +1501,14 @@
       "id": "task_copy"
     }
   ],
-  "1": [
+  "刷主线/活动关卡": [
     {
       "type": "advanced",
       "mode": "custom",
-      "template": "captured_5399f01b2b",
+      "template": "captured_b702c0520d",
       "templates": [
-        "captured_5399f01b2b",
-        "captured_dae018ecca"
+        "captured_b702c0520d",
+        "captured_9741008fa9"
       ],
       "timeout": 5.0,
       "click": true,
@@ -1516,7 +1516,7 @@
         0,
         0
       ],
-      "after_wait": 0.25,
+      "after_wait": 0.5,
       "wait_for": "time",
       "wait_timeout": 2.5,
       "required": true,
@@ -1529,41 +1529,29 @@
       "optional": false,
       "detour_steps": [],
       "detour_enabled": true,
-      "detour_jump_to": 10,
+      "detour_jump_to": 12,
+      "detour_success_jump_to": null,
+      "group_color": "#eaf1ff",
       "match_rects": [
         [
-          14,
-          477,
-          1919,
-          498
-        ],
-        [
-          13,
-          656,
-          1919,
-          680
-        ],
-        [
-          18,
-          299,
-          1919,
-          319
+          27,
+          660,
+          1901,
+          687
         ]
       ],
       "match_rect": [
-        14,
-        477,
-        1919,
-        498
+        27,
+        660,
+        1901,
+        687
       ],
       "search_rect": [
-        14,
-        477,
-        1919,
-        498
-      ],
-      "detour_success_jump_to": null,
-      "group_color": "#eaf1ff"
+        27,
+        660,
+        1901,
+        687
+      ]
     },
     {
       "type": "normal",
@@ -1608,9 +1596,9 @@
         {
           "type": "drag",
           "description": "向左拖曳画面",
-          "start_x": 500.0,
+          "start_x": 100.0,
           "start_y": 100.0,
-          "end_x": 200.0,
+          "end_x": 600.0,
           "end_y": 100.0,
           "duration": 0.25,
           "click": false,
@@ -1624,47 +1612,206 @@
       "group_color": "#eaf1ff"
     },
     {
-      "type": "click_until_gone",
+      "type": "normal",
       "mode": "custom",
-      "template": "captured_260ae0fbbe",
-      "description": "跳过",
+      "template": "captured_0d49e1856c",
+      "timeout": 5.0,
       "click": true,
-      "click_interval": 0.5,
-      "stop_delay": 1.0,
-      "timeout": 20.0,
-      "continue_after_timeout": true,
-      "stop_on_change": false,
+      "offset": [
+        0,
+        0
+      ],
+      "after_wait": 0.25,
+      "wait_for": "time",
+      "wait_timeout": 2.5,
       "required": true,
+      "description": "补充体力",
       "group_id": "group_default",
       "group_name": "刷主线/活动关卡",
       "enabled": false,
+      "click_x": 951,
+      "click_y": 448,
+      "click_position": [
+        951,
+        448
+      ],
+      "next_template": "None",
+      "click_requires_match": true,
+      "optional": false,
+      "next_match_rect": [
+        990,
+        745,
+        1052,
+        789
+      ],
+      "next_search_rect": [
+        990,
+        745,
+        1052,
+        789
+      ],
+      "match_rects": [
+        [
+          899,
+          391,
+          1025,
+          478
+        ]
+      ],
       "match_rect": [
-        778,
-        947,
-        1142,
-        1018
+        899,
+        391,
+        1025,
+        478
       ],
       "search_rect": [
-        778,
-        947,
-        1142,
-        1018
+        899,
+        391,
+        1025,
+        478
       ],
-      "click_x": 1828,
-      "click_y": 41,
-      "click_position": [
-        1828,
-        41
-      ],
-      "templates": [
-        "captured_260ae0fbbe"
-      ],
-      "group_color": "#eaf1ff"
+      "detour_steps": [],
+      "detour_enabled": true,
+      "detour_jump_to": 6,
+      "detour_success_jump_to": null
     },
     {
       "type": "normal",
       "mode": "custom",
-      "template": "captured_baef8b3b2c",
+      "template": "captured_4f28c94eb7",
+      "timeout": 5.0,
+      "click": true,
+      "offset": [
+        0,
+        0
+      ],
+      "after_wait": 0.25,
+      "wait_for": "time",
+      "wait_timeout": 2.5,
+      "required": true,
+      "description": "确认",
+      "group_id": "group_default",
+      "group_name": "刷主线/活动关卡",
+      "enabled": false,
+      "click_x": 1170,
+      "click_y": 773,
+      "click_position": [
+        1170,
+        773
+      ],
+      "match_rects": [
+        [
+          997,
+          735,
+          1066,
+          792
+        ]
+      ],
+      "match_rect": [
+        997,
+        735,
+        1066,
+        792
+      ],
+      "search_rect": [
+        997,
+        735,
+        1066,
+        792
+      ],
+      "next_template": "None",
+      "click_requires_match": true,
+      "optional": false,
+      "detour_steps": [],
+      "detour_enabled": false,
+      "detour_jump_to": null,
+      "detour_success_jump_to": null
+    },
+    {
+      "type": "click_until_gone",
+      "mode": "custom",
+      "template": "",
+      "description": "额外点击",
+      "click": true,
+      "click_interval": 0.5,
+      "stop_delay": 0.0,
+      "timeout": 5.0,
+      "continue_after_timeout": false,
+      "stop_on_change": true,
+      "required": true,
+      "group_id": "group_default",
+      "group_name": "刷主线/活动关卡",
+      "enabled": false,
+      "click_x": 1655,
+      "click_y": 1007,
+      "click_position": [
+        1655,
+        1007
+      ],
+      "templates": []
+    },
+    {
+      "type": "click_until_gone",
+      "mode": "custom",
+      "template": "captured_311b0b7711",
+      "description": "跳过剧情",
+      "click": true,
+      "click_interval": 0.5,
+      "stop_delay": 1.5,
+      "timeout": 10.0,
+      "continue_after_timeout": false,
+      "stop_on_change": false,
+      "required": true,
+      "group_id": "group_default",
+      "group_name": "刷主线/活动关卡",
+      "enabled": true,
+      "match_rects": [
+        [
+          1848,
+          29,
+          1884,
+          66
+        ],
+        [
+          774,
+          945,
+          1145,
+          1023
+        ],
+        [
+          1847,
+          28,
+          1887,
+          67
+        ]
+      ],
+      "match_rect": [
+        1848,
+        29,
+        1884,
+        66
+      ],
+      "search_rect": [
+        1848,
+        29,
+        1884,
+        66
+      ],
+      "templates": [
+        "captured_311b0b7711",
+        "captured_baef8b3b2c"
+      ],
+      "click_x": 1822,
+      "click_y": 58,
+      "click_position": [
+        1822,
+        58
+      ]
+    },
+    {
+      "type": "normal",
+      "mode": "custom",
+      "template": "captured_260ae0fbbe",
       "timeout": 5.0,
       "click": true,
       "offset": [
@@ -1679,35 +1826,44 @@
       "group_id": "group_default",
       "group_name": "刷主线/活动关卡",
       "enabled": false,
-      "click_x": 963,
-      "click_y": 964,
+      "click_x": 938,
+      "click_y": 984,
       "click_position": [
-        963,
-        964
+        938,
+        984
       ],
       "next_template": "captured_04afcd5d4c",
       "click_requires_match": true,
       "use_color_matching": true,
       "optional": false,
-      "match_rect": [
-        775,
-        946,
-        1142,
-        1024
-      ],
-      "search_rect": [
-        775,
-        946,
-        1142,
-        1024
-      ],
       "next_templates": [
         "captured_04afcd5d4c"
       ],
       "detour_steps": [],
-      "detour_enabled": false,
-      "detour_jump_to": 7,
-      "group_color": "#eaf1ff"
+      "detour_enabled": true,
+      "detour_jump_to": 12,
+      "group_color": "#eaf1ff",
+      "detour_success_jump_to": null,
+      "match_rects": [
+        [
+          676,
+          953,
+          739,
+          1016
+        ]
+      ],
+      "match_rect": [
+        676,
+        953,
+        739,
+        1016
+      ],
+      "search_rect": [
+        676,
+        953,
+        739,
+        1016
+      ]
     },
     {
       "type": "click_until_gone",
@@ -1715,9 +1871,9 @@
       "template": "captured_88a9228dc8",
       "description": "持续点击 (副本)",
       "click": true,
-      "click_interval": 0.5,
+      "click_interval": 1.0,
       "stop_delay": 1.0,
-      "timeout": 60.0,
+      "timeout": 80.0,
       "continue_after_timeout": true,
       "stop_on_change": false,
       "required": true,
@@ -1774,32 +1930,28 @@
       "group_id": "group_default",
       "group_name": "刷主线/活动关卡",
       "enabled": false,
-      "click_x": 1587,
+      "click_x": 1588,
       "click_y": 976,
       "click_position": [
-        1587,
+        1588,
         976
       ],
       "next_template": "None",
       "click_requires_match": true,
       "optional": false,
-      "match_rect": [
-        1447,
-        955,
-        1738,
-        1015
-      ],
-      "search_rect": [
-        1447,
-        955,
-        1738,
-        1015
-      ],
       "detour_steps": [],
-      "detour_enabled": false,
-      "detour_jump_to": 8,
-      "detour_success_jump_to": 9,
-      "group_color": "#eaf1ff"
+      "detour_enabled": true,
+      "detour_jump_to": 10,
+      "detour_success_jump_to": 6,
+      "group_color": "#eaf1ff",
+      "match_rects": [
+        [
+          1478,
+          944,
+          1730,
+          1023
+        ]
+      ]
     },
     {
       "type": "normal",
@@ -1898,9 +2050,17 @@
       ],
       "detour_steps": [],
       "detour_enabled": true,
-      "detour_jump_to": null,
-      "detour_success_jump_to": 6,
-      "group_color": "#eaf1ff"
+      "detour_jump_to": 6,
+      "detour_success_jump_to": 8,
+      "group_color": "#eaf1ff",
+      "match_rects": [
+        [
+          775,
+          946,
+          1142,
+          1024
+        ]
+      ]
     },
     {
       "type": "drag",
@@ -2040,7 +2200,7 @@
         "group_default": []
       }
     },
-    "1": {
+    "刷主线/活动关卡": {
       "names": {
         "group_default": "刷主线/活动关卡"
       },

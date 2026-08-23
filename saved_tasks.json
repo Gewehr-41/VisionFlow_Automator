@@ -3,7 +3,7 @@
     "type": "normal",
     "mode": "custom",
     "template": "16",
-    "timeout": 5.0,
+    "timeout": 10.0,
     "click": true,
     "offset": [
       0,
@@ -53,6 +53,14 @@
       283,
       995,
       369
+    ],
+    "match_rects": [
+      [
+        1728,
+        444,
+        1846,
+        501
+      ]
     ]
   },
   {
@@ -230,7 +238,7 @@
   {
     "type": "normal",
     "mode": "custom",
-    "template": "captured_52caa0b55d",
+    "template": "captured_bbe96fb24c",
     "timeout": 5.0,
     "click": true,
     "offset": [
@@ -238,34 +246,45 @@
       0
     ],
     "after_wait": 0.25,
-    "wait_for": "time",
+    "wait_for": "next_appear",
     "wait_timeout": 2.5,
     "required": true,
     "description": "跳过对话",
     "group_id": "group_37b807c3",
     "group_name": "每日任务",
-    "enabled": false,
-    "click_x": 1823,
+    "enabled": true,
+    "click_x": 1827,
     "click_y": 44,
     "click_position": [
-      1823,
+      1827,
       44
     ],
-    "next_template": "None",
+    "next_template": "captured_258080a08f",
     "click_requires_match": true,
     "optional": false,
     "group_color": "#ffffff",
+    "match_rects": [
+      [
+        46,
+        29,
+        95,
+        62
+      ]
+    ],
     "match_rect": [
-      1261,
-      154,
-      1440,
-      282
+      46,
+      29,
+      95,
+      62
     ],
     "search_rect": [
-      1261,
-      154,
-      1440,
-      282
+      46,
+      29,
+      95,
+      62
+    ],
+    "next_templates": [
+      "captured_258080a08f"
     ]
   },
   {
@@ -285,7 +304,7 @@
     "description": "确认",
     "group_id": "group_37b807c3",
     "group_name": "每日任务",
-    "enabled": false,
+    "enabled": true,
     "click_x": 1313,
     "click_y": 733,
     "click_position": [
@@ -339,7 +358,7 @@
     ],
     "group_id": "group_37b807c3",
     "group_name": "每日任务",
-    "enabled": false,
+    "enabled": true,
     "group_color": "#ffffff",
     "delay_before": 0.0
   },
@@ -358,7 +377,7 @@
     "description": "进入厨房2",
     "group_id": "group_37b807c3",
     "group_name": "每日任务",
-    "enabled": false,
+    "enabled": true,
     "group_color": "#ffffff"
   },
   {
@@ -378,7 +397,7 @@
     "description": "选择菜品",
     "group_id": "group_37b807c3",
     "group_name": "每日任务",
-    "enabled": false,
+    "enabled": true,
     "match_rect": [
       1261,
       939,
@@ -419,7 +438,7 @@
     "description": "确认邀请",
     "group_id": "group_37b807c3",
     "group_name": "每日任务",
-    "enabled": false,
+    "enabled": true,
     "click_x": 1296,
     "click_y": 970,
     "click_position": [
@@ -455,7 +474,7 @@
     "required": true,
     "group_id": "group_37b807c3",
     "group_name": "每日任务",
-    "enabled": false,
+    "enabled": true,
     "click_x": 1820,
     "click_y": 46,
     "click_position": [
@@ -479,7 +498,7 @@
     "required": true,
     "group_id": "group_37b807c3",
     "group_name": "每日任务",
-    "enabled": false,
+    "enabled": true,
     "click_x": 611,
     "click_y": 749,
     "click_position": [
@@ -518,7 +537,7 @@
     "description": "开始循环",
     "group_id": "group_37b807c3",
     "group_name": "每日任务",
-    "enabled": false,
+    "enabled": true,
     "click_x": 285,
     "click_y": 1003,
     "click_position": [
@@ -574,7 +593,7 @@
     "description": "确认领取",
     "group_id": "group_37b807c3",
     "group_name": "每日任务",
-    "enabled": false,
+    "enabled": true,
     "click_x": 960,
     "click_y": 987,
     "click_position": [
@@ -615,7 +634,7 @@
     "description": "返回",
     "group_id": "group_37b807c3",
     "group_name": "每日任务",
-    "enabled": false,
+    "enabled": true,
     "click_x": 151,
     "click_y": 50,
     "click_position": [
@@ -654,7 +673,7 @@
     "description": "返回主界面",
     "group_id": "group_37b807c3",
     "group_name": "每日任务",
-    "enabled": false,
+    "enabled": true,
     "group_color": "#ffffff"
   },
   {
@@ -674,7 +693,7 @@
     "description": "返回主界面2",
     "group_id": "group_37b807c3",
     "group_name": "每日任务",
-    "enabled": false,
+    "enabled": true,
     "click_x": 1164,
     "click_y": 757,
     "click_position": [
@@ -715,7 +734,7 @@
     "description": "进入商店",
     "group_id": "group_896c3838",
     "group_name": "领取每日礼包",
-    "enabled": false,
+    "enabled": true,
     "click_x": 1795,
     "click_y": 668,
     "click_position": [
@@ -771,7 +790,7 @@
     "description": "选择品质",
     "group_id": "group_896c3838",
     "group_name": "领取每日礼包",
-    "enabled": false,
+    "enabled": true,
     "click_x": 139,
     "click_y": 388,
     "click_position": [
@@ -827,7 +846,7 @@
     "description": "选择周期礼包",
     "group_id": "group_896c3838",
     "group_name": "领取每日礼包",
-    "enabled": false,
+    "enabled": true,
     "click_x": 989,
     "click_y": 140,
     "click_position": [
@@ -883,7 +902,7 @@
     "description": "点击礼包",
     "group_id": "group_896c3838",
     "group_name": "领取每日礼包",
-    "enabled": false,
+    "enabled": true,
     "click_x": 463,
     "click_y": 452,
     "click_position": [
@@ -939,7 +958,7 @@
     "description": "点击购买",
     "group_id": "group_896c3838",
     "group_name": "领取每日礼包",
-    "enabled": false,
+    "enabled": true,
     "click_x": 1192,
     "click_y": 834,
     "click_position": [
@@ -977,7 +996,7 @@
     "required": true,
     "group_id": "group_896c3838",
     "group_name": "领取每日礼包",
-    "enabled": false,
+    "enabled": true,
     "click_x": 145,
     "click_y": 50,
     "click_position": [
@@ -1015,7 +1034,7 @@
     "description": "进入班组",
     "group_id": "group_c9dda062",
     "group_name": "领取班组奖励",
-    "enabled": false,
+    "enabled": true,
     "click_x": 1493,
     "click_y": 971,
     "click_position": [
@@ -1056,7 +1075,7 @@
     "description": "补给",
     "group_id": "group_c9dda062",
     "group_name": "领取班组奖励",
-    "enabled": false,
+    "enabled": true,
     "click_x": 1317,
     "click_y": 988,
     "click_position": [
@@ -1112,7 +1131,7 @@
     "description": "领取",
     "group_id": "group_c9dda062",
     "group_name": "领取班组奖励",
-    "enabled": false,
+    "enabled": true,
     "click_x": 1676,
     "click_y": 981,
     "click_position": [
@@ -1153,7 +1172,7 @@
     "required": true,
     "group_id": "group_c9dda062",
     "group_name": "领取班组奖励",
-    "enabled": false,
+    "enabled": true,
     "click_x": 147,
     "click_y": 51,
     "click_position": [
@@ -1191,7 +1210,7 @@
     "description": "进入巡录",
     "group_id": "group_8f247b3d",
     "group_name": "领取巡录",
-    "enabled": false,
+    "enabled": true,
     "click_x": 1062,
     "click_y": 972,
     "click_position": [
@@ -1247,7 +1266,7 @@
     "description": "沿途行动",
     "group_id": "group_8f247b3d",
     "group_name": "领取巡录",
-    "enabled": false,
+    "enabled": true,
     "click_x": 1080,
     "click_y": 47,
     "click_position": [
@@ -1288,7 +1307,7 @@
     "description": "领取",
     "group_id": "group_8f247b3d",
     "group_name": "领取巡录",
-    "enabled": false,
+    "enabled": true,
     "click_x": 1669,
     "click_y": 1018,
     "click_position": [
@@ -1332,7 +1351,7 @@
     "description": "回到远航",
     "group_id": "group_8f247b3d",
     "group_name": "领取巡录",
-    "enabled": false,
+    "enabled": true,
     "click_x": 852,
     "click_y": 40,
     "click_position": [
@@ -1361,7 +1380,7 @@
     "description": "领取",
     "group_id": "group_8f247b3d",
     "group_name": "领取巡录",
-    "enabled": false,
+    "enabled": true,
     "click_x": 1681,
     "click_y": 989,
     "click_position": [
@@ -1405,7 +1424,7 @@
     "description": "确认领取",
     "group_id": "group_8f247b3d",
     "group_name": "领取巡录",
-    "enabled": false,
+    "enabled": true,
     "click_x": 1169,
     "click_y": 791,
     "click_position": [
@@ -1443,7 +1462,7 @@
     "required": true,
     "group_id": "group_8f247b3d",
     "group_name": "领取巡录",
-    "enabled": false,
+    "enabled": true,
     "group_color": "#eaf1ff",
     "click_x": 143,
     "click_y": 47,

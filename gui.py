@@ -84,6 +84,7 @@ class AutoScriptGUI:
         self.mode_combo.pack(side="left", padx=(8, 12))
         self.mode_combo.bind("<<ComboboxSelected>>", self.on_mode_selected)
         ttk.Button(topbar, text="新建预设", command=self.create_preset).pack(side="left", padx=(0, 8))
+        ttk.Button(topbar, text="重命名预设", command=self.rename_current_preset).pack(side="left", padx=(0, 8))
         ttk.Button(topbar, text="复制到预设", command=self.copy_current_preset).pack(side="left", padx=(0, 8))
         ttk.Button(topbar, text="删除预设", command=self.delete_current_preset).pack(side="left", padx=(0, 8))
         self.refresh_mode_values()
@@ -367,6 +368,52 @@ class AutoScriptGUI:
             self.on_mode_selected()
 
         ttk.Button(win, text="创建", command=confirm).pack(pady=12)
+
+    def rename_current_preset(self):
+        old_name = self.current_mode
+        if old_name == "custom":
+            messagebox.showwarning("无法重命名", "custom 是自定义任务，不能重命名。")
+            return
+
+        new_name_var = tk.StringVar(value=old_name)
+        win = tk.Toplevel(self.root)
+        win.title("重命名预设")
+        win.geometry("320x140")
+        win.transient(self.root)
+        win.grab_set()
+        ttk.Label(win, text=f"预设名称（当前：{old_name}）:").pack(anchor="w", padx=12, pady=(12, 6))
+        entry = ttk.Entry(win, textvariable=new_name_var, width=30)
+        entry.pack(padx=12, fill="x")
+        entry.focus_set()
+        entry.select_range(0, tk.END)
+
+        def confirm():
+            new_name = new_name_var.get().strip()
+            if not new_name or new_name.lower() == "custom":
+                messagebox.showwarning("名称无效", "请输入非 custom 的预设名称。", parent=win)
+                return
+            if new_name != old_name and new_name in self.mode_tasks:
+                messagebox.showwarning("名称重复", "该预设已经存在。", parent=win)
+                return
+            if new_name == old_name:
+                win.destroy()
+                return
+
+            self.save_current_tasks()
+            self.mode_tasks[new_name] = self.mode_tasks.pop(old_name)
+            if old_name in self.mode_group_metadata:
+                self.mode_group_metadata[new_name] = self.mode_group_metadata.pop(old_name)
+            self.deleted_preset_names.discard(new_name)
+            self.deleted_preset_names.discard(old_name)
+            self.current_mode = new_name
+            self.mode_var.set(new_name)
+            self.save_all_presets()
+            self.refresh_mode_values()
+            self.mode_var.set(new_name)
+            win.destroy()
+            self.append_log(f"已将预设“{old_name}”重命名为“{new_name}”。")
+
+        ttk.Button(win, text="保存", command=confirm).pack(pady=12)
 
     def copy_current_preset(self):
         selected_entries = [
@@ -769,16 +816,17 @@ class AutoScriptGUI:
             action_row.pack(fill="x", pady=(8, 4))
 
             def bind_image():
-                file_path = filedialog.askopenfilename(
+                file_paths = filedialog.askopenfilenames(
                     title="选择持续点击图片",
                     initialdir=os.path.join(os.getcwd(), "icons"),
                     filetypes=[("PNG Images", "*.png"), ("All Files", "*.*")],
                 )
-                if file_path:
-                    image_name = os.path.splitext(os.path.basename(file_path))[0]
+                if file_paths:
                     current_names = [item.strip() for item in template_var.get().replace("，", ",").split(",") if item.strip()]
-                    if image_name not in current_names:
-                        current_names.append(image_name)
+                    for file_path in file_paths:
+                        image_name = os.path.splitext(os.path.basename(file_path))[0]
+                        if image_name not in current_names:
+                            current_names.append(image_name)
                     template_var.set(", ".join(current_names))
 
             ttk.Button(action_row, text="绑定图片", command=bind_image).pack(side="left", padx=(0, 8))
@@ -1800,7 +1848,8 @@ class AutoScriptGUI:
 
         ttk.Label(win, text="绑定图片操作", font=("Microsoft YaHei", 10, "bold")).pack(pady=(14, 8))
         image_list = None
-        if task.get("type") == "advanced":
+        supports_multiple_templates = task.get("type") in ("advanced", "click_until_gone")
+        if supports_multiple_templates:
             image_list = tk.Listbox(win, height=8, selectmode=tk.SINGLE, exportselection=False)
             image_list.pack(fill="both", expand=True, padx=12, pady=(0, 10))
             current = task.get("templates") or task.get("template") or []
@@ -1817,22 +1866,28 @@ class AutoScriptGUI:
                 win.destroy()
 
         def choose_image():
-            file_path = filedialog.askopenfilename(
+            file_paths = filedialog.askopenfilenames(
                 title="选择要绑定的图片",
                 initialdir=os.path.join(os.path.dirname(__file__), "icons"),
                 filetypes=[("PNG Images", "*.png"), ("All Files", "*.*")],
             )
-            if not file_path:
+            if not file_paths:
                 return
-            image_name = os.path.splitext(os.path.basename(file_path))[0]
-            if task.get("type") == "advanced":
-                existing = [image_list.get(index) for index in range(image_list.size())]
-                if image_name not in existing:
-                    image_list.insert(tk.END, image_name)
-                save_advanced_images()
+            if supports_multiple_templates:
+                existing = [str(image_list.get(index)) for index in range(image_list.size())]
+                for file_path in file_paths:
+                    image_name = os.path.splitext(os.path.basename(file_path))[0]
+                    if image_name not in existing:
+                        image_list.insert(tk.END, image_name)
+                        existing.append(image_name)
+                if task.get("type") == "advanced":
+                    save_advanced_images()
+                else:
+                    save_multiple_click_until_gone_images()
             else:
+                image_name = os.path.splitext(os.path.basename(file_paths[0]))[0]
                 self.sync_selected_task_template(image_name, None)
-                self.append_log(f"已绑定图片: {image_name} -> {file_path}")
+                self.append_log(f"已绑定图片: {image_name} -> {file_paths[0]}")
                 close_menu()
 
         def manual_capture():
@@ -1865,6 +1920,18 @@ class AutoScriptGUI:
             self.load_task_to_form(self.selected_task_index)
             self.append_log(f"已保存高级步骤图片: {', '.join(values)}")
 
+        def save_multiple_click_until_gone_images():
+            values = [image_list.get(index) for index in range(image_list.size())]
+            if not values:
+                messagebox.showwarning("无法保存", "持续点击步骤至少需要绑定一张图片。", parent=win)
+                return
+            task["templates"] = values
+            task["template"] = values[0]
+            self.save_current_tasks()
+            self.refresh_task_list()
+            self.load_task_to_form(self.selected_task_index)
+            self.append_log(f"已保存持续点击图片: {', '.join(values)}")
+
         ttk.Button(win, text="1. 选择图片", command=choose_image).pack(fill="x", padx=36, pady=4)
         ttk.Button(win, text="2. 手动框选图片", command=manual_capture).pack(fill="x", padx=36, pady=4)
         ttk.Button(win, text="3. 预览绑定图片", command=preview_images).pack(fill="x", padx=36, pady=4)
@@ -1873,12 +1940,20 @@ class AutoScriptGUI:
             def save_and_close():
                 values = [image_list.get(index) for index in range(image_list.size())]
                 if not values:
-                    messagebox.showwarning("无法保存", "高级步骤至少需要绑定一张图片。", parent=win)
+                    messagebox.showwarning(
+                        "无法保存",
+                        "至少需要绑定一张图片。",
+                        parent=win,
+                    )
                     return
-                save_advanced_images()
+                if task.get("type") == "advanced":
+                    save_advanced_images()
+                else:
+                    save_multiple_click_until_gone_images()
                 close_menu()
 
-            ttk.Button(win, text="保存图片列表并关闭", command=save_and_close).pack(pady=(0, 12))
+            button_text = "保存图片列表并关闭" if task.get("type") == "advanced" else "保存持续点击图片并关闭"
+            ttk.Button(win, text=button_text, command=save_and_close).pack(pady=(0, 12))
         else:
             ttk.Button(win, text="关闭", command=close_menu).pack(pady=(10, 12))
 
@@ -1894,7 +1969,7 @@ class AutoScriptGUI:
         screenshot.crop((left, top, right, bottom)).save(image_path)
         reload_templates()
         task = TASKS[self.selected_task_index]
-        if task.get("type") == "advanced":
+        if task.get("type") in ("advanced", "click_until_gone"):
             templates = task.get("templates") or task.get("template") or []
             if isinstance(templates, str):
                 templates = [templates]
@@ -2546,16 +2621,17 @@ class AutoScriptGUI:
             ttk.Label(win, text="绑定图片:").pack(anchor="w", padx=12, pady=(8, 0))
             ttk.Entry(win, textvariable=template_var).pack(fill="x", padx=12)
             def bind_image():
-                file_path = filedialog.askopenfilename(
+                file_paths = filedialog.askopenfilenames(
                     title="选择持续点击图片",
                     initialdir=os.path.join(os.path.dirname(__file__), "icons"),
                     filetypes=[("PNG Images", "*.png"), ("All Files", "*.*")],
                 )
-                if file_path:
-                    image_name = os.path.splitext(os.path.basename(file_path))[0]
+                if file_paths:
                     current_names = [item.strip() for item in template_var.get().replace("，", ",").split(",") if item.strip()]
-                    if image_name not in current_names:
-                        current_names.append(image_name)
+                    for file_path in file_paths:
+                        image_name = os.path.splitext(os.path.basename(file_path))[0]
+                        if image_name not in current_names:
+                            current_names.append(image_name)
                     template_var.set(", ".join(current_names))
             ttk.Button(win, text="绑定图片", command=bind_image).pack(anchor="w", padx=12, pady=(4, 0))
             ttk.Label(win, text="点击间隔(秒):").pack(anchor="w", padx=12, pady=(8, 0))

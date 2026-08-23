@@ -1,5 +1,6 @@
 import time
 import tkinter as tk
+import uuid
 from tkinter import messagebox
 
 import numpy as np
@@ -10,6 +11,7 @@ from core.screen import capture_screen, to_global_position, get_window_rect
 from core.template_match import load_templates, match_all_templates
 from core.input import click_position, click_global_position, drag_position
 from tasks import TASKS
+from nodes import NodeGraph, TaskNode
 
 
 templates = load_templates(ICON_DIR)
@@ -689,9 +691,84 @@ def execute_detour_task(task, stop_flag=None, log_callback=None):
     return True
 
 
+def execute_delay_task(task, stop_flag=None, log_callback=None):
+    """执行蓝图中的独立延迟节点。"""
+    duration = max(0.0, float(task.get("duration", task.get("after_wait", 1.0))))
+    log(f"\n>>> 延迟节点: {duration:g} 秒", log_callback)
+    return not interruptible_sleep(duration, stop_flag)
+
+
+def execute_condition_task(task, stop_flag=None, log_callback=None):
+    """执行条件节点：根据多个模板结果执行 AND、OR 或 NOT。"""
+    template_names = normalize_template_names(task.get("condition_templates") or task.get("condition_template") or task.get("template"))
+    if not template_names:
+        raise ValueError("条件节点必须配置 condition_template。")
+    screen_img = capture_screen()
+    results = match_all_templates(screen_img, templates, THRESHOLD, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP, search_rect=task.get("search_rect"))
+    matches = [results.get(name, (None, -1.0))[0] is not None for name in template_names]
+    operator = str(task.get("condition_operator", "any" if len(matches) > 1 else "all")).lower()
+    if operator == "all":
+        matched = all(matches)
+    elif operator == "not":
+        matched = not any(matches)
+    else:
+        matched = any(matches)
+    if task.get("condition_invert") and operator != "not":
+        matched = not matched
+    _, _, confidence = find_first_match(results, template_names)
+    result_label = "成立" if matched else "不成立"
+    log(f"\n>>> 条件节点: {', '.join(template_names)} -> {result_label} (置信度 {confidence:.2f})", log_callback)
+    target = task.get("condition_true_jump_to" if matched else "condition_false_jump_to")
+    if target is None:
+        return True
+    return {"next_step": int(target)}
+
+
+def execute_switch_task(task, stop_flag=None, log_callback=None):
+    """执行静态值选择节点，返回匹配 case 或默认出口。"""
+    value = str(task.get("switch_value", ""))
+    cases = task.get("switch_cases") or {}
+    target = cases.get(value, task.get("switch_default_jump_to"))
+    log(f"\n>>> Switch 节点: 值={value!r}，出口={target or '默认顺序'}", log_callback)
+    if target is None:
+        return True
+    return {"next_step": int(target)}
+
+
+def execute_event_task(task, stop_flag=None, log_callback=None):
+    """等待事件模板出现后继续蓝图流程。"""
+    template_name = str(task.get("event_template") or task.get("template") or "").strip()
+    if not template_name:
+        raise ValueError("事件节点必须配置 event_template。")
+    timeout = max(0.0, float(task.get("event_timeout", 30.0)))
+    log(f"\n>>> 事件节点: 等待 '{template_name}' 出现", log_callback)
+    center, confidence = wait_until_template_appears(
+        template_name,
+        timeout=timeout,
+        search_rect=task.get("search_rect"),
+        stop_flag=stop_flag,
+    )
+    if center is not None:
+        log(f"  事件已触发，置信度 {confidence:.2f}。", log_callback)
+        return True
+    log("  事件等待超时。", log_callback)
+    failure_target = task.get("event_timeout_target")
+    if failure_target is not None:
+        return {"next_step": int(failure_target)}
+    return False
+
+
 def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True):
     """执行一个任务：识别 -> 点击 -> 等待状态变化。"""
     task_type = task.get("type", "normal")
+    if task_type == "condition":
+        return execute_condition_task(task, stop_flag=stop_flag, log_callback=log_callback)
+    if task_type == "switch":
+        return execute_switch_task(task, stop_flag=stop_flag, log_callback=log_callback)
+    if task_type == "event":
+        return execute_event_task(task, stop_flag=stop_flag, log_callback=log_callback)
+    if task_type == "delay":
+        return execute_delay_task(task, stop_flag=stop_flag, log_callback=log_callback)
     if task_type == "keyboard_move":
         return execute_keyboard_move_task(task, stop_flag=stop_flag, log_callback=log_callback)
     if task_type == "key_press":
@@ -755,8 +832,10 @@ def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True):
                 log(f"  已点击{click_source}: ({screen_x + offset[0]}, {screen_y + offset[1]})", log_callback)
 
             wait_mode = task.get("wait_for", "time")
+            wait_succeeded = True
             if wait_mode == "disappear":
                 wait_result = wait_until_template_disappears(tpl_name, timeout=get_task_timeout(task, 12), stop_flag=stop_flag)
+                wait_succeeded = bool(wait_result)
                 if wait_result:
                     log(f"  '{tpl_name}' 已消失，继续下一步。", log_callback)
                 else:
@@ -771,6 +850,7 @@ def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True):
                     search_rect=task.get("next_match_rect") or task.get("next_search_rect"),
                     stop_flag=stop_flag,
                 )
+                wait_succeeded = next_center is not None
                 if next_center is None:
                     log(f"  等待 '{next_tpl}' 出现超时。", log_callback)
                 else:
@@ -779,10 +859,15 @@ def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True):
                 next_tpl = task.get("next_template")
                 if not next_tpl:
                     raise ValueError(f"任务 '{tpl_name}' 配置了 wait_for='change_then_appear'，但未提供 next_template。")
-                wait_for_step_result(task, template_name=tpl_name, next_template_names=next_tpl, log_callback=log_callback, stop_flag=stop_flag)
+                wait_succeeded = wait_for_step_result(task, template_name=tpl_name, next_template_names=next_tpl, log_callback=log_callback, stop_flag=stop_flag)
                 log(f"  画面变化后检测到目标结果 '{next_tpl}'，继续下一步。", log_callback)
             else:
-                wait_for_step_result(task, template_name=tpl_name, next_template_names=task.get("next_template"), log_callback=log_callback, stop_flag=stop_flag)
+                wait_succeeded = wait_for_step_result(task, template_name=tpl_name, next_template_names=task.get("next_template"), log_callback=log_callback, stop_flag=stop_flag)
+
+            if not wait_succeeded:
+                timeout_target = task.get("wait_timeout_jump_to", task.get("timeout_jump_to"))
+                if timeout_target is not None:
+                    return {"next_step": int(timeout_target)}
 
             after_wait = max(0.0, float(task.get("after_wait", 0.0)))
             if after_wait > 0:
@@ -823,6 +908,8 @@ def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True):
 
         if timeout > 0 and (time.time() - start_time) > timeout:
             log(f"  超时未检测到 '{tpl_name}'", log_callback)
+            if task.get("timeout_jump_to") is not None:
+                return {"next_step": int(task["timeout_jump_to"])}
             if optional:
                 log(f"  该步骤为可选步骤，跳过。", log_callback)
                 return False
@@ -832,7 +919,7 @@ def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True):
             return False
 
 
-def run_task_queue(tasks, loop=False, stop_flag=None, log_callback=None):
+def run_task_queue(tasks, loop=False, stop_flag=None, log_callback=None, execution_callback=None, execution_result_callback=None, pause_flag=None, single_step_flag=None, start_node_id=None):
     """按顺序执行任务列表。"""
     log("开始执行自动脚本，按 Ctrl+C 手动停止", log_callback)
 
@@ -844,20 +931,76 @@ def run_task_queue(tasks, loop=False, stop_flag=None, log_callback=None):
 
             index = 0
             jump_chain = []
+            flow_chain = []
+            for task in tasks:
+                task.setdefault("id", str(uuid.uuid4()))
+            graph = NodeGraph(tasks, executor=execute_task)
             step_number_to_index = {
                 int(task.get("_outer_step_number", task_index + 1)): task_index
                 for task_index, task in enumerate(tasks)
             }
+            task_id_to_index = graph.id_to_index
+            loop_counts = {}
+            graph_mode = any(
+                task.get("flow_next") is not None or task.get("flow_next_disabled")
+                for task in tasks
+            )
+            if graph_mode:
+                entry_index = graph.entry_index()
+                if start_node_id is not None:
+                    entry_index = graph.resolve_id(start_node_id) if graph.resolve_id(start_node_id) is not None else entry_index
+                index = entry_index
+                log(f"蓝图执行入口：步骤 {entry_index + 1}", log_callback)
+            elif start_node_id is not None:
+                index = task_id_to_index.get(str(start_node_id), 0)
+                log(f"执行入口：步骤 {index + 1}", log_callback)
             while index < len(tasks):
                 if stop_flag is not None and stop_flag.is_set():
                     log("脚本已被外部停止。", log_callback)
                     return
+                if pause_flag is not None:
+                    while pause_flag.is_set() and not (stop_flag is not None and stop_flag.is_set()):
+                        if single_step_flag is not None and single_step_flag.wait(0.1):
+                            single_step_flag.clear()
+                            break
+                    if stop_flag is not None and stop_flag.is_set():
+                        return
 
                 task = tasks[index]
+                task.setdefault("id", str(uuid.uuid4()))
+                if graph_mode:
+                    log(f"蓝图节点：步骤 {index + 1} · {task.get('description', task.get('template', '未命名步骤'))}", log_callback)
+                if execution_callback:
+                    execution_callback(task)
                 try:
-                    result = execute_task(task, stop_flag=stop_flag, log_callback=log_callback)
-                    if isinstance(result, dict) and "outer_jump_to" in result:
-                        jump_target = int(result["outer_jump_to"])
+                    node = TaskNode(task, executor=execute_task)
+                    node_errors = node.validate()
+                    if node_errors:
+                        raise RuntimeError("；".join(node_errors))
+                    if task.get("type") == "loop":
+                        loop_key = str(task.get("id", index))
+                        current_count = loop_counts.get(loop_key, 0)
+                        max_count = max(0, int(task.get("loop_count", 1)))
+                        if current_count < max_count:
+                            loop_counts[loop_key] = current_count + 1
+                            loop_target = task.get("loop_target")
+                            result = {"next_step": int(loop_target)} if loop_target is not None else True
+                            log(f"  循环第 {current_count + 1}/{max_count} 次。", log_callback)
+                        else:
+                            loop_counts[loop_key] = 0
+                            exit_target = task.get("loop_exit_target")
+                            result = {"next_step": int(exit_target)} if exit_target is not None else True
+                            log("  循环次数已完成，离开循环。", log_callback)
+                    else:
+                        result = node.execute({"stop_flag": stop_flag, "log_callback": log_callback})
+                    if execution_result_callback:
+                        execution_result_callback(task, "success")
+                    if isinstance(result, dict) and ("outer_jump_to" in result or "next_step" in result or "next_node_id" in result):
+                        if "next_node_id" in result:
+                            target_index = task_id_to_index.get(str(result["next_node_id"]))
+                            jump_target = int(tasks[target_index].get("_outer_step_number", target_index + 1)) if target_index is not None else None
+                        else:
+                            jump_target = int(result.get("outer_jump_to", result.get("next_step")))
                         current_step_no = int(task.get("_outer_step_number", index + 1))
                         target_index = step_number_to_index.get(jump_target)
 
@@ -868,14 +1011,38 @@ def run_task_queue(tasks, loop=False, stop_flag=None, log_callback=None):
                         elif target_index is not None:
                             jump_chain.append(index)
                             index = target_index
+                            flow_chain = []
                             log(f"  跳转到编号步骤 {jump_target}。", log_callback)
                             continue
                         else:
                             log(f"  主流程编号 {jump_target} 不在当前已启用任务中，跳转忽略。", log_callback)
                 except RuntimeError as e:
+                    if execution_result_callback:
+                        execution_result_callback(task, "failed")
                     log(f"错误: {e}", log_callback)
                     show_complete_message()
                     return
+                if pause_flag is not None and single_step_flag is not None and pause_flag.is_set():
+                    pause_flag.set()
+                if task.get("flow_next") is not None or task.get("flow_next_disabled"):
+                    flow_target = task.get("flow_next")
+                    if flow_target is None:
+                        log("  当前步骤未连接下一节点，流程结束。", log_callback)
+                        break
+                    flow_target_index = task_id_to_index.get(str(flow_target))
+                    if flow_target_index is None:
+                        log("  蓝图连接目标不存在，流程结束。", log_callback)
+                        break
+                    if flow_target_index == index or flow_target_index in flow_chain:
+                        log("  蓝图连接形成循环，流程结束。", log_callback)
+                        break
+                    flow_chain.append(index)
+                    index = flow_target_index
+                    continue
+                if graph_mode:
+                    log("  当前蓝图节点没有下一连接，流程结束。", log_callback)
+                    break
+                flow_chain = []
                 jump_chain = []
                 index += 1
 

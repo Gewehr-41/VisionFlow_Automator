@@ -1,6 +1,7 @@
 import json
 import os
 from copy import deepcopy
+from nodes import normalize_task
 
 
 def make_normal_task(task_id, mode, description, template, *, timeout=5, after_wait=0.25, wait_for="time", wait_timeout=2.5, offset=(0, 0), click=True, required=True):
@@ -105,6 +106,8 @@ DEFAULT_TASKS = [
 
 TASKS_FILE = os.path.join(os.path.dirname(__file__), "saved_tasks.json")
 PRESETS_FILE = os.path.join(os.path.dirname(__file__), "saved_presets.json")
+BLUEPRINT_LAYOUT_FILE = os.path.join(os.path.dirname(__file__), "saved_blueprint_layouts.json")
+BLUEPRINT_GRAPH_FILE = os.path.join(os.path.dirname(__file__), "saved_blueprint_graphs.json")
 
 
 def load_tasks():
@@ -113,7 +116,7 @@ def load_tasks():
             with open(TASKS_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data, list) and data:
-                return data
+                return [normalize_task(task) for task in data]
         except Exception:
             pass
     return deepcopy(DEFAULT_TASKS)
@@ -184,7 +187,7 @@ def load_presets():
                     presets.pop(str(name), None)
                 for name, preset_tasks in data.items():
                     if name not in ("custom", "__deleted__") and isinstance(preset_tasks, list):
-                        presets[str(name)] = preset_tasks
+                        presets[str(name)] = [normalize_task(task) for task in preset_tasks]
         except Exception:
             pass
     return presets
@@ -196,6 +199,7 @@ USER_PRESETS = load_presets()
 def load_preset_metadata():
     if not os.path.exists(PRESETS_FILE):
         return {}
+
     try:
         with open(PRESETS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -203,6 +207,40 @@ def load_preset_metadata():
         return metadata if isinstance(metadata, dict) else {}
     except Exception:
         return {}
+
+
+def load_blueprint_layouts():
+    if not os.path.exists(BLUEPRINT_LAYOUT_FILE):
+        return {}
+    try:
+        with open(BLUEPRINT_LAYOUT_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_blueprint_layouts(layouts):
+    with open(BLUEPRINT_LAYOUT_FILE, "w", encoding="utf-8") as f:
+        json.dump(layouts, f, ensure_ascii=False, indent=2)
+    return layouts
+
+
+def load_blueprint_graphs():
+    if not os.path.exists(BLUEPRINT_GRAPH_FILE):
+        return {}
+    try:
+        with open(BLUEPRINT_GRAPH_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_blueprint_graphs(graphs):
+    with open(BLUEPRINT_GRAPH_FILE, "w", encoding="utf-8") as f:
+        json.dump(graphs, f, ensure_ascii=False, indent=2)
+    return graphs
 
 
 PRESET_METADATA = load_preset_metadata()

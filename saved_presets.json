@@ -90,7 +90,8 @@
       "enabled": false,
       "group_color": "#ffffff",
       "delay_before": 1.0,
-      "id": "task_copy"
+      "id": "task_copy",
+      "timeout": 8
     },
     {
       "type": "key_press",
@@ -109,7 +110,8 @@
       "enabled": false,
       "delay_before": 1.0,
       "group_color": "#ffffff",
-      "id": "task_copy"
+      "id": "task_copy",
+      "timeout": 1.0
     },
     {
       "type": "normal",
@@ -350,7 +352,8 @@
       "enabled": false,
       "group_color": "#ffffff",
       "delay_before": 0.0,
-      "id": "task_copy"
+      "id": "task_copy",
+      "timeout": 8
     },
     {
       "type": "key_press",
@@ -369,7 +372,8 @@
       "group_name": "每日任务 复制",
       "enabled": false,
       "group_color": "#ffffff",
-      "id": "task_copy"
+      "id": "task_copy",
+      "timeout": 1.0
     },
     {
       "type": "normal",
@@ -673,7 +677,8 @@
       "group_name": "每日任务 复制",
       "enabled": false,
       "group_color": "#ffffff",
-      "id": "task_copy"
+      "id": "task_copy",
+      "timeout": 1.0
     },
     {
       "type": "normal",
@@ -1501,7 +1506,7 @@
       "id": "task_copy"
     }
   ],
-  "刷主线/活动关卡": [
+  "追放主线关卡": [
     {
       "type": "advanced",
       "mode": "custom",
@@ -1551,7 +1556,8 @@
         660,
         1901,
         687
-      ]
+      ],
+      "id": "f530c5de-589e-4c72-ae0c-6f6e709319a9"
     },
     {
       "type": "normal",
@@ -1609,7 +1615,8 @@
       "detour_enabled": true,
       "detour_jump_to": 1,
       "detour_success_jump_to": null,
-      "group_color": "#eaf1ff"
+      "group_color": "#eaf1ff",
+      "id": "9f5434e2-f4c0-4f15-86b2-0532fbd44507"
     },
     {
       "type": "normal",
@@ -1673,7 +1680,8 @@
       "detour_steps": [],
       "detour_enabled": true,
       "detour_jump_to": 6,
-      "detour_success_jump_to": null
+      "detour_success_jump_to": null,
+      "id": "d4499408-4ebb-4e1f-beb9-5352a8525a1f"
     },
     {
       "type": "normal",
@@ -1725,7 +1733,8 @@
       "detour_steps": [],
       "detour_enabled": false,
       "detour_jump_to": null,
-      "detour_success_jump_to": null
+      "detour_success_jump_to": null,
+      "id": "8e4205a4-691b-48dc-b97f-552fe5301c40"
     },
     {
       "type": "click_until_gone",
@@ -1748,7 +1757,8 @@
         1655,
         1007
       ],
-      "templates": []
+      "templates": [],
+      "id": "24f88256-f74b-4a75-ac22-549ab699629f"
     },
     {
       "type": "click_until_gone",
@@ -1764,7 +1774,7 @@
       "required": true,
       "group_id": "group_default",
       "group_name": "刷主线/活动关卡",
-      "enabled": true,
+      "enabled": false,
       "match_rects": [
         [
           1848,
@@ -1806,7 +1816,9 @@
       "click_position": [
         1822,
         58
-      ]
+      ],
+      "id": "81d21a0f-0929-406f-92de-ac88a73156f4",
+      "blueprint_bends": {}
     },
     {
       "type": "normal",
@@ -1863,7 +1875,9 @@
         953,
         739,
         1016
-      ]
+      ],
+      "id": "d775d3b0-059d-49ca-865c-26e121c6a990",
+      "blueprint_bends": {}
     },
     {
       "type": "click_until_gone",
@@ -1910,7 +1924,8 @@
         "captured_88a9228dc8",
         "captured_83a38ab820"
       ],
-      "group_color": "#eaf1ff"
+      "group_color": "#eaf1ff",
+      "id": "1abfd2cc-3a9a-4af4-893f-e3053982510b"
     },
     {
       "type": "normal",
@@ -1951,7 +1966,8 @@
           1730,
           1023
         ]
-      ]
+      ],
+      "id": "9e25fd49-e435-4d01-9da7-3ebfc6eb78d6"
     },
     {
       "type": "normal",
@@ -2003,7 +2019,8 @@
           1016
         ]
       ],
-      "group_color": "#eaf1ff"
+      "group_color": "#eaf1ff",
+      "id": "a3687706-a83a-4473-9519-b416db2087fb"
     },
     {
       "type": "normal",
@@ -2060,7 +2077,8 @@
           1142,
           1024
         ]
-      ]
+      ],
+      "id": "0ba04041-ec92-4e94-a108-9fc7c32ba73a"
     },
     {
       "type": "drag",
@@ -2080,46 +2098,1099 @@
       "group_id": "group_default",
       "group_name": "刷主线/活动关卡",
       "enabled": false,
+      "group_color": "#eaf1ff",
+      "id": "938f7684-4a87-47cf-8667-12625ff4cbc4",
+      "timeout": 1.0
+    }
+  ],
+  "测试": [
+    {
+      "type": "normal",
+      "mode": "custom",
+      "template": "captured_dfeee787ec",
+      "timeout": 5.0,
+      "click": true,
+      "offset": [
+        0,
+        0
+      ],
+      "after_wait": 0.25,
+      "wait_for": "time",
+      "wait_timeout": 2.5,
+      "required": true,
+      "description": "进入委托",
+      "group_id": "group_default",
+      "group_name": "峰值",
+      "enabled": false,
+      "id": "a8fa4700-58d5-4b37-9494-f16ef0f7a781",
+      "match_rects": [
+        [
+          1360,
+          944,
+          1413,
+          997
+        ]
+      ],
+      "click_x": 1383,
+      "click_y": 970,
+      "click_position": [
+        1383,
+        970
+      ],
+      "match_rect": [
+        1360,
+        944,
+        1413,
+        997
+      ],
+      "search_rect": [
+        1360,
+        944,
+        1413,
+        997
+      ],
+      "next_template": null,
+      "click_requires_match": true,
+      "optional": false,
+      "blueprint_collapsed": false,
       "group_color": "#eaf1ff"
+    },
+    {
+      "type": "normal",
+      "mode": "custom",
+      "template": "captured_83a38ab820",
+      "timeout": 5.0,
+      "click": true,
+      "offset": [
+        0,
+        0
+      ],
+      "after_wait": 0.25,
+      "wait_for": "time",
+      "wait_timeout": 2.5,
+      "required": true,
+      "description": "进入周订单",
+      "group_id": "group_default",
+      "group_name": "峰值",
+      "enabled": false,
+      "id": "392386ec-bcb1-4e93-b6f4-c151652381b5",
+      "match_rects": [
+        [
+          124,
+          22,
+          179,
+          81
+        ]
+      ],
+      "click_x": 1343,
+      "click_y": 58,
+      "click_position": [
+        1343,
+        58
+      ],
+      "match_rect": [
+        124,
+        22,
+        179,
+        81
+      ],
+      "search_rect": [
+        124,
+        22,
+        179,
+        81
+      ],
+      "next_template": null,
+      "click_requires_match": true,
+      "optional": false,
+      "group_color": "#eaf1ff"
+    },
+    {
+      "type": "normal",
+      "mode": "custom",
+      "template": "captured_b267bd91ec",
+      "timeout": 5.0,
+      "click": true,
+      "offset": [
+        0,
+        0
+      ],
+      "after_wait": 0.25,
+      "wait_for": "time",
+      "wait_timeout": 2.5,
+      "required": true,
+      "description": "进入峰值推定",
+      "group_id": "group_default",
+      "group_name": "峰值",
+      "enabled": false,
+      "id": "31b88977-a3bb-4cfb-a065-192fc70cceec",
+      "blueprint_collapsed": false,
+      "match_rects": [
+        [
+          1214,
+          301,
+          1435,
+          431
+        ]
+      ],
+      "click_x": 220,
+      "click_y": 383,
+      "click_position": [
+        220,
+        383
+      ],
+      "match_rect": [
+        1214,
+        301,
+        1435,
+        431
+      ],
+      "search_rect": [
+        1214,
+        301,
+        1435,
+        431
+      ],
+      "next_template": null,
+      "click_requires_match": true,
+      "optional": false,
+      "group_color": "#eaf1ff"
+    },
+    {
+      "type": "normal",
+      "mode": "custom",
+      "template": "captured_8770575982",
+      "timeout": 5.0,
+      "click": true,
+      "offset": [
+        0,
+        0
+      ],
+      "after_wait": 0.25,
+      "wait_for": "time",
+      "wait_timeout": 2.5,
+      "required": true,
+      "description": "前往极限峰值",
+      "group_id": "group_default",
+      "group_name": "峰值",
+      "enabled": false,
+      "id": "5b8130c8-39ec-46fd-9bf8-03e01cb985b6",
+      "match_rects": [
+        [
+          1313,
+          521,
+          1452,
+          636
+        ]
+      ],
+      "click_x": 1723,
+      "click_y": 729,
+      "click_position": [
+        1723,
+        729
+      ],
+      "match_rect": [
+        1313,
+        521,
+        1452,
+        636
+      ],
+      "search_rect": [
+        1313,
+        521,
+        1452,
+        636
+      ],
+      "next_template": null,
+      "click_requires_match": true,
+      "optional": false,
+      "group_color": "#eaf1ff"
+    },
+    {
+      "type": "normal",
+      "mode": "custom",
+      "template": "captured_81c0b63209",
+      "timeout": 5.0,
+      "click": true,
+      "offset": [
+        0,
+        0
+      ],
+      "after_wait": 0.25,
+      "wait_for": "time",
+      "wait_timeout": 2.5,
+      "required": true,
+      "description": "进入第一关",
+      "group_id": "group_default",
+      "group_name": "峰值",
+      "enabled": false,
+      "id": "2d1a80e5-6b9e-4b11-944a-4bbe6dbdea02",
+      "match_rects": [
+        [
+          43,
+          996,
+          81,
+          1039
+        ]
+      ],
+      "click_x": 342,
+      "click_y": 562,
+      "click_position": [
+        342,
+        562
+      ],
+      "match_rect": [
+        43,
+        996,
+        81,
+        1039
+      ],
+      "search_rect": [
+        43,
+        996,
+        81,
+        1039
+      ],
+      "next_template": null,
+      "click_requires_match": true,
+      "optional": false,
+      "group_color": "#eaf1ff"
+    },
+    {
+      "type": "normal",
+      "mode": "custom",
+      "template": "captured_4f28c94eb7",
+      "timeout": 5.0,
+      "click": true,
+      "offset": [
+        0,
+        0
+      ],
+      "after_wait": 1.0,
+      "wait_for": "next_appear",
+      "wait_timeout": 2.5,
+      "required": true,
+      "description": "开始作战",
+      "group_id": "group_default",
+      "group_name": "峰值",
+      "enabled": false,
+      "id": "18d51d03-4999-434c-839d-20a1ff03985b",
+      "match_rects": [
+        [
+          1400,
+          984,
+          1475,
+          1046
+        ]
+      ],
+      "click_x": 1635,
+      "click_y": 1009,
+      "click_position": [
+        1635,
+        1009
+      ],
+      "match_rect": [
+        1400,
+        984,
+        1475,
+        1046
+      ],
+      "search_rect": [
+        1400,
+        984,
+        1475,
+        1046
+      ],
+      "next_template": "captured_260ae0fbbe",
+      "click_requires_match": true,
+      "optional": false,
+      "next_templates": [
+        "captured_260ae0fbbe"
+      ],
+      "next_match_rect": [
+        674,
+        948,
+        741,
+        1018
+      ],
+      "next_search_rect": [
+        674,
+        948,
+        741,
+        1018
+      ],
+      "group_color": "#eaf1ff"
+    },
+    {
+      "type": "normal",
+      "mode": "custom",
+      "template": "captured_260ae0fbbe",
+      "timeout": 10.0,
+      "click": true,
+      "offset": [
+        0,
+        0
+      ],
+      "after_wait": 0.25,
+      "wait_for": "time",
+      "wait_timeout": 2.5,
+      "required": true,
+      "description": "作战开始",
+      "group_id": "group_default",
+      "group_name": "峰值",
+      "enabled": false,
+      "match_rects": [
+        [
+          677,
+          952,
+          739,
+          1014
+        ]
+      ],
+      "click_x": 958,
+      "click_y": 979,
+      "click_position": [
+        958,
+        979
+      ],
+      "match_rect": [
+        677,
+        952,
+        739,
+        1014
+      ],
+      "search_rect": [
+        677,
+        952,
+        739,
+        1014
+      ],
+      "next_template": "None",
+      "click_requires_match": true,
+      "optional": false,
+      "id": "0350b57b-640a-40b2-8a99-e70551f84025",
+      "group_color": "#eaf1ff"
+    },
+    {
+      "type": "click_until_gone",
+      "mode": "custom",
+      "template": "captured_88a9228dc8",
+      "description": "持续点击直到识别步骤",
+      "click": true,
+      "click_interval": 0.5,
+      "stop_delay": 1.0,
+      "timeout": 80.0,
+      "continue_after_timeout": false,
+      "stop_on_change": false,
+      "required": true,
+      "group_id": "group_default",
+      "group_name": "峰值",
+      "enabled": false,
+      "click_x": 1579,
+      "click_y": 984,
+      "click_position": [
+        1579,
+        984
+      ],
+      "match_rects": [
+        [
+          61,
+          960,
+          107,
+          1007
+        ]
+      ],
+      "match_rect": [
+        61,
+        960,
+        107,
+        1007
+      ],
+      "search_rect": [
+        61,
+        960,
+        107,
+        1007
+      ],
+      "templates": [
+        "captured_88a9228dc8"
+      ],
+      "id": "a38865cb-f40a-4481-b33d-d65f34b226a7",
+      "group_color": "#eaf1ff"
+    },
+    {
+      "type": "normal",
+      "mode": "custom",
+      "template": "captured_4f28c94eb7",
+      "timeout": 5.0,
+      "click": true,
+      "offset": [
+        0,
+        0
+      ],
+      "after_wait": 0.25,
+      "wait_for": "time",
+      "wait_timeout": 2.5,
+      "required": true,
+      "description": "回到关卡选择页面",
+      "group_id": "group_default",
+      "group_name": "峰值",
+      "enabled": false,
+      "match_rects": [
+        [
+          1401,
+          980,
+          1472,
+          1047
+        ]
+      ],
+      "click_x": 49,
+      "click_y": 50,
+      "click_position": [
+        49,
+        50
+      ],
+      "match_rect": [
+        1401,
+        980,
+        1472,
+        1047
+      ],
+      "search_rect": [
+        1401,
+        980,
+        1472,
+        1047
+      ],
+      "next_template": null,
+      "click_requires_match": true,
+      "optional": false,
+      "id": "8c991d10-9476-480c-ac29-2a34072d0111",
+      "group_color": "#eaf1ff"
+    },
+    {
+      "type": "normal",
+      "mode": "custom",
+      "template": "captured_81c0b63209",
+      "timeout": 5.0,
+      "click": true,
+      "offset": [
+        0,
+        0
+      ],
+      "after_wait": 0.25,
+      "wait_for": "time",
+      "wait_timeout": 2.5,
+      "required": true,
+      "description": "进入第二关",
+      "group_id": "group_default",
+      "group_name": "峰值",
+      "enabled": false,
+      "id": "2b6fd778-2d0d-4ec3-8b06-a45993a39784",
+      "match_rects": [
+        [
+          43,
+          996,
+          81,
+          1039
+        ]
+      ],
+      "click_x": 955,
+      "click_y": 571,
+      "click_position": [
+        955,
+        571
+      ],
+      "next_template": "None",
+      "click_requires_match": true,
+      "optional": false,
+      "match_rect": [
+        43,
+        996,
+        81,
+        1039
+      ],
+      "search_rect": [
+        43,
+        996,
+        81,
+        1039
+      ],
+      "group_color": "#eaf1ff"
+    },
+    {
+      "type": "normal",
+      "mode": "custom",
+      "template": "captured_4f28c94eb7",
+      "timeout": 5.0,
+      "click": true,
+      "offset": [
+        0,
+        0
+      ],
+      "after_wait": 1.0,
+      "wait_for": "next_appear",
+      "wait_timeout": 2.5,
+      "required": true,
+      "description": "开始作战",
+      "group_id": "group_default",
+      "group_name": "峰值",
+      "enabled": false,
+      "id": "981d1b8a-8724-42bb-ad85-67fdf745a606",
+      "match_rects": [
+        [
+          1400,
+          984,
+          1475,
+          1046
+        ]
+      ],
+      "click_x": 1635,
+      "click_y": 1009,
+      "click_position": [
+        1635,
+        1009
+      ],
+      "match_rect": [
+        1400,
+        984,
+        1475,
+        1046
+      ],
+      "search_rect": [
+        1400,
+        984,
+        1475,
+        1046
+      ],
+      "next_template": "captured_260ae0fbbe",
+      "click_requires_match": true,
+      "optional": false,
+      "next_templates": [
+        "captured_260ae0fbbe"
+      ],
+      "next_match_rect": [
+        676,
+        952,
+        739,
+        1015
+      ],
+      "next_search_rect": [
+        676,
+        952,
+        739,
+        1015
+      ],
+      "group_color": "#eaf1ff"
+    },
+    {
+      "type": "normal",
+      "mode": "custom",
+      "template": "captured_260ae0fbbe",
+      "timeout": 10.0,
+      "click": true,
+      "offset": [
+        0,
+        0
+      ],
+      "after_wait": 0.25,
+      "wait_for": "time",
+      "wait_timeout": 2.5,
+      "required": true,
+      "description": "作战开始",
+      "group_id": "group_default",
+      "group_name": "峰值",
+      "enabled": false,
+      "match_rects": [
+        [
+          677,
+          952,
+          739,
+          1014
+        ]
+      ],
+      "click_x": 958,
+      "click_y": 979,
+      "click_position": [
+        958,
+        979
+      ],
+      "match_rect": [
+        677,
+        952,
+        739,
+        1014
+      ],
+      "search_rect": [
+        677,
+        952,
+        739,
+        1014
+      ],
+      "next_template": "None",
+      "click_requires_match": true,
+      "optional": false,
+      "id": "de80af5d-6876-48ec-bade-25320207b564",
+      "group_color": "#eaf1ff"
+    },
+    {
+      "type": "click_until_gone",
+      "mode": "custom",
+      "template": "captured_88a9228dc8",
+      "description": "持续点击直到识别步骤",
+      "click": true,
+      "click_interval": 0.5,
+      "stop_delay": 1.0,
+      "timeout": 80.0,
+      "continue_after_timeout": false,
+      "stop_on_change": false,
+      "required": true,
+      "group_id": "group_default",
+      "group_name": "峰值",
+      "enabled": false,
+      "click_x": 1579,
+      "click_y": 984,
+      "click_position": [
+        1579,
+        984
+      ],
+      "match_rects": [
+        [
+          61,
+          960,
+          107,
+          1007
+        ]
+      ],
+      "match_rect": [
+        61,
+        960,
+        107,
+        1007
+      ],
+      "search_rect": [
+        61,
+        960,
+        107,
+        1007
+      ],
+      "templates": [
+        "captured_88a9228dc8"
+      ],
+      "id": "f07f1924-a40f-4147-a88d-bb25a9aad7c1",
+      "group_color": "#eaf1ff"
+    },
+    {
+      "type": "normal",
+      "mode": "custom",
+      "template": "captured_4f28c94eb7",
+      "timeout": 5.0,
+      "click": true,
+      "offset": [
+        0,
+        0
+      ],
+      "after_wait": 0.25,
+      "wait_for": "time",
+      "wait_timeout": 2.5,
+      "required": true,
+      "description": "回到关卡选择页面",
+      "group_id": "group_default",
+      "group_name": "峰值",
+      "enabled": false,
+      "match_rects": [
+        [
+          1401,
+          980,
+          1472,
+          1047
+        ]
+      ],
+      "click_x": 49,
+      "click_y": 50,
+      "click_position": [
+        49,
+        50
+      ],
+      "match_rect": [
+        1401,
+        980,
+        1472,
+        1047
+      ],
+      "search_rect": [
+        1401,
+        980,
+        1472,
+        1047
+      ],
+      "next_template": null,
+      "click_requires_match": true,
+      "optional": false,
+      "id": "e65c41fc-43ce-4e99-b3e8-de1f733e7ad9",
+      "group_color": "#eaf1ff"
+    },
+    {
+      "type": "normal",
+      "mode": "custom",
+      "template": "captured_81c0b63209",
+      "timeout": 5.0,
+      "click": true,
+      "offset": [
+        0,
+        0
+      ],
+      "after_wait": 0.25,
+      "wait_for": "time",
+      "wait_timeout": 2.5,
+      "required": true,
+      "description": "进入第三关",
+      "group_id": "group_default",
+      "group_name": "峰值",
+      "enabled": false,
+      "id": "5ee0e954-1e44-4796-b4fd-805d506dfae2",
+      "match_rects": [
+        [
+          43,
+          996,
+          81,
+          1039
+        ]
+      ],
+      "click_x": 1523,
+      "click_y": 577,
+      "click_position": [
+        1523,
+        577
+      ],
+      "next_template": "None",
+      "click_requires_match": true,
+      "optional": false,
+      "match_rect": [
+        43,
+        996,
+        81,
+        1039
+      ],
+      "search_rect": [
+        43,
+        996,
+        81,
+        1039
+      ],
+      "group_color": "#eaf1ff"
+    },
+    {
+      "type": "normal",
+      "mode": "custom",
+      "template": "captured_4f28c94eb7",
+      "timeout": 5.0,
+      "click": true,
+      "offset": [
+        0,
+        0
+      ],
+      "after_wait": 1.0,
+      "wait_for": "next_appear",
+      "wait_timeout": 2.5,
+      "required": true,
+      "description": "开始作战",
+      "group_id": "group_default",
+      "group_name": "峰值",
+      "enabled": false,
+      "id": "5292eae6-6731-4b04-aa51-831e2a549863",
+      "match_rects": [
+        [
+          1400,
+          984,
+          1475,
+          1046
+        ]
+      ],
+      "click_x": 1635,
+      "click_y": 1009,
+      "click_position": [
+        1635,
+        1009
+      ],
+      "match_rect": [
+        1400,
+        984,
+        1475,
+        1046
+      ],
+      "search_rect": [
+        1400,
+        984,
+        1475,
+        1046
+      ],
+      "next_template": "captured_260ae0fbbe",
+      "click_requires_match": true,
+      "optional": false,
+      "next_templates": [
+        "captured_260ae0fbbe"
+      ],
+      "next_match_rect": [
+        676,
+        952,
+        740,
+        1016
+      ],
+      "next_search_rect": [
+        676,
+        952,
+        740,
+        1016
+      ],
+      "group_color": "#eaf1ff"
+    },
+    {
+      "type": "normal",
+      "mode": "custom",
+      "template": "captured_260ae0fbbe",
+      "timeout": 10.0,
+      "click": true,
+      "offset": [
+        0,
+        0
+      ],
+      "after_wait": 0.25,
+      "wait_for": "time",
+      "wait_timeout": 2.5,
+      "required": true,
+      "description": "作战开始",
+      "group_id": "group_default",
+      "group_name": "峰值",
+      "enabled": false,
+      "match_rects": [
+        [
+          677,
+          952,
+          739,
+          1014
+        ]
+      ],
+      "click_x": 958,
+      "click_y": 979,
+      "click_position": [
+        958,
+        979
+      ],
+      "match_rect": [
+        677,
+        952,
+        739,
+        1014
+      ],
+      "search_rect": [
+        677,
+        952,
+        739,
+        1014
+      ],
+      "next_template": "None",
+      "click_requires_match": true,
+      "optional": false,
+      "id": "deda31ae-7656-4b03-9785-f31d086cc048",
+      "group_color": "#eaf1ff"
+    },
+    {
+      "type": "click_until_gone",
+      "mode": "custom",
+      "template": "captured_88a9228dc8",
+      "description": "持续点击直到识别步骤",
+      "click": true,
+      "click_interval": 0.5,
+      "stop_delay": 1.0,
+      "timeout": 80.0,
+      "continue_after_timeout": false,
+      "stop_on_change": false,
+      "required": true,
+      "group_id": "group_default",
+      "group_name": "峰值",
+      "enabled": false,
+      "click_x": 1579,
+      "click_y": 984,
+      "click_position": [
+        1579,
+        984
+      ],
+      "match_rects": [
+        [
+          61,
+          960,
+          107,
+          1007
+        ]
+      ],
+      "match_rect": [
+        61,
+        960,
+        107,
+        1007
+      ],
+      "search_rect": [
+        61,
+        960,
+        107,
+        1007
+      ],
+      "templates": [
+        "captured_88a9228dc8"
+      ],
+      "id": "ae87e9bf-7716-432d-a3f3-d2d2ca4da82b",
+      "group_color": "#eaf1ff",
+      "flow_next": "f5831bc1-51fe-4f89-b4b6-dc2ee451e355"
+    },
+    {
+      "type": "normal",
+      "mode": "custom",
+      "template": "captured_4f28c94eb7",
+      "timeout": 5.0,
+      "click": true,
+      "offset": [
+        0,
+        0
+      ],
+      "after_wait": 0.25,
+      "wait_for": "time",
+      "wait_timeout": 2.5,
+      "required": true,
+      "description": "回到关卡选择页面",
+      "group_id": "group_default",
+      "group_name": "峰值",
+      "enabled": false,
+      "match_rects": [
+        [
+          1401,
+          980,
+          1472,
+          1047
+        ]
+      ],
+      "click_x": 49,
+      "click_y": 50,
+      "click_position": [
+        49,
+        50
+      ],
+      "match_rect": [
+        1401,
+        980,
+        1472,
+        1047
+      ],
+      "search_rect": [
+        1401,
+        980,
+        1472,
+        1047
+      ],
+      "next_template": null,
+      "click_requires_match": true,
+      "optional": false,
+      "id": "f5831bc1-51fe-4f89-b4b6-dc2ee451e355",
+      "group_color": "#eaf1ff",
+      "flow_next": "517c15cc-9cd8-43bf-8f03-01403ea56cd9"
+    },
+    {
+      "type": "normal",
+      "mode": "custom",
+      "template": "captured_83a38ab820",
+      "timeout": 5.0,
+      "click": true,
+      "offset": [
+        0,
+        0
+      ],
+      "after_wait": 0.25,
+      "wait_for": "time",
+      "wait_timeout": 2.5,
+      "required": true,
+      "description": "回到主界面",
+      "group_id": "group_default",
+      "group_name": "峰值",
+      "enabled": true,
+      "click_x": 142,
+      "click_y": 47,
+      "click_position": [
+        142,
+        47
+      ],
+      "match_rects": [
+        [
+          116,
+          22,
+          173,
+          76
+        ]
+      ],
+      "match_rect": [
+        116,
+        22,
+        173,
+        76
+      ],
+      "search_rect": [
+        116,
+        22,
+        173,
+        76
+      ],
+      "next_template": null,
+      "click_requires_match": true,
+      "optional": false,
+      "group_color": "#eaf1ff",
+      "id": "517c15cc-9cd8-43bf-8f03-01403ea56cd9",
+      "flow_next": null,
+      "flow_next_disabled": true
     }
   ],
   "__deleted__": [
     "daily",
-    "side"
+    "side",
+    "导出测试"
   ],
   "__group_metadata__": {
     "custom": {
       "names": {
+        "group_default": "刷主线/活动关卡",
         "group_37b807c3": "每日任务",
         "group_896c3838": "领取每日礼包",
         "group_c9dda062": "领取班组奖励",
         "group_8f247b3d": "领取巡录"
       },
       "colors": {
+        "group_default": "#eaf1ff",
         "group_37b807c3": "#ffffff",
         "group_896c3838": "#ffffff",
         "group_c9dda062": "#eaf1ff",
         "group_8f247b3d": "#eaf1ff"
       },
       "expanded": {
+        "group_default": true,
         "group_37b807c3": true,
         "group_896c3838": true,
         "group_c9dda062": true,
         "group_8f247b3d": true
       },
       "order": [
+        "group_default",
         "group_37b807c3",
         "group_896c3838",
         "group_c9dda062",
         "group_8f247b3d"
       ],
       "parents": {
+        "group_default": null,
         "group_37b807c3": null,
         "group_896c3838": null,
         "group_c9dda062": null,
         "group_8f247b3d": null
       },
       "children": {
+        "group_default": [],
         "group_37b807c3": [],
         "group_896c3838": [],
         "group_c9dda062": [],
@@ -2200,7 +3271,47 @@
         "group_default": []
       }
     },
-    "刷主线/活动关卡": {
+    "追放主线关卡": {
+      "names": {
+        "group_default": "刷主线/活动关卡"
+      },
+      "colors": {
+        "group_default": "#eaf1ff"
+      },
+      "expanded": {
+        "group_default": true
+      },
+      "order": [
+        "group_default"
+      ],
+      "parents": {
+        "group_default": null
+      },
+      "children": {
+        "group_default": []
+      }
+    },
+    "测试": {
+      "names": {
+        "group_default": "峰值"
+      },
+      "colors": {
+        "group_default": "#eaf1ff"
+      },
+      "expanded": {
+        "group_default": true
+      },
+      "order": [
+        "group_default"
+      ],
+      "parents": {
+        "group_default": null
+      },
+      "children": {
+        "group_default": []
+      }
+    },
+    "导出测试": {
       "names": {
         "group_default": "刷主线/活动关卡"
       },

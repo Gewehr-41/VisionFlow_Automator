@@ -16,7 +16,7 @@
     "description": "进入休息室",
     "group_id": "group_37b807c3",
     "group_name": "每日任务",
-    "enabled": false,
+    "enabled": true,
     "click_x": 1779,
     "click_y": 463,
     "click_position": [
@@ -61,7 +61,8 @@
         1846,
         501
       ]
-    ]
+    ],
+    "id": "0231d28a-2ec9-4f28-bcfe-17b192222832"
   },
   {
     "type": "keyboard_move",
@@ -93,9 +94,11 @@
     ],
     "group_id": "group_37b807c3",
     "group_name": "每日任务",
-    "enabled": false,
+    "enabled": true,
     "group_color": "#ffffff",
-    "delay_before": 1.0
+    "delay_before": 1.0,
+    "id": "5d8d8bc1-3fb4-4ffb-b08e-1eff4ee0f814",
+    "timeout": 8
   },
   {
     "type": "key_press",
@@ -111,9 +114,11 @@
     "description": "进入茶吧菜单",
     "group_id": "group_37b807c3",
     "group_name": "每日任务",
-    "enabled": false,
+    "enabled": true,
     "delay_before": 1.0,
-    "group_color": "#ffffff"
+    "group_color": "#ffffff",
+    "id": "cec8db70-1069-4386-9c51-5f78c20e51a6",
+    "timeout": 1.0
   },
   {
     "type": "normal",
@@ -132,7 +137,7 @@
     "description": "制作茶品",
     "group_id": "group_37b807c3",
     "group_name": "每日任务",
-    "enabled": false,
+    "enabled": true,
     "click_x": 1662,
     "click_y": 1007,
     "click_position": [
@@ -189,7 +194,8 @@
     ],
     "detour_enabled": true,
     "detour_jump_to": 8,
-    "group_color": "#ffffff"
+    "group_color": "#ffffff",
+    "id": "fbc9017c-f2e9-4396-b297-63dae7416ea6"
   },
   {
     "type": "normal",
@@ -208,7 +214,7 @@
     "description": "确认",
     "group_id": "group_37b807c3",
     "group_name": "每日任务",
-    "enabled": false,
+    "enabled": true,
     "click_x": 1167,
     "click_y": 754,
     "click_position": [
@@ -233,7 +239,8 @@
     ],
     "group_color": "#ffffff",
     "click_requires_match": true,
-    "optional": false
+    "optional": false,
+    "id": "e66499dc-c196-4dfe-8772-ff5b63fae05b"
   },
   {
     "type": "normal",
@@ -285,7 +292,8 @@
     ],
     "next_templates": [
       "captured_258080a08f"
-    ]
+    ],
+    "id": "767dd00d-58be-4971-be00-ade4ab29793a"
   },
   {
     "type": "normal",
@@ -326,7 +334,8 @@
     "next_template": null,
     "click_requires_match": true,
     "optional": false,
-    "group_color": "#ffffff"
+    "group_color": "#ffffff",
+    "id": "a04c7d31-6837-45c4-b495-14267d9f9594"
   },
   {
     "type": "keyboard_move",
@@ -360,7 +369,9 @@
     "group_name": "每日任务",
     "enabled": true,
     "group_color": "#ffffff",
-    "delay_before": 0.0
+    "delay_before": 0.0,
+    "id": "495cea6d-7715-4c06-8e52-7b6d90b79fc7",
+    "timeout": 8
   },
   {
     "type": "key_press",
@@ -378,7 +389,9 @@
     "group_id": "group_37b807c3",
     "group_name": "每日任务",
     "enabled": true,
-    "group_color": "#ffffff"
+    "group_color": "#ffffff",
+    "id": "d0238b89-c8c1-430b-b423-dccda758184e",
+    "timeout": 1.0
   },
   {
     "type": "normal",
@@ -419,7 +432,8 @@
     "next_template": null,
     "click_requires_match": true,
     "optional": false,
-    "group_color": "#ffffff"
+    "group_color": "#ffffff",
+    "id": "cd097152-c0f6-4aee-888a-f58edcb8a9d8"
   },
   {
     "type": "normal",
@@ -460,7 +474,8 @@
       1324,
       990
     ],
-    "group_color": "#ffffff"
+    "group_color": "#ffffff",
+    "id": "3931d977-0a62-4c55-b816-346abf86efe7"
   },
   {
     "type": "click_until_gone",
@@ -483,7 +498,8 @@
     ],
     "continue_after_timeout": true,
     "group_color": "#ffffff",
-    "stop_on_change": false
+    "stop_on_change": false,
+    "id": "c805b6c7-9df4-4480-8165-4fbc66b46dae"
   },
   {
     "type": "click_until_gone",
@@ -518,7 +534,8 @@
       786
     ],
     "group_color": "#ffffff",
-    "stop_on_change": false
+    "stop_on_change": false,
+    "id": "62d77411-1c88-43af-b0ba-20186dcd391e"
   },
   {
     "type": "normal",
@@ -574,7 +591,8 @@
       943,
       1163,
       1033
-    ]
+    ],
+    "id": "631fedd6-080f-4d4e-98b4-18c4e0cff6b9"
   },
   {
     "type": "normal",
@@ -615,7 +633,8 @@
     "next_template": null,
     "click_requires_match": true,
     "optional": false,
-    "group_color": "#ffffff"
+    "group_color": "#ffffff",
+    "id": "4d9d2cd9-3f9c-4348-8f30-34d012898806"
   },
   {
     "type": "normal",
@@ -656,7 +675,8 @@
     "next_template": "None",
     "click_requires_match": true,
     "optional": false,
-    "group_color": "#ffffff"
+    "group_color": "#ffffff",
+    "id": "c11187f7-5e4f-4cb1-bcf1-5d878c7c4cb6"
   },
   {
     "type": "key_press",
@@ -674,7 +694,9 @@
     "group_id": "group_37b807c3",
     "group_name": "每日任务",
     "enabled": true,
-    "group_color": "#ffffff"
+    "group_color": "#ffffff",
+    "id": "29ba072e-8a32-4970-8ec0-d6cac8c53d10",
+    "timeout": 1.0
   },
   {
     "type": "normal",
@@ -715,7 +737,8 @@
     "next_template": "None",
     "click_requires_match": true,
     "optional": false,
-    "group_color": "#ffffff"
+    "group_color": "#ffffff",
+    "id": "c9040a71-0f30-43f4-a61f-7620dd813b87"
   },
   {
     "type": "normal",
@@ -771,7 +794,8 @@
       170,
       84
     ],
-    "group_color": "#ffffff"
+    "group_color": "#ffffff",
+    "id": "773b178d-c6df-4ce3-b1ee-cebcaffe5d44"
   },
   {
     "type": "normal",
@@ -827,7 +851,8 @@
       1060,
       161
     ],
-    "group_color": "#ffffff"
+    "group_color": "#ffffff",
+    "id": "842ddb75-6c3d-47d0-b42f-468ebd17f0dd"
   },
   {
     "type": "normal",
@@ -883,7 +908,8 @@
     ],
     "click_requires_match": true,
     "optional": false,
-    "group_color": "#ffffff"
+    "group_color": "#ffffff",
+    "id": "718f4255-508b-4c33-b42e-636d40fc296d"
   },
   {
     "type": "normal",
@@ -939,7 +965,8 @@
       1382,
       872
     ],
-    "group_color": "#ffffff"
+    "group_color": "#ffffff",
+    "id": "ea1dc5c2-dd5f-426e-9093-f89dd3357596"
   },
   {
     "type": "normal",
@@ -980,7 +1007,8 @@
     "next_template": null,
     "click_requires_match": true,
     "optional": false,
-    "group_color": "#ffffff"
+    "group_color": "#ffffff",
+    "id": "ab859a37-fb2c-49fe-b4bb-a9fe1871a4dc"
   },
   {
     "type": "click_until_gone",
@@ -1015,7 +1043,8 @@
       1867,
       708
     ],
-    "group_color": "#ffffff"
+    "group_color": "#ffffff",
+    "id": "51785f41-197f-44c2-9aa3-7dfc40f4bf77"
   },
   {
     "type": "normal",
@@ -1056,7 +1085,8 @@
     "next_template": "None",
     "click_requires_match": true,
     "optional": false,
-    "group_color": "#eaf1ff"
+    "group_color": "#eaf1ff",
+    "id": "14aee024-8208-46b7-a39e-45cf71a54277"
   },
   {
     "type": "normal",
@@ -1112,7 +1142,8 @@
       940,
       322
     ],
-    "group_color": "#eaf1ff"
+    "group_color": "#eaf1ff",
+    "id": "812300e2-a121-4e8b-80e0-ec7337585c2c"
   },
   {
     "type": "normal",
@@ -1156,7 +1187,8 @@
       963,
       1836,
       1004
-    ]
+    ],
+    "id": "3a83727c-29cd-4632-822b-cae0bd56798c"
   },
   {
     "type": "click_until_gone",
@@ -1191,7 +1223,8 @@
       444,
       1848,
       496
-    ]
+    ],
+    "id": "67bbfca8-8fd4-4a96-90d8-019647f3d87d"
   },
   {
     "type": "normal",
@@ -1247,7 +1280,8 @@
       1736,
       65
     ],
-    "group_color": "#eaf1ff"
+    "group_color": "#eaf1ff",
+    "id": "c691b496-75ac-4376-b14c-087774106e34"
   },
   {
     "type": "normal",
@@ -1288,7 +1322,8 @@
     "next_template": "None",
     "click_requires_match": true,
     "optional": false,
-    "group_color": "#eaf1ff"
+    "group_color": "#eaf1ff",
+    "id": "d9aa4ccc-b98d-4969-8e78-f3d0606ec3d6"
   },
   {
     "type": "normal",
@@ -1332,7 +1367,8 @@
     "detour_steps": [],
     "detour_enabled": true,
     "detour_jump_to": 32,
-    "group_color": "#eaf1ff"
+    "group_color": "#eaf1ff",
+    "id": "fc1c8d71-2ca5-4026-bba9-87de1752a54e"
   },
   {
     "type": "normal",
@@ -1361,7 +1397,8 @@
     "next_template": "None",
     "click_requires_match": true,
     "optional": false,
-    "group_color": "#eaf1ff"
+    "group_color": "#eaf1ff",
+    "id": "f95c147e-8152-4d55-a1b4-434fe132d7dc"
   },
   {
     "type": "normal",
@@ -1405,7 +1442,8 @@
       968,
       187,
       1030
-    ]
+    ],
+    "id": "687b3eef-4d04-41fb-852b-2cef0e6f46f6"
   },
   {
     "type": "normal",
@@ -1446,7 +1484,8 @@
     "next_template": null,
     "click_requires_match": true,
     "optional": false,
-    "group_color": "#eaf1ff"
+    "group_color": "#eaf1ff",
+    "id": "fad3cc08-04b9-4d01-95f4-3f1e26ab8cc5"
   },
   {
     "type": "click_until_gone",
@@ -1481,6 +1520,7 @@
       824,
       151,
       897
-    ]
+    ],
+    "id": "db4092c4-d16b-4c16-bb16-c0cd3070abbd"
   }
 ]

@@ -1,14 +1,16 @@
 import ctypes
 import colorsys
 import glob
+import json
 import math
 import os
 import threading
 import uuid
+import zipfile
 from copy import deepcopy
 import tkinter as tk
 import tkinter.font as tkfont
-from tkinter import filedialog, messagebox, ttk
+from tkinter import colorchooser, filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 from threading import Event
 
@@ -18,7 +20,8 @@ import pygetwindow as gw
 import config
 from core.screen import get_window_rect
 from main import reload_templates, run_task_queue
-from tasks import DELETED_PRESET_NAMES, PRESET_METADATA, TASKS, USER_PRESETS, get_tasks_for_mode, save_presets, save_tasks
+from nodes import NodeGraph
+from tasks import DELETED_PRESET_NAMES, PRESET_METADATA, TASKS, USER_PRESETS, get_tasks_for_mode, load_blueprint_graphs, load_blueprint_layouts, save_blueprint_graphs, save_blueprint_layouts, save_presets, save_tasks
 
 
 class AutoScriptGUI:
@@ -30,11 +33,16 @@ class AutoScriptGUI:
 
         self.stop_event = Event()
         self.worker_thread = None
+        self.pause_event = threading.Event()
+        self.single_step_event = threading.Event()
+        self.debug_node_states = {}
         self.selected_task_index = 0
         self.current_mode = "custom"
         self.mode_tasks = {"custom": deepcopy(TASKS)}
         self.mode_tasks.update({name: deepcopy(value) for name, value in USER_PRESETS.items()})
         self.mode_group_metadata = deepcopy(PRESET_METADATA)
+        self.blueprint_layouts = load_blueprint_layouts()
+        self.blueprint_graphs = load_blueprint_graphs()
         self.deleted_preset_names = set(DELETED_PRESET_NAMES)
         self.capture_timer = None
         self.waiting_for_click_capture = False
@@ -47,6 +55,22 @@ class AutoScriptGUI:
         self.selection_overlay = None
         self.selection_canvas = None
         self.selection_box_id = None
+        self.blueprint_positions = {}
+        self.blueprint_node_items = {}
+        self.blueprint_drag = None
+        self.blueprint_connection_drag = None
+        self.blueprint_pan_start = None
+        self.blueprint_box_start = None
+        self.blueprint_selection = set()
+        self.blueprint_selection_edges = set()
+        self.blueprint_selected_edge = None
+        self.blueprint_active_edge = None
+        self.blueprint_clipboard = []
+        self.blueprint_zoom = 1.0
+        self.blueprint_history = []
+        self.blueprint_redo_history = []
+        self.blueprint_grid_snap = False
+        self._restore_group_metadata(self.current_mode)
 
         self.build_ui()
 
@@ -86,6 +110,8 @@ class AutoScriptGUI:
         ttk.Button(topbar, text="新建预设", command=self.create_preset).pack(side="left", padx=(0, 8))
         ttk.Button(topbar, text="重命名预设", command=self.rename_current_preset).pack(side="left", padx=(0, 8))
         ttk.Button(topbar, text="复制到预设", command=self.copy_current_preset).pack(side="left", padx=(0, 8))
+        ttk.Button(topbar, text="导出预设", command=self.export_current_preset).pack(side="left", padx=(0, 8))
+        ttk.Button(topbar, text="导入预设", command=self.import_preset).pack(side="left", padx=(0, 8))
         ttk.Button(topbar, text="删除预设", command=self.delete_current_preset).pack(side="left", padx=(0, 8))
         self.refresh_mode_values()
 
@@ -108,8 +134,14 @@ class AutoScriptGUI:
         toolbar.pack(fill="x", padx=14, pady=(0, 8))
         self.start_btn = ttk.Button(toolbar, text="开始执行", command=self.start_script)
         self.start_btn.pack(side="left", padx=(0, 8))
+        self.start_current_btn = ttk.Button(toolbar, text="从当前步骤执行", command=self.start_from_current, state="normal")
+        self.start_current_btn.pack(side="left", padx=(0, 8))
         self.stop_btn = ttk.Button(toolbar, text="停止", command=self.stop_script, state="disabled")
         self.stop_btn.pack(side="left", padx=(0, 8))
+        self.pause_btn = ttk.Button(toolbar, text="暂停", command=self.toggle_pause, state="disabled")
+        self.pause_btn.pack(side="left", padx=(0, 8))
+        self.step_btn = ttk.Button(toolbar, text="单步", command=self.step_script, state="disabled")
+        self.step_btn.pack(side="left", padx=(0, 8))
         self.status_var = tk.StringVar(value="待机")
         ttk.Label(toolbar, textvariable=self.status_var, foreground="#2b7a2b", font=("Microsoft YaHei", 10, "bold")).pack(side="left", padx=(12, 0))
 
@@ -133,6 +165,7 @@ class AutoScriptGUI:
             ("新增组", self.add_group),
             ("复制", self.copy_selected_item), ("删除", self.delete_selected_item),
             ("新增步骤", self.add_task),
+            ("打开蓝图流程", self.open_blueprint_window),
         ]
 
         for i in range(4):
@@ -142,8 +175,10 @@ class AutoScriptGUI:
             btn = ttk.Button(action_row, text=text, command=cmd, width=10)
             btn.grid(row=index // 4, column=index % 4, sticky="ew", padx=(0, 6), pady=2)
 
+        list_tab = task_group
+
         self.task_listbox = tk.Listbox(
-            task_group,
+            list_tab,
             height=18,
             selectmode=tk.EXTENDED,
             exportselection=False,
@@ -314,6 +349,7 @@ class AutoScriptGUI:
         self.group_form.pack_forget()
         self.task_form.pack(fill="both", expand=True)
         self.refresh_task_list()
+        self.blueprint_canvas = None
 
         log_frame = ttk.LabelFrame(self.root, text="日志输出")
         log_frame.pack(fill="both", expand=True, padx=14, pady=(0, 14))
@@ -528,6 +564,131 @@ class AutoScriptGUI:
         self.refresh_task_list()
         self.append_log(f"已删除预设“{preset_name}”。")
 
+    def _collect_bound_image_names(self, value):
+        names = set()
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key in {"template", "templates", "condition_template", "condition_templates", "event_template", "next_template", "next_templates", "stage_templates"}:
+                    names.update(self._collect_bound_image_names(item))
+                elif isinstance(item, (dict, list, tuple)):
+                    names.update(self._collect_bound_image_names(item))
+        elif isinstance(value, (list, tuple, set)):
+            for item in value:
+                names.update(self._collect_bound_image_names(item))
+        elif isinstance(value, str):
+            for name in value.replace("，", ",").split(","):
+                name = name.strip()
+                if name:
+                    names.add(os.path.splitext(os.path.basename(name))[0])
+        return names
+
+    def export_current_preset(self):
+        preset_name = self.current_mode
+        self.save_current_tasks()
+        output_path = filedialog.asksaveasfilename(
+            title="导出预设",
+            defaultextension=".zip",
+            initialfile=f"{preset_name}.zip",
+            filetypes=[("预设压缩包", "*.zip")],
+        )
+        if not output_path:
+            return
+
+        tasks = deepcopy(self.mode_tasks.get(preset_name, TASKS))
+        image_names = sorted(self._collect_bound_image_names(tasks))
+        metadata = deepcopy(self.mode_group_metadata.get(preset_name, {}))
+        payload = {
+            "format": "visionflow-preset",
+            "version": 1,
+            "preset_name": preset_name,
+            "tasks": tasks,
+            "group_metadata": metadata,
+            "blueprint_layout": deepcopy(self.blueprint_layouts.get(preset_name, {})),
+            "blueprint_graph": deepcopy(self.blueprint_graphs.get(preset_name, {})),
+            "images": image_names,
+        }
+        icon_dir = config.ICON_DIR
+        try:
+            with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("preset.json", json.dumps(payload, ensure_ascii=False, indent=2))
+                for image_name in image_names:
+                    image_path = os.path.join(icon_dir, f"{image_name}.png")
+                    if os.path.isfile(image_path):
+                        archive.write(image_path, f"icons/{image_name}.png")
+            self.append_log(f"已导出预设“{preset_name}”：{len(tasks)} 个步骤，{len(image_names)} 个图片引用。")
+            messagebox.showinfo("导出完成", f"预设已导出到：\n{output_path}")
+        except OSError as exc:
+            messagebox.showerror("导出失败", str(exc))
+
+    def import_preset(self):
+        input_path = filedialog.askopenfilename(
+            title="导入预设",
+            filetypes=[("预设压缩包", "*.zip")],
+        )
+        if not input_path:
+            return
+        try:
+            with zipfile.ZipFile(input_path, "r") as archive:
+                if "preset.json" not in archive.namelist():
+                    raise ValueError("压缩包中缺少 preset.json。")
+                payload = json.loads(archive.read("preset.json").decode("utf-8"))
+                if payload.get("format") != "visionflow-preset":
+                    raise ValueError("不是有效的脚本编辑器预设文件。")
+                tasks = payload.get("tasks")
+                if not isinstance(tasks, list):
+                    raise ValueError("预设步骤数据无效。")
+                suggested_name = str(payload.get("preset_name") or "导入预设").strip() or "导入预设"
+                name_var = tk.StringVar(value=suggested_name)
+                name_win = tk.Toplevel(self.root)
+                name_win.title("导入预设名称")
+                name_win.geometry("360x150")
+                name_win.transient(self.root)
+                name_win.grab_set()
+                ttk.Label(name_win, text="保存为预设名称:").pack(anchor="w", padx=14, pady=(14, 6))
+                ttk.Entry(name_win, textvariable=name_var, width=38).pack(padx=14, fill="x")
+                result = {"name": None}
+
+                def confirm_import():
+                    name = name_var.get().strip()
+                    if not name or name.lower() == "custom":
+                        messagebox.showwarning("名称无效", "请输入非 custom 的预设名称。", parent=name_win)
+                        return
+                    if name in self.mode_tasks and not messagebox.askyesno("覆盖预设", f"预设“{name}”已存在，是否覆盖？", parent=name_win):
+                        return
+                    result["name"] = name
+                    name_win.destroy()
+
+                ttk.Button(name_win, text="导入", command=confirm_import).pack(pady=16)
+                self.root.wait_window(name_win)
+                target_name = result["name"]
+                if not target_name:
+                    return
+
+                normalized_tasks = [deepcopy(task) for task in tasks]
+                self.mode_tasks[target_name] = normalized_tasks
+                self.mode_group_metadata[target_name] = deepcopy(payload.get("group_metadata") or {})
+                self.blueprint_layouts[target_name] = deepcopy(payload.get("blueprint_layout") or {})
+                self.blueprint_graphs[target_name] = deepcopy(payload.get("blueprint_graph") or {})
+                self.deleted_preset_names.discard(target_name)
+                for member in archive.namelist():
+                    if not member.startswith("icons/") or not member.lower().endswith(".png"):
+                        continue
+                    filename = os.path.basename(member)
+                    if filename and filename not in (".", ".."):
+                        os.makedirs(config.ICON_DIR, exist_ok=True)
+                        with open(os.path.join(config.ICON_DIR, filename), "wb") as image_file:
+                            image_file.write(archive.read(member))
+                self.save_all_presets()
+                save_blueprint_layouts(self.blueprint_layouts)
+                save_blueprint_graphs(self.blueprint_graphs)
+                self.refresh_mode_values()
+                self.mode_var.set(target_name)
+                self.on_mode_selected()
+                reload_templates()
+                self.append_log(f"已导入预设“{target_name}”：{len(normalized_tasks)} 个步骤。")
+        except (OSError, ValueError, json.JSONDecodeError, zipfile.BadZipFile) as exc:
+            messagebox.showerror("导入失败", str(exc))
+
     def toggle_selected_tasks_by_enter(self, event=None):
         selected_indices = list(self.task_listbox.curselection())
         if not selected_indices:
@@ -591,14 +752,15 @@ class AutoScriptGUI:
         self.special_task_form.pack_forget()
 
     def _render_special_task_config(self, task):
-        for child in self.special_task_container.winfo_children():
+        container = getattr(self, "_active_special_task_container", self.special_task_container)
+        for child in container.winfo_children():
             child.destroy()
 
-        ttk.Label(self.special_task_container, textvariable=self.mode_task_title_var, font=("Microsoft YaHei", 11, "bold")).pack(anchor="w")
-        ttk.Label(self.special_task_container, textvariable=self.mode_task_summary_var, wraplength=520, justify="left", foreground="#374151").pack(anchor="w", pady=(8, 12))
+        ttk.Label(container, textvariable=self.mode_task_title_var, font=("Microsoft YaHei", 11, "bold")).pack(anchor="w")
+        ttk.Label(container, textvariable=self.mode_task_summary_var, wraplength=520, justify="left", foreground="#374151").pack(anchor="w", pady=(8, 12))
 
         task_type = task.get("type", "normal")
-        config_frame = ttk.Frame(self.special_task_container)
+        config_frame = ttk.Frame(container)
         config_frame.pack(fill="both", expand=True)
 
         if task_type == "keyboard_move":
@@ -867,6 +1029,127 @@ class AutoScriptGUI:
 
             ttk.Button(config_frame, text="保存持续点击设置", command=save_click_until_gone).pack(anchor="w", pady=(8, 0))
 
+        elif task_type == "delay":
+            name_var = tk.StringVar(value=str(task.get("description", "延迟步骤")))
+            duration_var = tk.StringVar(value=str(task.get("duration", 1.0)))
+            for label_text, variable in (("步骤名称", name_var), ("延迟时间(秒)", duration_var)):
+                row = ttk.Frame(config_frame)
+                row.pack(fill="x", pady=6)
+                ttk.Label(row, text=f"{label_text}:").pack(side="left", padx=(0, 8))
+                ttk.Entry(row, textvariable=variable, width=24).pack(side="left")
+
+            def save_delay():
+                task["description"] = name_var.get().strip() or "延迟步骤"
+                task["duration"] = max(0.0, float(duration_var.get() or 1.0))
+                self.save_current_tasks()
+                self.refresh_task_list()
+                self.load_task_to_form(self.selected_task_index)
+
+            ttk.Button(config_frame, text="保存延迟设置", command=save_delay).pack(anchor="w", pady=(8, 0))
+
+        elif task_type == "condition":
+            saved_templates = task.get("condition_templates") or task.get("condition_template", task.get("template", ""))
+            if isinstance(saved_templates, (list, tuple)):
+                saved_templates = ", ".join(str(item) for item in saved_templates)
+            template_var = tk.StringVar(value=str(saved_templates))
+            operator_var = tk.StringVar(value=str(task.get("condition_operator", "any")))
+            true_var = tk.StringVar(value=str(task.get("condition_true_jump_to") or ""))
+            false_var = tk.StringVar(value=str(task.get("condition_false_jump_to") or ""))
+            invert_var = tk.BooleanVar(value=bool(task.get("condition_invert", False)))
+            for label_text, variable in (("条件模板(逗号分隔)", template_var), ("成立跳转步骤", true_var), ("不成立跳转步骤", false_var)):
+                row = ttk.Frame(config_frame)
+                row.pack(fill="x", pady=6)
+                ttk.Label(row, text=f"{label_text}:").pack(side="left", padx=(0, 8))
+                ttk.Entry(row, textvariable=variable, width=24).pack(side="left")
+            operator_row = ttk.Frame(config_frame)
+            operator_row.pack(fill="x", pady=6)
+            ttk.Label(operator_row, text="条件运算:").pack(side="left", padx=(0, 8))
+            ttk.Combobox(operator_row, textvariable=operator_var, values=["all", "any", "not"], state="readonly", width=20).pack(side="left")
+            ttk.Checkbutton(config_frame, text="反转条件结果", variable=invert_var).pack(anchor="w", pady=4)
+
+            def save_condition():
+                templates = [item.strip() for item in template_var.get().replace("，", ",").split(",") if item.strip()]
+                task["condition_templates"] = templates
+                task["condition_template"] = templates[0] if templates else ""
+                task["template"] = task["condition_template"]
+                task["condition_operator"] = operator_var.get() or "any"
+                task["condition_invert"] = bool(invert_var.get())
+                task["condition_true_jump_to"] = int(true_var.get()) if true_var.get().strip() else None
+                task["condition_false_jump_to"] = int(false_var.get()) if false_var.get().strip() else None
+                self.save_current_tasks()
+                self.refresh_task_list()
+                self.load_task_to_form(self.selected_task_index)
+
+            ttk.Button(config_frame, text="保存条件设置", command=save_condition).pack(anchor="w", pady=(8, 0))
+
+        elif task_type == "switch":
+            value_var = tk.StringVar(value=str(task.get("switch_value", "")))
+            cases_var = tk.StringVar(value=", ".join(f"{key}:{value}" for key, value in (task.get("switch_cases") or {}).items()))
+            default_var = tk.StringVar(value=str(task.get("switch_default_jump_to") or ""))
+            for label_text, variable in (("选择值", value_var), ("分支(值:步骤号)", cases_var), ("默认步骤号", default_var)):
+                row = ttk.Frame(config_frame)
+                row.pack(fill="x", pady=6)
+                ttk.Label(row, text=f"{label_text}:").pack(side="left", padx=(0, 8))
+                ttk.Entry(row, textvariable=variable, width=28).pack(side="left", fill="x", expand=True)
+
+            def save_switch():
+                cases = {}
+                for item in cases_var.get().replace("，", ",").split(","):
+                    if not item.strip() or ":" not in item:
+                        continue
+                    case_value, target = item.split(":", 1)
+                    if case_value.strip() and target.strip():
+                        cases[case_value.strip()] = int(target.strip())
+                task["switch_value"] = value_var.get().strip()
+                task["switch_cases"] = cases
+                task["switch_default_jump_to"] = int(default_var.get()) if default_var.get().strip() else None
+                self.save_current_tasks()
+                self.refresh_task_list()
+                self.load_task_to_form(self.selected_task_index)
+
+            ttk.Button(config_frame, text="保存选择设置", command=save_switch).pack(anchor="w", pady=(8, 0))
+
+        elif task_type == "loop":
+            count_var = tk.StringVar(value=str(task.get("loop_count", 1)))
+            target_var = tk.StringVar(value=str(task.get("loop_target") or ""))
+            exit_var = tk.StringVar(value=str(task.get("loop_exit_target") or ""))
+            for label_text, variable in (("循环次数", count_var), ("循环体步骤号", target_var), ("退出步骤号", exit_var)):
+                row = ttk.Frame(config_frame)
+                row.pack(fill="x", pady=6)
+                ttk.Label(row, text=f"{label_text}:").pack(side="left", padx=(0, 8))
+                ttk.Entry(row, textvariable=variable, width=24).pack(side="left")
+
+            def save_loop():
+                task["loop_count"] = max(0, int(count_var.get() or 1))
+                task["loop_target"] = int(target_var.get()) if target_var.get().strip() else None
+                task["loop_exit_target"] = int(exit_var.get()) if exit_var.get().strip() else None
+                self.save_current_tasks()
+                self.refresh_task_list()
+                self.load_task_to_form(self.selected_task_index)
+
+            ttk.Button(config_frame, text="保存循环设置", command=save_loop).pack(anchor="w", pady=(8, 0))
+
+        elif task_type == "event":
+            template_var = tk.StringVar(value=str(task.get("event_template", task.get("template", ""))))
+            timeout_var = tk.StringVar(value=str(task.get("event_timeout", 30.0)))
+            failure_var = tk.StringVar(value=str(task.get("event_timeout_target") or ""))
+            for label_text, variable in (("事件模板", template_var), ("等待超时(秒)", timeout_var), ("超时跳转步骤号", failure_var)):
+                row = ttk.Frame(config_frame)
+                row.pack(fill="x", pady=6)
+                ttk.Label(row, text=f"{label_text}:").pack(side="left", padx=(0, 8))
+                ttk.Entry(row, textvariable=variable, width=24).pack(side="left")
+
+            def save_event():
+                task["event_template"] = template_var.get().strip()
+                task["template"] = task["event_template"]
+                task["event_timeout"] = max(0.0, float(timeout_var.get() or 30.0))
+                task["event_timeout_target"] = int(failure_var.get()) if failure_var.get().strip() else None
+                self.save_current_tasks()
+                self.refresh_task_list()
+                self.load_task_to_form(self.selected_task_index)
+
+            ttk.Button(config_frame, text="保存事件设置", command=save_event).pack(anchor="w", pady=(8, 0))
+
     def show_task_editor(self, task=None):
         self.group_form.pack_forget()
         if task is None:
@@ -913,6 +1196,7 @@ class AutoScriptGUI:
             self.mode_task_title_var.set("自定义步骤")
             self.mode_task_summary_var.set(f"模板: {task.get('template', '-')}\n描述: {task.get('description', '-')}")
 
+        self._active_special_task_container = self.special_task_container
         self._render_special_task_config(task)
 
     def open_selected_task_detail_settings(self):
@@ -1467,6 +1751,20 @@ class AutoScriptGUI:
         self.group_order = deepcopy(metadata.get("order", []))
         self.group_parents = deepcopy(metadata.get("parents", {}))
         self.group_children = deepcopy(metadata.get("children", {}))
+        blueprint_metadata = self.blueprint_layouts.get(mode, {})
+        if not blueprint_metadata:
+            blueprint_metadata = metadata.get("blueprint", {})
+        saved_positions = blueprint_metadata.get("positions", {}) if isinstance(blueprint_metadata, dict) else {}
+        self.blueprint_positions[mode] = {
+            int(index): (float(position[0]), float(position[1]))
+            for index, position in saved_positions.items()
+            if isinstance(position, (list, tuple)) and len(position) == 2
+        }
+        if mode == self.current_mode and isinstance(blueprint_metadata, dict):
+            try:
+                self.blueprint_zoom = min(2.0, max(0.45, float(blueprint_metadata.get("zoom", 1.0))))
+            except (TypeError, ValueError):
+                self.blueprint_zoom = 1.0
 
     def save_current_tasks(self):
         self.mode_tasks[self.current_mode] = deepcopy(TASKS)
@@ -1474,6 +1772,13 @@ class AutoScriptGUI:
         if self.current_mode == "custom":
             save_tasks(TASKS)
         self.save_all_presets()
+        self.blueprint_layouts[self.current_mode] = {
+            "positions": deepcopy(self.blueprint_positions.get(self.current_mode, {})),
+            "zoom": self.blueprint_zoom,
+        }
+        save_blueprint_layouts(self.blueprint_layouts)
+        self.blueprint_graphs[self.current_mode] = NodeGraph(TASKS).to_payload()
+        save_blueprint_graphs(self.blueprint_graphs)
 
     def apply_selected_task(self):
         if self.selected_group_id is not None:
@@ -2768,7 +3073,7 @@ class AutoScriptGUI:
 
         add_row = ttk.Frame(win)
         add_row.pack(fill="x", padx=12, pady=(0, 6))
-        ttk.Combobox(add_row, textvariable=step_type_var, values=["normal", "advanced", "key_press", "keyboard_move", "drag", "click_until_gone"], state="readonly", width=20).pack(side="left")
+        ttk.Combobox(add_row, textvariable=step_type_var, values=["normal", "advanced", "condition", "switch", "loop", "event", "key_press", "keyboard_move", "drag", "click_until_gone", "delay"], state="readonly", width=20).pack(side="left")
         ttk.Button(add_row, text="新增步骤", command=lambda: (detour_steps.append({"type": step_type_var.get() or "normal"}), refresh_list())).pack(side="left", padx=(8, 0))
 
         action_row = ttk.Frame(win)
@@ -3211,7 +3516,7 @@ class AutoScriptGUI:
         ttk.Combobox(
             win,
             textvariable=task_type_var,
-            values=["normal", "advanced", "keyboard_move", "key_press", "drag", "click_until_gone"],
+            values=["normal", "advanced", "condition", "switch", "loop", "event", "keyboard_move", "key_press", "drag", "click_until_gone", "delay"],
             state="readonly",
             width=20,
         ).pack()
@@ -3306,6 +3611,59 @@ class AutoScriptGUI:
                     "stop_on_change": False,
                     "required": True,
                 }
+            elif task_type == "condition":
+                new_task = {
+                    "type": "condition",
+                    "mode": "custom",
+                    "template": "",
+                    "condition_template": "",
+                    "description": "新增条件节点",
+                    "condition_true_jump_to": None,
+                    "condition_false_jump_to": None,
+                    "required": True,
+                }
+            elif task_type == "switch":
+                new_task = {
+                    "type": "switch",
+                    "mode": "custom",
+                    "template": "",
+                    "switch_value": "",
+                    "switch_cases": {},
+                    "switch_default_jump_to": None,
+                    "description": "新增选择节点",
+                    "required": True,
+                }
+            elif task_type == "loop":
+                new_task = {
+                    "type": "loop",
+                    "mode": "custom",
+                    "template": "",
+                    "loop_count": 1,
+                    "loop_target": None,
+                    "loop_exit_target": None,
+                    "description": "新增循环节点",
+                    "required": True,
+                }
+            elif task_type == "event":
+                new_task = {
+                    "type": "event",
+                    "mode": "custom",
+                    "template": "",
+                    "event_template": "",
+                    "event_timeout": 30.0,
+                    "event_timeout_target": None,
+                    "description": "新增事件节点",
+                    "required": True,
+                }
+            elif task_type == "delay":
+                new_task = {
+                    "type": "delay",
+                    "mode": "custom",
+                    "template": "",
+                    "description": "新增延迟步骤",
+                    "duration": 1.0,
+                    "required": True,
+                }
             else:
                 new_task = {
                     "type": "normal",
@@ -3373,10 +3731,14 @@ class AutoScriptGUI:
             task_index = self.selected_task_index
         if not (0 <= task_index < len(TASKS)):
             return
+        self.debug_node_states[task_index] = "running"
         self.selected_task_index = task_index
         task_name = TASKS[task_index].get("description", TASKS[task_index].get("template", "步骤"))
         if not messagebox.askyesno("确认删除", f"确定删除步骤“{task_name}”吗？"):
             return
+        self._push_blueprint_history()
+        old_tasks = list(TASKS)
+        self._cleanup_links_after_delete({task_index}, old_tasks)
         del TASKS[task_index]
         self.save_current_tasks()
         self.selected_task_index = min(task_index, max(len(TASKS) - 1, 0))
@@ -3387,6 +3749,37 @@ class AutoScriptGUI:
         else:
             self.clear_task_form()
         self.append_log("已删除当前步骤")
+
+    def _cleanup_links_after_delete(self, removed_indices, old_tasks):
+        removed_indices = set(removed_indices)
+        old_id_to_index = {
+            str(task.get("id")): index
+            for index, task in enumerate(old_tasks)
+            if task.get("id") is not None
+        }
+        new_number_by_old_index = {
+            old_index: new_index + 1
+            for new_index, old_index in enumerate(
+                index for index in range(len(old_tasks)) if index not in removed_indices
+            )
+        }
+        for old_index, task in enumerate(old_tasks):
+            if old_index in removed_indices:
+                continue
+            if task.get("flow_next") is not None:
+                target_index = old_id_to_index.get(str(task.get("flow_next")))
+                if target_index in removed_indices:
+                    task.pop("flow_next", None)
+                    task["flow_next_disabled"] = True
+            for jump_key in ("detour_jump_to", "detour_success_jump_to", "condition_true_jump_to", "condition_false_jump_to"):
+                target_number = task.get(jump_key)
+                if target_number is None:
+                    continue
+                target_index = int(target_number) - 1
+                if target_index in removed_indices:
+                    task[jump_key] = None
+                elif target_index in new_number_by_old_index:
+                    task[jump_key] = new_number_by_old_index[target_index]
 
     def _get_sibling_entries_for_parent(self, parent_group_id):
         parent_group_id = str(parent_group_id or "group_default")
@@ -3489,6 +3882,7 @@ class AutoScriptGUI:
                 if selection_target is not None:
                     self.task_listbox.selection_set(selection_target)
                 self.show_group_editor()
+                self.refresh_blueprint()
                 return
             self.selected_task_index = min(self.selected_task_index if isinstance(self.selected_task_index, int) else 0, len(TASKS) - 1)
             selection_target = self._find_display_index_for_task(self.selected_task_index)
@@ -3498,6 +3892,1338 @@ class AutoScriptGUI:
         else:
             self.selected_task_index = 0
             self.clear_task_form()
+        self.refresh_blueprint()
+
+    def open_blueprint_window(self):
+        if getattr(self, "blueprint_window", None) is not None and self.blueprint_window.winfo_exists():
+            self.blueprint_window.deiconify()
+            self.blueprint_window.lift()
+            return
+
+        win = tk.Toplevel(self.root)
+        win.title(f"蓝图流程 - {self.current_mode}")
+        win.geometry("1480x860")
+        win.minsize(1080, 620)
+        win.transient(self.root)
+        self.blueprint_window = win
+
+        workspace = ttk.Panedwindow(win, orient="horizontal")
+        workspace.pack(fill="both", expand=True, padx=10, pady=10)
+        canvas_panel = ttk.LabelFrame(workspace, text="蓝图流程")
+        editor_panel = ttk.LabelFrame(workspace, text="当前步骤设置")
+        workspace.add(canvas_panel, weight=7)
+        workspace.add(editor_panel, weight=4)
+
+        canvas_toolbar = ttk.Frame(canvas_panel)
+        canvas_toolbar.pack(fill="x", padx=8, pady=8)
+        ttk.Button(canvas_toolbar, text="刷新流程图", command=self.refresh_blueprint).pack(side="left")
+        ttk.Button(canvas_toolbar, text="应用蓝图", command=self.apply_blueprint).pack(side="left", padx=(8, 0))
+        ttk.Button(canvas_toolbar, text="检查蓝图", command=self.validate_blueprint).pack(side="left", padx=(8, 0))
+        ttk.Button(canvas_toolbar, text="自动排列", command=self.auto_arrange_blueprint).pack(side="left", padx=(8, 0))
+        ttk.Button(canvas_toolbar, text="对齐选中", command=self.align_blueprint_selection).pack(side="left", padx=(5, 0))
+        ttk.Checkbutton(canvas_toolbar, text="网格吸附", command=self.toggle_blueprint_grid_snap).pack(side="left", padx=(8, 0))
+        ttk.Label(canvas_toolbar, text="点击节点编辑，拖动节点调整布局").pack(side="left", padx=(10, 0))
+        surface = ttk.Frame(canvas_panel)
+        surface.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        self.blueprint_canvas = tk.Canvas(surface, background="#111827", highlightthickness=0, takefocus=True, scrollregion=(0, 0, 1600, 1200))
+        vertical_scroll = ttk.Scrollbar(surface, orient="vertical", command=self.blueprint_canvas.yview)
+        horizontal_scroll = ttk.Scrollbar(surface, orient="horizontal", command=self.blueprint_canvas.xview)
+        self.blueprint_canvas.configure(yscrollcommand=vertical_scroll.set, xscrollcommand=horizontal_scroll.set)
+        self.blueprint_canvas.grid(row=0, column=0, sticky="nsew")
+        vertical_scroll.grid(row=0, column=1, sticky="ns")
+        horizontal_scroll.grid(row=1, column=0, sticky="ew")
+        surface.grid_rowconfigure(0, weight=1)
+        surface.grid_columnconfigure(0, weight=1)
+        self.blueprint_canvas.bind("<ButtonPress-1>", self.on_blueprint_press)
+        self.blueprint_canvas.bind("<B1-Motion>", self.on_blueprint_motion)
+        self.blueprint_canvas.bind("<ButtonRelease-1>", self.on_blueprint_release)
+        self.blueprint_canvas.bind("<Double-Button-1>", self.on_blueprint_double_click)
+        self.blueprint_canvas.bind("<ButtonPress-2>", self.on_blueprint_pan_start)
+        self.blueprint_canvas.bind("<B2-Motion>", self.on_blueprint_pan_motion)
+        self.blueprint_canvas.bind("<ButtonRelease-2>", self.on_blueprint_pan_end)
+        self.blueprint_canvas.bind("<MouseWheel>", self.on_blueprint_zoom)
+        self.blueprint_canvas.bind("<Button-3>", self.on_blueprint_context_menu)
+        win.bind("<Control-z>", lambda _event: self.undo_blueprint())
+        win.bind("<Control-y>", lambda _event: self.redo_blueprint())
+        win.bind("<Control-c>", lambda _event: self._blueprint_copy_shortcut())
+        win.bind("<Control-v>", lambda _event: self._blueprint_paste_shortcut())
+        win.bind_all("<Control-KeyPress-z>", lambda _event: self.undo_blueprint())
+        win.bind_all("<Control-KeyPress-y>", lambda _event: self.redo_blueprint())
+        win.bind_all("<Control-KeyPress-c>", lambda _event: self._blueprint_copy_shortcut())
+        win.bind_all("<Control-KeyPress-v>", lambda _event: self._blueprint_paste_shortcut())
+        win.bind_all("<MouseWheel>", self.on_blueprint_zoom)
+
+        editor_host = ttk.Frame(editor_panel)
+        editor_host.pack(fill="both", expand=True)
+        form = ttk.Frame(editor_host, padding=12)
+        form.pack(fill="both", expand=True)
+        self.blueprint_editor_form = form
+        self.blueprint_special_task_form = ttk.Frame(editor_host, padding=12)
+        self.blueprint_special_task_container = ttk.Frame(self.blueprint_special_task_form)
+        self.blueprint_special_task_container.pack(fill="both", expand=True)
+        self.blueprint_special_task_form.pack_forget()
+        ttk.Label(form, textvariable=self.summary_var, wraplength=360, justify="left", foreground="#374151").pack(anchor="w", pady=(0, 10))
+
+        action_buttons = ttk.Frame(form)
+        action_buttons.pack(fill="x", pady=(0, 8))
+        ttk.Button(action_buttons, text="绑定图片", command=self.select_task_image).pack(side="left", padx=(0, 5))
+        ttk.Button(action_buttons, text="记录点击点", command=self.capture_current_click_position).pack(side="left", padx=(0, 5))
+        ttk.Button(action_buttons, text="框选识别区域", command=self.capture_current_match_region).pack(side="left", padx=(0, 5))
+        ttk.Button(action_buttons, text="清空识别区域", command=self.clear_current_match_regions).pack(side="left")
+
+        fields = [
+            ("模板名", self.template_var),
+            ("描述", self.description_var),
+            ("X偏移", self.offset_x_var),
+            ("Y偏移", self.offset_y_var),
+            ("点击X", self.click_x_var),
+            ("点击Y", self.click_y_var),
+            ("超时(秒)", self.timeout_var),
+            ("完成后等待", self.after_wait_var),
+        ]
+        for label, variable in fields:
+            row = ttk.Frame(form)
+            row.pack(fill="x", pady=4)
+            ttk.Label(row, text=f"{label}:", width=12, anchor="w").pack(side="left")
+            ttk.Entry(row, textvariable=variable).pack(side="left", fill="x", expand=True)
+
+        region_pairs = [
+            ("左上", self.region_left_var, self.region_top_var),
+            ("右下", self.region_right_var, self.region_bottom_var),
+            ("中心", self.region_center_x_var, self.region_center_y_var),
+        ]
+        for label, x_var, y_var in region_pairs:
+            row = ttk.Frame(form)
+            row.pack(fill="x", pady=3)
+            ttk.Label(row, text=f"{label}:", width=12, anchor="w").pack(side="left")
+            ttk.Label(row, text="X").pack(side="left")
+            ttk.Entry(row, textvariable=x_var, width=8).pack(side="left", padx=(3, 6))
+            ttk.Label(row, text="Y").pack(side="left")
+            ttk.Entry(row, textvariable=y_var, width=8).pack(side="left", fill="x", expand=True)
+
+        next_row = ttk.Frame(form)
+        next_row.pack(fill="x", pady=3)
+        ttk.Label(next_row, text="下一模板:", width=12, anchor="w").pack(side="left")
+        ttk.Entry(next_row, textvariable=self.next_template_var).pack(side="left", fill="x", expand=True)
+        ttk.Button(next_row, text="选择图片", command=self.select_next_template_image).pack(side="left", padx=(5, 0))
+        ttk.Button(next_row, text="框选出现位置", command=self.capture_next_template_region).pack(side="left", padx=(5, 0))
+
+        wait_row = ttk.Frame(form)
+        wait_row.pack(fill="x", pady=3)
+        ttk.Label(wait_row, text="等待方式:", width=12, anchor="w").pack(side="left")
+        ttk.Combobox(wait_row, textvariable=self.wait_for_var, values=["1. 画面结果变化", "2. 等待目标模板出现", "3. 画面变化后目标结果出现"], state="readonly", width=20).pack(side="left", fill="x", expand=True)
+
+        ttk.Checkbutton(form, text="点击", variable=self.click_var).pack(anchor="w", pady=(8, 2))
+        ttk.Checkbutton(form, text="必须识别到图片再点击", variable=self.match_required_var).pack(anchor="w", pady=2)
+        ttk.Checkbutton(form, text="可选步骤（跳过）", variable=self.optional_var).pack(anchor="w", pady=2)
+        button_row = ttk.Frame(form)
+        button_row.pack(fill="x", pady=(14, 0))
+        ttk.Button(button_row, text="应用修改", command=self.apply_selected_task).pack(side="left", padx=(0, 8))
+        ttk.Button(button_row, text="迂回设置", command=self.open_detour_editor).pack(side="left")
+        ttk.Button(form, text="在主窗口显示当前步骤", command=lambda: (self.root.deiconify(), self.root.lift())).pack(anchor="w", pady=(10, 0))
+
+        def close_window():
+            win.unbind_all("<Control-KeyPress-z>")
+            win.unbind_all("<Control-KeyPress-y>")
+            win.unbind_all("<Control-KeyPress-c>")
+            win.unbind_all("<Control-KeyPress-v>")
+            win.unbind_all("<MouseWheel>")
+            self.blueprint_canvas = None
+            self.blueprint_window = None
+            self.blueprint_zoom = 1.0
+            win.destroy()
+
+        win.protocol("WM_DELETE_WINDOW", close_window)
+        self.blueprint_canvas.focus_set()
+        self.refresh_blueprint()
+        if TASKS:
+            self._select_task_in_list(min(self.selected_task_index if isinstance(self.selected_task_index, int) else 0, len(TASKS) - 1))
+
+    def apply_blueprint(self):
+        """保存蓝图中的步骤和连接，并同步主窗口的列表与编辑器。"""
+        validation_errors = self._validate_blueprint_connections()
+        if validation_errors:
+            messagebox.showerror("蓝图连接无效", "\n".join(validation_errors), parent=self.blueprint_window or self.root)
+            return
+        self._apply_blueprint_order()
+        self.save_current_tasks()
+        self.refresh_task_list()
+        if TASKS:
+            selected_index = min(
+                self.selected_task_index if isinstance(self.selected_task_index, int) else 0,
+                len(TASKS) - 1,
+            )
+            self.selected_task_index = selected_index
+            self.load_task_to_form(selected_index)
+        else:
+            self.clear_task_form()
+        self.refresh_blueprint()
+        self.append_log(f"已应用蓝图：{len(TASKS)} 个步骤及其连接逻辑已同步到主界面。")
+
+    def _push_blueprint_history(self):
+        snapshot = {
+            "tasks": deepcopy(TASKS),
+            "positions": deepcopy(self.blueprint_positions.get(self.current_mode, {})),
+            "zoom": self.blueprint_zoom,
+        }
+        if self.blueprint_history and self.blueprint_history[-1] == snapshot:
+            return
+        self.blueprint_history.append(snapshot)
+        self.blueprint_history = self.blueprint_history[-30:]
+        self.blueprint_redo_history.clear()
+
+    def _restore_blueprint_snapshot(self, snapshot):
+        TASKS[:] = deepcopy(snapshot["tasks"])
+        self.blueprint_positions[self.current_mode] = deepcopy(snapshot["positions"])
+        self.blueprint_zoom = snapshot["zoom"]
+        self.selected_task_index = min(self.selected_task_index if isinstance(self.selected_task_index, int) else 0, max(len(TASKS) - 1, 0))
+        self.save_current_tasks()
+        self.refresh_task_list()
+        self.refresh_blueprint()
+        if TASKS:
+            self.load_task_to_form(self.selected_task_index)
+
+    def undo_blueprint(self):
+        if not self.blueprint_history:
+            return "break"
+        current = {
+            "tasks": deepcopy(TASKS),
+            "positions": deepcopy(self.blueprint_positions.get(self.current_mode, {})),
+            "zoom": self.blueprint_zoom,
+        }
+        self.blueprint_redo_history.append(current)
+        self._restore_blueprint_snapshot(self.blueprint_history.pop())
+        return "break"
+
+    def redo_blueprint(self):
+        if not self.blueprint_redo_history:
+            return "break"
+        current = {
+            "tasks": deepcopy(TASKS),
+            "positions": deepcopy(self.blueprint_positions.get(self.current_mode, {})),
+            "zoom": self.blueprint_zoom,
+        }
+        self.blueprint_history.append(current)
+        self._restore_blueprint_snapshot(self.blueprint_redo_history.pop())
+        return "break"
+
+    def toggle_blueprint_grid_snap(self):
+        self.blueprint_grid_snap = not self.blueprint_grid_snap
+        self.refresh_blueprint()
+
+    def auto_arrange_blueprint(self):
+        self._push_blueprint_history()
+        for index in range(len(TASKS)):
+            self.blueprint_positions.setdefault(self.current_mode, {})[index] = (
+                70 + (index % 3) * 270,
+                70 + (index // 3) * 160,
+            )
+        self.save_current_tasks()
+        self.refresh_blueprint()
+
+    def align_blueprint_selection(self):
+        indices = sorted(self.blueprint_selection)
+        if len(indices) < 2:
+            return
+        self._push_blueprint_history()
+        positions = self.blueprint_positions.setdefault(self.current_mode, {})
+        align_y = positions[indices[0]][1]
+        for index in indices[1:]:
+            positions[index] = (positions[index][0], align_y)
+        self.save_current_tasks()
+        self.refresh_blueprint()
+
+    def _validate_blueprint_connections(self):
+        errors = []
+        for task in TASKS:
+            task.setdefault("id", str(uuid.uuid4()))
+        task_id_to_index = {
+            str(task.get("id")): index
+            for index, task in enumerate(TASKS)
+            if task.get("id") is not None
+        }
+        for index, task in enumerate(TASKS):
+            flow_target = task.get("flow_next")
+            if flow_target is not None:
+                target_index = task_id_to_index.get(str(flow_target))
+                if target_index is None:
+                    errors.append(f"步骤 {index + 1} 的普通连接目标不存在。")
+                elif target_index == index:
+                    errors.append(f"步骤 {index + 1} 不能连接到自身。")
+            for jump_key, label in (("detour_jump_to", "未识别"), ("detour_success_jump_to", "识别成功")):
+                target_number = task.get(jump_key)
+                if target_number is None:
+                    continue
+                try:
+                    target_index = int(target_number) - 1
+                except (TypeError, ValueError):
+                    errors.append(f"步骤 {index + 1} 的“{label}”目标不是有效编号。")
+                    continue
+                if not (0 <= target_index < len(TASKS)):
+                    errors.append(f"步骤 {index + 1} 的“{label}”目标不存在。")
+                elif target_index == index:
+                    errors.append(f"步骤 {index + 1} 的“{label}”不能跳转到自身。")
+            timeout_target = task.get("timeout_jump_to")
+            if timeout_target is not None:
+                try:
+                    target_index = int(timeout_target) - 1
+                except (TypeError, ValueError):
+                    errors.append(f"步骤 {index + 1} 的“超时”目标不是有效编号。")
+                else:
+                    if not (0 <= target_index < len(TASKS)):
+                        errors.append(f"步骤 {index + 1} 的“超时”目标不存在。")
+                    elif target_index == index:
+                        errors.append(f"步骤 {index + 1} 的“超时”不能连接到自身。")
+            for jump_key, label in (("condition_true_jump_to", "条件成立"), ("condition_false_jump_to", "条件不成立")):
+                target_number = task.get(jump_key)
+                if target_number is None:
+                    continue
+                try:
+                    target_index = int(target_number) - 1
+                except (TypeError, ValueError):
+                    errors.append(f"步骤 {index + 1} 的“{label}”目标不是有效编号。")
+                    continue
+                if not (0 <= target_index < len(TASKS)):
+                    errors.append(f"步骤 {index + 1} 的“{label}”目标不存在。")
+                elif target_index == index:
+                    errors.append(f"步骤 {index + 1} 的“{label}”不能跳转到自身。")
+            switch_cases = task.get("switch_cases") or {}
+            switch_targets = list(switch_cases.items()) if isinstance(switch_cases, dict) else []
+            for case_value, target_number in switch_targets + [("默认", task.get("switch_default_jump_to"))]:
+                if target_number is None:
+                    continue
+                try:
+                    target_index = int(target_number) - 1
+                except (TypeError, ValueError):
+                    errors.append(f"步骤 {index + 1} 的 Switch「{case_value}」目标不是有效编号。")
+                    continue
+                if not (0 <= target_index < len(TASKS)):
+                    errors.append(f"步骤 {index + 1} 的 Switch「{case_value}」目标不存在。")
+                elif target_index == index:
+                    errors.append(f"步骤 {index + 1} 的 Switch「{case_value}」不能连接到自身。")
+            for jump_key, label in (("loop_target", "循环体"), ("loop_exit_target", "循环退出")):
+                target_number = task.get(jump_key)
+                if target_number is None:
+                    continue
+                try:
+                    target_index = int(target_number) - 1
+                except (TypeError, ValueError):
+                    errors.append(f"步骤 {index + 1} 的“{label}”目标不是有效编号。")
+                    continue
+                if not (0 <= target_index < len(TASKS)):
+                    errors.append(f"步骤 {index + 1} 的“{label}”目标不存在。")
+
+        flow_state = {}
+        def visit(index):
+            state = flow_state.get(index, 0)
+            if state == 1:
+                return True
+            if state == 2:
+                return False
+            flow_state[index] = 1
+            target_id = TASKS[index].get("flow_next")
+            target_index = task_id_to_index.get(str(target_id)) if target_id is not None else None
+            has_cycle = target_index is not None and visit(target_index)
+            flow_state[index] = 2
+            return has_cycle
+
+        for index in range(len(TASKS)):
+            if visit(index):
+                errors.append("蓝图普通连接形成循环，请拆开循环或改用迂回跳转。")
+                break
+        return errors
+
+    def _apply_blueprint_order(self):
+        """按蓝图显式连线重建主列表顺序，未连线步骤按原顺序追加。"""
+        if not TASKS or not any(task.get("flow_next") for task in TASKS):
+            return
+
+        old_tasks = list(TASKS)
+        task_id_to_index = {
+            str(task.get("id")): index
+            for index, task in enumerate(old_tasks)
+            if task.get("id") is not None
+        }
+        incoming = {
+            task_id_to_index[str(task.get("flow_next"))]
+            for task in old_tasks
+            if task.get("flow_next") is not None and str(task.get("flow_next")) in task_id_to_index
+        }
+        starts = [index for index in range(len(old_tasks)) if index not in incoming]
+        ordered_indices = []
+        visited = set()
+        for start_index in starts + list(range(len(old_tasks))):
+            index = start_index
+            while index not in visited:
+                visited.add(index)
+                ordered_indices.append(index)
+                next_id = old_tasks[index].get("flow_next")
+                next_index = task_id_to_index.get(str(next_id)) if next_id is not None else None
+                if next_index is None:
+                    break
+                index = next_index
+
+        if ordered_indices == list(range(len(old_tasks))):
+            return
+
+        old_number_by_id = {
+            str(task.get("id")): index + 1
+            for index, task in enumerate(old_tasks)
+            if task.get("id") is not None
+        }
+        new_number_by_id = {
+            str(old_tasks[old_index].get("id")): new_index + 1
+            for new_index, old_index in enumerate(ordered_indices)
+            if old_tasks[old_index].get("id") is not None
+        }
+        old_positions = self.blueprint_positions.get(self.current_mode, {})
+        new_positions = {
+            new_index: old_positions.get(old_index, (70 + (new_index % 3) * 270, 70 + (new_index // 3) * 160))
+            for new_index, old_index in enumerate(ordered_indices)
+        }
+        reordered_tasks = [old_tasks[index] for index in ordered_indices]
+        for task in reordered_tasks:
+            for jump_key in ("detour_jump_to", "detour_success_jump_to"):
+                old_target = task.get(jump_key)
+                if old_target is None:
+                    continue
+                target_id = next(
+                    (task_id for task_id, number in old_number_by_id.items() if number == int(old_target)),
+                    None,
+                )
+                task[jump_key] = new_number_by_id.get(target_id, old_target)
+        TASKS[:] = reordered_tasks
+        self.blueprint_positions[self.current_mode] = new_positions
+
+    def refresh_blueprint_editor(self, task=None):
+        """根据当前步骤类型切换蓝图窗口右侧的完整设置界面。"""
+        if getattr(self, "blueprint_window", None) is None:
+            return
+        if task is None and isinstance(self.selected_task_index, int) and 0 <= self.selected_task_index < len(TASKS):
+            task = TASKS[self.selected_task_index]
+        if task is None:
+            return
+
+        task_type = task.get("type", "normal")
+        self.blueprint_special_task_form.pack_forget()
+        self.blueprint_editor_form.pack_forget()
+        if task_type in ("normal", "advanced"):
+            self.blueprint_editor_form.pack(fill="both", expand=True)
+            self._active_special_task_container = self.special_task_container
+            return
+
+        self.mode_task_title_var.set({
+            "keyboard_move": "每日移动步骤",
+            "key_press": "按键步骤",
+            "drag": "拖曳步骤",
+            "click_until_gone": "持续点击直到识别步骤",
+            "delay": "延迟步骤",
+            "condition": "条件节点",
+            "switch": "选择节点",
+            "loop": "循环节点",
+            "event": "事件节点",
+        }.get(task_type, "自定义步骤"))
+        if task_type == "keyboard_move":
+            self.mode_task_summary_var.set(f"移动步数: {len(task.get('move_steps', []))}\n仅执行键盘移动序列，不触发额外动作")
+        elif task_type == "key_press":
+            self.mode_task_summary_var.set(f"按键: {task.get('key', 'E')}\n按住时长: {task.get('hold_time', 0.1)} 秒")
+        elif task_type == "drag":
+            self.mode_task_summary_var.set(f"起点: ({task.get('start_x', 0)}, {task.get('start_y', 0)})\n终点: ({task.get('end_x', 100)}, {task.get('end_y', 100)})\n时长: {task.get('duration', 0.25)} 秒")
+        elif task_type == "click_until_gone":
+            self.mode_task_summary_var.set(f"绑定图片: {task.get('template', '-')}\n点击间隔: {task.get('click_interval', 0.5)} 秒\n超时: {task.get('timeout', 30)} 秒")
+        elif task_type == "delay":
+            self.mode_task_summary_var.set(f"延迟: {task.get('duration', 1.0)} 秒")
+        elif task_type == "condition":
+            self.mode_task_summary_var.set(f"条件模板: {task.get('condition_template', task.get('template', '-'))}")
+        elif task_type == "switch":
+            self.mode_task_summary_var.set(f"选择值: {task.get('switch_value', '')}\n分支数: {len(task.get('switch_cases') or {})}")
+        elif task_type == "loop":
+            self.mode_task_summary_var.set(f"循环次数: {task.get('loop_count', 1)}\n循环体: 步骤 {task.get('loop_target', '-')}\n退出: 步骤 {task.get('loop_exit_target', '-')}")
+        elif task_type == "event":
+            self.mode_task_summary_var.set(f"事件模板: {task.get('event_template', task.get('template', '-'))}\n超时: {task.get('event_timeout', 30)} 秒")
+        elif task_type == "switch":
+            self.mode_task_summary_var.set(f"选择值: {task.get('switch_value', '')}\n分支数: {len(task.get('switch_cases') or {})}")
+        elif task_type == "loop":
+            self.mode_task_summary_var.set(f"循环次数: {task.get('loop_count', 1)}\n循环体: 步骤 {task.get('loop_target', '-')}\n退出: 步骤 {task.get('loop_exit_target', '-')}" )
+        else:
+            self.mode_task_summary_var.set(f"模板: {task.get('template', '-')}\n描述: {task.get('description', '-')}")
+        self._active_special_task_container = self.blueprint_special_task_container
+        self.blueprint_special_task_form.pack(fill="both", expand=True)
+        self._render_special_task_config(task)
+
+    def _blueprint_node_position(self, task_index):
+        positions = self.blueprint_positions.setdefault(self.current_mode, {})
+        if task_index not in positions:
+            column = task_index % 3
+            row = task_index // 3
+            positions[task_index] = (70 + column * 270, 70 + row * 160)
+        return positions[task_index]
+
+    def _blueprint_node_size(self, task_index):
+        return 220, 44 if TASKS[task_index].get("blueprint_collapsed") else 112
+
+    def _blueprint_dim_color(self, color, factor=0.62):
+        red = int(color[1:3], 16) / 255
+        green = int(color[3:5], 16) / 255
+        blue = int(color[5:7], 16) / 255
+        hue, lightness, saturation = colorsys.rgb_to_hls(red, green, blue)
+        lightness = max(0.08, min(0.92, lightness * factor))
+        red, green, blue = colorsys.hls_to_rgb(hue, lightness, saturation)
+        return "#%02x%02x%02x" % (int(red * 255), int(green * 255), int(blue * 255))
+
+    def refresh_blueprint(self):
+        if getattr(self, "blueprint_canvas", None) is None:
+            return
+        canvas = self.blueprint_canvas
+        canvas.delete("all")
+        self.blueprint_node_items = {}
+        for task in TASKS:
+            task.setdefault("id", str(uuid.uuid4()))
+        positions = self.blueprint_positions.setdefault(self.current_mode, {})
+        zoom = self.blueprint_zoom
+        active_indices = set(range(len(TASKS)))
+        for index in list(positions):
+            if index not in active_indices:
+                positions.pop(index, None)
+
+        node_width, node_height = 220, 112
+        def draw_edge(source_index, target_index, color, label, offset=0, edge_kind="detour"):
+            if not (0 <= target_index < len(TASKS)):
+                return
+            source_x, source_y = self._blueprint_node_position(source_index)
+            target_x, target_y = self._blueprint_node_position(target_index)
+            _, source_height = self._blueprint_node_size(source_index)
+            _, target_height = self._blueprint_node_size(target_index)
+            if TASKS[source_index].get("blueprint_collapsed"):
+                offset = 0
+            start_x = (source_x + node_width) * zoom
+            start_y = (source_y + source_height / 2 + offset) * zoom
+            end_x = target_x * zoom
+            end_y = (target_y + target_height / 2) * zoom
+            bend_x = (start_x + end_x) / 2
+            edge_tag = f"blueprint_edge:{edge_kind}:{source_index}:{target_index}"
+            saved_bends = (TASKS[source_index].get("blueprint_bends") or {}).get(edge_kind, [])
+            if isinstance(saved_bends, (list, tuple)) and len(saved_bends) == 2 and all(isinstance(value, (int, float)) for value in saved_bends):
+                saved_bends = [saved_bends]
+            valid_bends = [bend for bend in saved_bends if isinstance(bend, (list, tuple)) and len(bend) == 2]
+            if valid_bends:
+                line_points = (start_x, start_y, *[coordinate * zoom for bend in valid_bends for coordinate in bend], end_x, end_y)
+            else:
+                line_points = (start_x, start_y, bend_x, start_y, bend_x, end_y, end_x, end_y)
+            canvas.create_line(
+                *line_points,
+                fill=color,
+                width=2,
+                arrow=tk.LAST,
+                smooth=True,
+                tags=("blueprint_edge", edge_tag),
+            )
+            if self.blueprint_selected_edge == (edge_kind, source_index, target_index) or (edge_kind, source_index, target_index) in self.blueprint_selection_edges:
+                for bend_index, bend in enumerate(valid_bends):
+                    bend_tag = f"blueprint_bend:{edge_kind}:{source_index}:{target_index}:{bend_index}"
+                    canvas.create_oval(
+                        float(bend[0]) * zoom - 5,
+                        float(bend[1]) * zoom - 5,
+                        float(bend[0]) * zoom + 5,
+                        float(bend[1]) * zoom + 5,
+                        fill="#ffffff",
+                        outline="#0f172a",
+                        width=1,
+                        tags=("blueprint_bend", bend_tag),
+                    )
+            if self.blueprint_selected_edge == (edge_kind, source_index, target_index) or (edge_kind, source_index, target_index) in self.blueprint_selection_edges:
+                canvas.itemconfigure(edge_tag, fill="#ffffff", width=4)
+            canvas.create_text(
+                bend_x,
+                (start_y + end_y) / 2 - 8,
+                text=label,
+                fill=color,
+                font=("Microsoft YaHei", 9, "bold"),
+                tags=("blueprint_edge", f"blueprint_edge:{edge_kind}:{source_index}:{target_index}"),
+            )
+
+        task_id_to_index = {str(task.get("id")): index for index, task in enumerate(TASKS)}
+        connected_inputs = set()
+        for source_index, source_task in enumerate(TASKS):
+            flow_target = task_id_to_index.get(str(source_task.get("flow_next"))) if source_task.get("flow_next") is not None else None
+            if flow_target is not None:
+                connected_inputs.add(flow_target)
+            elif not source_task.get("flow_next_disabled"):
+                if source_index + 1 < len(TASKS):
+                    connected_inputs.add(source_index + 1)
+            for target_key in (
+                "detour_jump_to", "detour_success_jump_to", "timeout_jump_to",
+                "condition_true_jump_to", "condition_false_jump_to",
+                "switch_default_jump_to", "loop_target", "loop_exit_target",
+                "event_timeout_target", "event_trigger_target",
+            ):
+                target_value = source_task.get(target_key)
+                if target_value is not None:
+                    try:
+                        target_index = int(target_value) - 1
+                    except (TypeError, ValueError):
+                        target_index = None
+                    if target_index is not None and 0 <= target_index < len(TASKS):
+                        connected_inputs.add(target_index)
+            for target_value in (source_task.get("switch_cases") or {}).values():
+                try:
+                    target_index = int(target_value) - 1
+                except (TypeError, ValueError):
+                    target_index = None
+                if target_index is not None and 0 <= target_index < len(TASKS):
+                    connected_inputs.add(target_index)
+        for index, task in enumerate(TASKS):
+            if task.get("flow_next") is not None:
+                target_index = task_id_to_index.get(str(task.get("flow_next")))
+                if target_index is not None:
+                    start_x, start_y = self._blueprint_node_position(index)
+                    end_x, end_y = self._blueprint_node_position(target_index)
+                    _, source_height = self._blueprint_node_size(index)
+                    _, target_height = self._blueprint_node_size(target_index)
+                    edge_tag = f"blueprint_edge:flow:{index}:{target_index}"
+                    start_point = ((start_x + node_width) * zoom, (start_y + source_height / 2) * zoom)
+                    end_point = (end_x * zoom, (end_y + target_height / 2) * zoom)
+                    saved_bends = (task.get("blueprint_bends") or {}).get("flow", [])
+                    if isinstance(saved_bends, (list, tuple)) and len(saved_bends) == 2 and all(isinstance(value, (int, float)) for value in saved_bends):
+                        saved_bends = [saved_bends]
+                    valid_bends = [bend for bend in saved_bends if isinstance(bend, (list, tuple)) and len(bend) == 2]
+                    line_points = (*start_point, *[coordinate * zoom for bend in valid_bends for coordinate in bend], *end_point) if valid_bends else (*start_point, *end_point)
+                    canvas.create_line(
+                        *line_points,
+                        fill="#38bdf8",
+                        width=3,
+                        arrow=tk.LAST,
+                        tags=("blueprint_edge", edge_tag),
+                    )
+                    if self.blueprint_selected_edge == ("flow", index, target_index) or ("flow", index, target_index) in self.blueprint_selection_edges:
+                        for bend_index, bend in enumerate(valid_bends):
+                            bend_tag = f"blueprint_bend:flow:{index}:{target_index}:{bend_index}"
+                            canvas.create_oval(float(bend[0]) * zoom - 5, float(bend[1]) * zoom - 5, float(bend[0]) * zoom + 5, float(bend[1]) * zoom + 5, fill="#ffffff", outline="#0f172a", width=1, tags=("blueprint_bend", bend_tag))
+                    if self.blueprint_selected_edge == ("flow", index, target_index) or ("flow", index, target_index) in self.blueprint_selection_edges:
+                        canvas.itemconfigure(edge_tag, fill="#ffffff", width=4)
+                    if self.blueprint_active_edge == ("flow", index, target_index):
+                        canvas.itemconfigure(edge_tag, fill="#facc15", width=4)
+            elif not task.get("flow_next_disabled") and index < len(TASKS) - 1:
+                start_x, start_y = self._blueprint_node_position(index)
+                end_x, end_y = self._blueprint_node_position(index + 1)
+                _, source_height = self._blueprint_node_size(index)
+                _, target_height = self._blueprint_node_size(index + 1)
+                edge_tag = f"blueprint_edge:default:{index}:{index + 1}"
+                start_point = ((start_x + node_width) * zoom, (start_y + source_height / 2) * zoom)
+                end_point = (end_x * zoom, (end_y + target_height / 2) * zoom)
+                saved_bends = (task.get("blueprint_bends") or {}).get("default", [])
+                if isinstance(saved_bends, (list, tuple)) and len(saved_bends) == 2 and all(isinstance(value, (int, float)) for value in saved_bends):
+                    saved_bends = [saved_bends]
+                valid_bends = [bend for bend in saved_bends if isinstance(bend, (list, tuple)) and len(bend) == 2]
+                line_points = (*start_point, *[coordinate * zoom for bend in valid_bends for coordinate in bend], *end_point) if valid_bends else (*start_point, *end_point)
+                canvas.create_line(
+                    *line_points,
+                    fill="#64748b",
+                    width=2,
+                    arrow=tk.LAST,
+                    tags=("blueprint_edge", edge_tag),
+                )
+                if self.blueprint_selected_edge == ("default", index, index + 1) or ("default", index, index + 1) in self.blueprint_selection_edges:
+                    for bend_index, bend in enumerate(valid_bends):
+                        bend_tag = f"blueprint_bend:default:{index}:{index + 1}:{bend_index}"
+                        canvas.create_oval(float(bend[0]) * zoom - 5, float(bend[1]) * zoom - 5, float(bend[0]) * zoom + 5, float(bend[1]) * zoom + 5, fill="#ffffff", outline="#0f172a", width=1, tags=("blueprint_bend", bend_tag))
+                if self.blueprint_selected_edge == ("default", index, index + 1) or ("default", index, index + 1) in self.blueprint_selection_edges:
+                    canvas.itemconfigure(edge_tag, fill="#ffffff", width=4)
+                if self.blueprint_active_edge == ("default", index, index + 1):
+                    canvas.itemconfigure(edge_tag, fill="#facc15", width=4)
+
+        # 迂回的两个出口分别表示识别成功和未识别后的跳转。
+        for index, task in enumerate(TASKS):
+            if not task.get("detour_enabled") and task.get("detour_jump_to") is None and task.get("detour_success_jump_to") is None and task.get("timeout_jump_to") is None:
+                if task.get("type") != "condition":
+                    continue
+            failure_target = task.get("detour_jump_to")
+            success_target = task.get("detour_success_jump_to")
+            if failure_target is not None:
+                draw_edge(index, int(failure_target) - 1, "#f97316", "未识别", -20, "detour_failure")
+            if success_target is not None:
+                draw_edge(index, int(success_target) - 1, "#22c55e", "识别成功", 20, "detour_success")
+            timeout_target = task.get("timeout_jump_to")
+            if timeout_target is not None:
+                draw_edge(index, int(timeout_target) - 1, "#facc15", "超时", -40, "timeout")
+            if task.get("type") == "condition":
+                true_target = task.get("condition_true_jump_to")
+                false_target = task.get("condition_false_jump_to")
+                if true_target is not None:
+                    draw_edge(index, int(true_target) - 1, "#22c55e", "成立", 20, "condition_true")
+                if false_target is not None:
+                    draw_edge(index, int(false_target) - 1, "#f97316", "不成立", -20, "condition_false")
+
+        type_colors = {
+            "normal": "#2563eb",
+            "advanced": "#d97706",
+            "keyboard_move": "#16a34a",
+            "key_press": "#7c3aed",
+            "drag": "#db2777",
+            "condition": "#0ea5e9",
+            "switch": "#14b8a6",
+            "loop": "#ef4444",
+        }
+        for index, task in enumerate(TASKS):
+            x, y = self._blueprint_node_position(index)
+            x *= zoom
+            y *= zoom
+            current_width, current_height = self._blueprint_node_size(index)
+            scaled_width = current_width * zoom
+            scaled_height = current_height * zoom
+            node_tag = f"blueprint_node:{index}"
+            task_type = task.get("type", "normal")
+            header_color = task.get("blueprint_color") or type_colors.get(task_type, "#475569")
+            debug_colors = {"running": "#854d0e", "success": "#166534", "failed": "#991b1b"}
+            body_color = debug_colors.get(self.debug_node_states.get(index), "#263449" if task.get("enabled", True) else "#374151")
+            if index == self.selected_task_index and self.selected_group_id is None:
+                body_color = "#334e75"
+            node_outline = "#ffffff" if index in self.blueprint_selection else "#94a3b8"
+            node_outline_width = 3 if index in self.blueprint_selection else 1
+            input_base_color = "#f8fafc"
+            input_connected = index in connected_inputs
+            input_color = input_base_color if input_connected else self._blueprint_dim_color(input_base_color)
+            input_outline = "#ffffff" if input_connected else "#334155"
+            input_outline_width = 2 if input_connected else 1
+            ordinary_output_connected = bool(task.get("flow_next") is not None or (not task.get("flow_next_disabled") and index < len(TASKS) - 1))
+            ordinary_base_color = "#ffffff"
+            ordinary_output_color = ordinary_base_color if ordinary_output_connected else self._blueprint_dim_color(ordinary_base_color)
+            ordinary_outline = "#ffffff" if ordinary_output_connected else "#334155"
+            ordinary_outline_width = 2 if ordinary_output_connected else 1
+            success_key = "condition_true_jump_to" if task_type == "condition" else "detour_success_jump_to"
+            failure_key = "condition_false_jump_to" if task_type == "condition" else "detour_jump_to"
+            success_base_color = "#4ade80"
+            failure_base_color = "#fb923c"
+            timeout_base_color = "#fde047"
+            success_output_color = success_base_color if task.get(success_key) is not None else self._blueprint_dim_color(success_base_color)
+            failure_output_color = failure_base_color if task.get(failure_key) is not None else self._blueprint_dim_color(failure_base_color)
+            timeout_output_color = timeout_base_color if task.get("timeout_jump_to") is not None else self._blueprint_dim_color(timeout_base_color)
+            success_connected = task.get(success_key) is not None
+            failure_connected = task.get(failure_key) is not None
+            timeout_connected = task.get("timeout_jump_to") is not None
+            items = [
+                canvas.create_rectangle(x, y, x + scaled_width, y + scaled_height, fill=body_color, outline=node_outline, width=node_outline_width, tags=(node_tag, "blueprint_item")),
+                canvas.create_rectangle(x, y, x + scaled_width, y + 30 * zoom, fill=header_color, outline=header_color, width=1, tags=(node_tag, "blueprint_item")),
+                canvas.create_text(x + 12 * zoom, y + 15 * zoom, anchor="w", text=f"{index + 1:02d}  {task_type}", fill="#ffffff", font=("Microsoft YaHei", max(7, int(10 * zoom)), "bold"), tags=(node_tag, "blueprint_item")),
+                canvas.create_oval(x - 5 * zoom, y + scaled_height / 2 - 5 * zoom, x + 5 * zoom, y + scaled_height / 2 + 5 * zoom, fill=input_color, outline=input_outline, width=input_outline_width, tags=(node_tag, "blueprint_item")),
+                canvas.create_oval(x + scaled_width - 5 * zoom, y + scaled_height / 2 - 5 * zoom, x + scaled_width + 5 * zoom, y + scaled_height / 2 + 5 * zoom, fill=ordinary_output_color, outline=ordinary_outline, width=ordinary_outline_width, tags=(node_tag, "blueprint_item")),
+            ]
+            if not task.get("blueprint_collapsed"):
+                items.extend([
+                    canvas.create_text(x + 12 * zoom, y + 50 * zoom, anchor="nw", text=str(task.get("description", task.get("template", "未命名步骤")))[:26], fill="#f8fafc", font=("Microsoft YaHei", max(7, int(10 * zoom))), width=max(80, (node_width - 24) * zoom), tags=(node_tag, "blueprint_item")),
+                    canvas.create_text(x + 12 * zoom, y + 91 * zoom, anchor="w", text=(str(task.get("blueprint_comment"))[:21] if task.get("blueprint_comment") else (f"迂回: 成功 -> {task.get('detour_success_jump_to')} | 未识别 -> {task.get('detour_jump_to')}" if task.get("detour_enabled") else f"模板: {str(task.get('template', '无'))[:21]}")), fill="#cbd5e1", font=("Microsoft YaHei", max(7, int(9 * zoom))), tags=(node_tag, "blueprint_item")),
+                ])
+            if task_type in ("normal", "advanced", "condition") and not task.get("blueprint_collapsed"):
+                items.extend([
+                    canvas.create_oval(x + scaled_width - 5 * zoom, y + scaled_height / 2 - 20 * zoom - 5 * zoom, x + scaled_width + 5 * zoom, y + scaled_height / 2 - 20 * zoom + 5 * zoom, fill=failure_output_color, outline="#ffffff" if failure_connected else "#334155", width=2 if failure_connected else 1, tags=(node_tag, "blueprint_item")),
+                    canvas.create_oval(x + scaled_width - 5 * zoom, y + scaled_height / 2 + 20 * zoom - 5 * zoom, x + scaled_width + 5 * zoom, y + scaled_height / 2 + 20 * zoom + 5 * zoom, fill=success_output_color, outline="#ffffff" if success_connected else "#334155", width=2 if success_connected else 1, tags=(node_tag, "blueprint_item")),
+                ])
+            if task_type in ("normal", "advanced") and not task.get("blueprint_collapsed"):
+                items.append(canvas.create_oval(
+                    x + scaled_width - 5 * zoom,
+                    y + scaled_height / 2 - 40 * zoom - 5 * zoom,
+                    x + scaled_width + 5 * zoom,
+                    y + scaled_height / 2 - 40 * zoom + 5 * zoom,
+                    fill=timeout_output_color,
+                    outline="#ffffff" if timeout_connected else "#334155",
+                    width=2 if timeout_connected else 1,
+                    tags=(node_tag, "blueprint_item"),
+                ))
+            self.blueprint_node_items[index] = items
+
+        max_x = max([(self._blueprint_node_position(i)[0] + node_width + 80) * zoom for i in range(len(TASKS))] or [900])
+        max_y = max([(self._blueprint_node_position(i)[1] + self._blueprint_node_size(i)[1] + 80) * zoom for i in range(len(TASKS))] or [500])
+        canvas.configure(scrollregion=(0, 0, max_x, max_y))
+
+    def _blueprint_index_at(self, event):
+        item = self.blueprint_canvas.find_withtag("current")
+        if not item:
+            return None
+        for tag in self.blueprint_canvas.gettags(item[0]):
+            if tag.startswith("blueprint_node:"):
+                try:
+                    return int(tag.split(":", 1)[1])
+                except ValueError:
+                    return None
+        return None
+
+    def _blueprint_port_at(self, event):
+        x = self.blueprint_canvas.canvasx(event.x) / self.blueprint_zoom
+        y = self.blueprint_canvas.canvasy(event.y) / self.blueprint_zoom
+        for index in range(len(TASKS)):
+            node_x, node_y = self._blueprint_node_position(index)
+            node_width, node_height = self._blueprint_node_size(index)
+            center_y = node_y + node_height / 2
+            port_kind = "input"
+            port_y = center_y
+            task_type = TASKS[index].get("type", "normal")
+            if x >= node_x + node_width - 18 and task_type in ("normal", "advanced", "condition") and not TASKS[index].get("blueprint_collapsed"):
+                if task_type in ("normal", "advanced") and abs(y - (center_y - 40)) <= 14:
+                    port_kind = "timeout"
+                    port_y = center_y - 40
+                elif abs(y - (center_y + 20)) <= 14:
+                    port_kind = "detour_success"
+                    port_y = center_y + 20
+                elif abs(y - (center_y - 20)) <= 14:
+                    port_kind = "detour_failure"
+                    port_y = center_y - 20
+            if abs(y - port_y) > 14:
+                continue
+            if abs(x - node_x) <= 14:
+                return index, "input"
+            if abs(x - (node_x + node_width)) <= 14:
+                return index, port_kind if port_kind != "input" else "output"
+        return None
+
+    def on_blueprint_press(self, event):
+        self.blueprint_canvas.focus_set()
+        bend = self._blueprint_bend_at(event)
+        if bend is not None:
+            self.blueprint_bend_drag = bend
+            self.blueprint_drag = None
+            self.blueprint_selected_edge = bend[:3]
+            return
+        index = self._blueprint_index_at(event)
+        edge = self._blueprint_edge_at(event)
+        if edge is not None and index is None:
+            self.blueprint_selected_edge = edge
+            self.blueprint_selection.clear()
+            self.refresh_blueprint()
+            return
+        if index is None or not (0 <= index < len(TASKS)):
+            self.blueprint_selection.clear()
+            self.blueprint_selected_edge = None
+            self.blueprint_box_start = (self.blueprint_canvas.canvasx(event.x), self.blueprint_canvas.canvasy(event.y))
+            self.blueprint_canvas.delete("blueprint_selection_box")
+            self.blueprint_canvas.create_rectangle(*self.blueprint_box_start, *self.blueprint_box_start, outline="#ffffff", dash=(5, 3), tags="blueprint_selection_box")
+            return
+        port = self._blueprint_port_at(event)
+        if port and port[0] == index and port[1] in ("output", "detour_success", "detour_failure", "timeout"):
+            self.blueprint_connection_drag = (index, port[1])
+            self.blueprint_drag = None
+            return
+        ctrl_pressed = bool(event.state & 0x0004)
+        if ctrl_pressed:
+            if index in self.blueprint_selection:
+                self.blueprint_selection.remove(index)
+            else:
+                self.blueprint_selection.add(index)
+            self.blueprint_selected_edge = None
+            self.selected_group_id = None
+            self.selected_task_index = index
+            self._select_task_in_list(index)
+            self.refresh_blueprint()
+            if index not in self.blueprint_selection:
+                return
+        elif index not in self.blueprint_selection:
+            self.blueprint_selection = {index}
+        self.blueprint_selected_edge = None
+        self.blueprint_drag = (
+            index,
+            self.blueprint_canvas.canvasx(event.x) / self.blueprint_zoom,
+            self.blueprint_canvas.canvasy(event.y) / self.blueprint_zoom,
+        )
+        self._push_blueprint_history()
+        self.selected_group_id = None
+        self.selected_task_index = index
+        self._select_task_in_list(index)
+        self.refresh_blueprint()
+
+    def on_blueprint_double_click(self, event):
+        index = self._blueprint_index_at(event)
+        if index is None or not (0 <= index < len(TASKS)):
+            return "break"
+        self.blueprint_selection = {index}
+        self.blueprint_selected_edge = None
+        self.selected_group_id = None
+        self.selected_task_index = index
+        self._select_task_in_list(index)
+        self.toggle_blueprint_node_collapse(index)
+        return "break"
+
+    def on_blueprint_motion(self, event):
+        if getattr(self, "blueprint_bend_drag", None) is not None:
+            edge_kind, source_index, target_index, bend_index = self.blueprint_bend_drag
+            x = self.blueprint_canvas.canvasx(event.x) / self.blueprint_zoom
+            y = self.blueprint_canvas.canvasy(event.y) / self.blueprint_zoom
+            bends = TASKS[source_index].setdefault("blueprint_bends", {}).setdefault(edge_kind, [])
+            if bend_index < len(bends):
+                bends[bend_index] = (x, y)
+                self.refresh_blueprint()
+            return
+        if self.blueprint_connection_drag is not None:
+            source_index, source_port = self.blueprint_connection_drag
+            source_x, source_y = self._blueprint_node_position(source_index)
+            source_width, source_height = self._blueprint_node_size(source_index)
+            zoom = self.blueprint_zoom
+            self.blueprint_canvas.delete("blueprint_connection_preview")
+            port_offset = 20 if source_port == "detour_success" else -20 if source_port == "detour_failure" else -40 if source_port == "timeout" else 0
+            self.blueprint_canvas.create_line(
+                (source_x + source_width) * zoom,
+                (source_y + source_height / 2 + port_offset) * zoom,
+                self.blueprint_canvas.canvasx(event.x),
+                self.blueprint_canvas.canvasy(event.y),
+                fill="#38bdf8",
+                width=3,
+                dash=(8, 4),
+                tags="blueprint_connection_preview",
+            )
+            return
+        if self.blueprint_box_start is not None:
+            current_x = self.blueprint_canvas.canvasx(event.x)
+            current_y = self.blueprint_canvas.canvasy(event.y)
+            self.blueprint_canvas.coords("blueprint_selection_box", *self.blueprint_box_start, current_x, current_y)
+            return
+        if self.blueprint_drag is None:
+            return
+        index, start_x, start_y = self.blueprint_drag
+        current_x = self.blueprint_canvas.canvasx(event.x) / self.blueprint_zoom
+        current_y = self.blueprint_canvas.canvasy(event.y) / self.blueprint_zoom
+        delta_x = current_x - start_x
+        delta_y = current_y - start_y
+        selected = self.blueprint_selection or {index}
+        for selected_index in selected:
+            old_x, old_y = self._blueprint_node_position(selected_index)
+            next_x, next_y = max(20, old_x + delta_x), max(20, old_y + delta_y)
+            if self.blueprint_grid_snap:
+                next_x, next_y = round(next_x / 20) * 20, round(next_y / 20) * 20
+            self.blueprint_positions[self.current_mode][selected_index] = (next_x, next_y)
+        self.blueprint_drag = (index, current_x, current_y)
+        self.refresh_blueprint()
+
+    def on_blueprint_release(self, event):
+        if getattr(self, "blueprint_bend_drag", None) is not None:
+            self.blueprint_bend_drag = None
+            self.save_current_tasks()
+        if self.blueprint_box_start is not None:
+            start_x, start_y = self.blueprint_box_start
+            end_x = self.blueprint_canvas.canvasx(event.x)
+            end_y = self.blueprint_canvas.canvasy(event.y)
+            left, right = sorted((start_x, end_x))
+            top, bottom = sorted((start_y, end_y))
+            self.blueprint_selection = set()
+            for index in range(len(TASKS)):
+                node_x, node_y = self._blueprint_node_position(index)
+                node_width, node_height = self._blueprint_node_size(index)
+                node_right = node_x * self.blueprint_zoom + node_width * self.blueprint_zoom
+                node_bottom = node_y * self.blueprint_zoom + node_height * self.blueprint_zoom
+                node_left = node_x * self.blueprint_zoom
+                node_top = node_y * self.blueprint_zoom
+                if node_left >= left and node_right <= right and node_top >= top and node_bottom <= bottom:
+                    self.blueprint_selection.add(index)
+            self.blueprint_selection_edges = set()
+            task_id_to_index = {str(task.get("id")): index for index, task in enumerate(TASKS)}
+            for source_index, task in enumerate(TASKS):
+                target_index = task_id_to_index.get(str(task.get("flow_next"))) if task.get("flow_next") is not None else None
+                if target_index is not None and source_index in self.blueprint_selection and target_index in self.blueprint_selection:
+                    self.blueprint_selection_edges.add(("flow", source_index, target_index))
+                elif task.get("flow_next") is None and not task.get("flow_next_disabled") and source_index + 1 < len(TASKS):
+                    if source_index in self.blueprint_selection and source_index + 1 in self.blueprint_selection:
+                        self.blueprint_selection_edges.add(("default", source_index, source_index + 1))
+            self.blueprint_canvas.delete("blueprint_selection_box")
+            self.blueprint_box_start = None
+            self.refresh_blueprint()
+        if self.blueprint_connection_drag is not None:
+            source_index, source_port = self.blueprint_connection_drag
+            target_port = self._blueprint_port_at(event)
+            if target_port and target_port[1] == "input" and target_port[0] != source_index:
+                self._push_blueprint_history()
+                for task in TASKS:
+                    task.setdefault("id", str(uuid.uuid4()))
+                target_index = target_port[0]
+                if source_port == "detour_success" and TASKS[source_index].get("type") == "condition":
+                    TASKS[source_index]["condition_true_jump_to"] = target_index + 1
+                elif source_port == "detour_failure" and TASKS[source_index].get("type") == "condition":
+                    TASKS[source_index]["condition_false_jump_to"] = target_index + 1
+                elif source_port == "detour_success":
+                    TASKS[source_index]["detour_enabled"] = True
+                    TASKS[source_index]["detour_success_jump_to"] = target_index + 1
+                elif source_port == "detour_failure":
+                    TASKS[source_index]["detour_enabled"] = True
+                    TASKS[source_index]["detour_jump_to"] = target_index + 1
+                elif source_port == "timeout":
+                    TASKS[source_index]["timeout_jump_to"] = target_index + 1
+                else:
+                    TASKS[source_index]["flow_next"] = TASKS[target_index]["id"]
+                    TASKS[source_index].pop("flow_next_disabled", None)
+                self.save_current_tasks()
+                branch_label = {"detour_success": "识别成功", "detour_failure": "未识别", "timeout": "超时", "output": "顺序"}[source_port]
+                self.append_log(f"已连接步骤 {source_index + 1} [{branch_label}] -> {target_index + 1}")
+                self.refresh_blueprint()
+            self.blueprint_canvas.delete("blueprint_connection_preview")
+            self.blueprint_connection_drag = None
+        elif self.blueprint_drag is not None:
+            self.save_current_tasks()
+        self.blueprint_drag = None
+
+    def on_blueprint_pan_start(self, event):
+        self.blueprint_pan_start = (event.x, event.y)
+        self.blueprint_canvas.scan_mark(event.x, event.y)
+
+    def on_blueprint_pan_motion(self, event):
+        self.blueprint_canvas.scan_dragto(event.x, event.y, gain=1)
+
+    def on_blueprint_pan_end(self, event):
+        self.blueprint_pan_start = None
+
+    def on_blueprint_zoom(self, event):
+        if event.widget != self.blueprint_canvas:
+            return
+        if not (event.state & 0x0004):
+            return
+        old_zoom = self.blueprint_zoom
+        direction = 1 if event.delta > 0 else -1
+        self.blueprint_zoom = min(2.0, max(0.45, old_zoom + direction * 0.1))
+        if self.blueprint_zoom == old_zoom:
+            return "break"
+        canvas_x = self.blueprint_canvas.canvasx(event.x) / old_zoom
+        canvas_y = self.blueprint_canvas.canvasy(event.y) / old_zoom
+        self.refresh_blueprint()
+        self.blueprint_canvas.xview_moveto(max(0.0, (canvas_x * self.blueprint_zoom - event.x) / max(self.blueprint_canvas.winfo_width(), 1)))
+        self.blueprint_canvas.yview_moveto(max(0.0, (canvas_y * self.blueprint_zoom - event.y) / max(self.blueprint_canvas.winfo_height(), 1)))
+        self.save_current_tasks()
+        return "break"
+
+    def _blueprint_copy_shortcut(self):
+        self.copy_blueprint_selection()
+        return "break"
+
+    def _blueprint_paste_shortcut(self):
+        self.paste_blueprint_tasks()
+        return "break"
+
+    def on_blueprint_context_menu(self, event):
+        bend = self._blueprint_bend_at(event)
+        if bend is not None:
+            menu = tk.Menu(self.blueprint_canvas, tearoff=False)
+            menu.add_command(label="删除此转折点", command=lambda: self.delete_blueprint_bend(bend))
+            menu.tk_popup(event.x_root, event.y_root)
+            return
+        index = self._blueprint_index_at(event)
+        edge = self._blueprint_edge_at(event)
+        if edge is not None and index is None:
+            self.blueprint_selected_edge = edge
+            self.blueprint_selection_edges = {edge}
+            self.blueprint_selection.clear()
+            self.refresh_blueprint()
+        if index is not None:
+            self.selected_group_id = None
+            self.selected_task_index = index
+            if index not in self.blueprint_selection:
+                self.blueprint_selection = {index}
+            self.blueprint_selected_edge = None
+            self._select_task_in_list(index)
+
+        menu = tk.Menu(self.blueprint_canvas, tearoff=False)
+        menu.add_command(label="新建步骤", command=self.add_task)
+        if index is not None:
+            if index in self.blueprint_selection and len(self.blueprint_selection) > 1:
+                menu.add_command(label=f"删除选中的 {len(self.blueprint_selection)} 个步骤", command=self.delete_blueprint_selection)
+                menu.add_command(label=f"复制选中的 {len(self.blueprint_selection)} 个步骤", command=self.copy_blueprint_selection)
+            else:
+                menu.add_command(label="删除当前步骤", command=lambda: self.delete_task(index))
+                menu.add_command(label="复制当前步骤", command=self.copy_blueprint_selection)
+                menu.add_command(label="更改当前步骤类型", command=lambda: self.change_blueprint_task_type(index))
+                menu.add_command(label="编辑节点注释", command=lambda: self.edit_blueprint_comment(index))
+                menu.add_command(label="重命名节点", command=lambda: self.rename_blueprint_node(index))
+                menu.add_command(label="更改节点颜色", command=lambda: self.color_blueprint_node(index))
+                menu.add_command(label="折叠/展开节点", command=lambda: self.toggle_blueprint_node_collapse(index))
+        elif self.blueprint_selection:
+            menu.add_command(label=f"删除选中的 {len(self.blueprint_selection)} 个步骤", command=self.delete_blueprint_selection)
+            menu.add_command(label=f"复制选中的 {len(self.blueprint_selection)} 个步骤", command=self.copy_blueprint_selection)
+        menu.add_command(label="粘贴", command=self.paste_blueprint_tasks, state="normal" if self.blueprint_clipboard else "disabled")
+        if edge is not None:
+            menu.add_command(label="在线上添加转折点", command=lambda: self.add_blueprint_bend(edge, event))
+            menu.add_command(label="删除连接", command=lambda: self.delete_blueprint_connection(edge))
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _blueprint_bend_at(self, event):
+        item = self.blueprint_canvas.find_withtag("current")
+        if not item:
+            return None
+        for tag in self.blueprint_canvas.gettags(item[0]):
+            if tag.startswith("blueprint_bend:"):
+                parts = tag.split(":")
+                if len(parts) == 5:
+                    try:
+                        return parts[1], int(parts[2]), int(parts[3]), int(parts[4])
+                    except ValueError:
+                        return None
+        return None
+
+    def add_blueprint_bend(self, edge, event):
+        edge_kind, source_index, _ = edge
+        if not (0 <= source_index < len(TASKS)):
+            return
+        self._push_blueprint_history()
+        x = self.blueprint_canvas.canvasx(event.x) / self.blueprint_zoom
+        y = self.blueprint_canvas.canvasy(event.y) / self.blueprint_zoom
+        TASKS[source_index].setdefault("blueprint_bends", {}).setdefault(edge_kind, []).append((x, y))
+        self.save_current_tasks()
+        self.refresh_blueprint()
+
+    def delete_blueprint_bend(self, bend):
+        edge_kind, source_index, _, bend_index = bend
+        bends = TASKS[source_index].get("blueprint_bends", {}).get(edge_kind, [])
+        if not (0 <= bend_index < len(bends)):
+            return
+        self._push_blueprint_history()
+        bends.pop(bend_index)
+        if not bends:
+            TASKS[source_index].get("blueprint_bends", {}).pop(edge_kind, None)
+        self.save_current_tasks()
+        self.refresh_blueprint()
+
+    def edit_blueprint_comment(self, task_index):
+        if not (0 <= task_index < len(TASKS)):
+            return
+        win = tk.Toplevel(self.blueprint_window or self.root)
+        win.title("编辑节点注释")
+        win.geometry("360x150")
+        win.transient(self.blueprint_window or self.root)
+        win.grab_set()
+        value = tk.StringVar(value=str(TASKS[task_index].get("blueprint_comment", "")))
+        ttk.Label(win, text="节点注释:").pack(anchor="w", padx=14, pady=(14, 6))
+        ttk.Entry(win, textvariable=value, width=42).pack(padx=14, fill="x")
+
+        def save():
+            self._push_blueprint_history()
+            comment = value.get().strip()
+            if comment:
+                TASKS[task_index]["blueprint_comment"] = comment
+            else:
+                TASKS[task_index].pop("blueprint_comment", None)
+            self.save_current_tasks()
+            self.refresh_blueprint()
+            win.destroy()
+
+        ttk.Button(win, text="保存注释", command=save).pack(pady=14)
+
+    def rename_blueprint_node(self, task_index):
+        if not (0 <= task_index < len(TASKS)):
+            return
+        win = tk.Toplevel(self.blueprint_window or self.root)
+        win.title("重命名节点")
+        win.geometry("360x140")
+        win.transient(self.blueprint_window or self.root)
+        win.grab_set()
+        value = tk.StringVar(value=str(TASKS[task_index].get("description", "")))
+        ttk.Label(win, text="节点名称:").pack(anchor="w", padx=14, pady=(14, 6))
+        ttk.Entry(win, textvariable=value, width=42).pack(padx=14, fill="x")
+
+        def save():
+            self._push_blueprint_history()
+            TASKS[task_index]["description"] = value.get().strip() or TASKS[task_index].get("template", "未命名步骤")
+            self.save_current_tasks()
+            self.refresh_task_list()
+            self.refresh_blueprint()
+            win.destroy()
+
+        ttk.Button(win, text="保存名称", command=save).pack(pady=14)
+
+    def color_blueprint_node(self, task_index):
+        if not (0 <= task_index < len(TASKS)):
+            return
+        selected = colorchooser.askcolor(title="选择节点颜色", parent=self.blueprint_window or self.root)
+        if not selected or not selected[1]:
+            return
+        self._push_blueprint_history()
+        TASKS[task_index]["blueprint_color"] = selected[1]
+        self.save_current_tasks()
+        self.refresh_blueprint()
+
+    def toggle_blueprint_node_collapse(self, task_index):
+        if not (0 <= task_index < len(TASKS)):
+            return
+        self._push_blueprint_history()
+        TASKS[task_index]["blueprint_collapsed"] = not bool(TASKS[task_index].get("blueprint_collapsed", False))
+        self.save_current_tasks()
+        self.refresh_blueprint()
+
+    def copy_blueprint_selection(self):
+        indices = sorted(self.blueprint_selection)
+        if not indices and isinstance(self.selected_task_index, int) and 0 <= self.selected_task_index < len(TASKS):
+            indices = [self.selected_task_index]
+        self.blueprint_clipboard = [deepcopy(TASKS[index]) for index in indices]
+        self.append_log(f"已复制 {len(self.blueprint_clipboard)} 个蓝图步骤")
+
+    def delete_blueprint_selection(self):
+        indices = sorted(
+            index for index in self.blueprint_selection
+            if 0 <= index < len(TASKS)
+        )
+        if not indices:
+            return
+        if not messagebox.askyesno("确认删除", f"确定删除选中的 {len(indices)} 个步骤吗？"):
+            return
+        self._push_blueprint_history()
+
+        old_tasks = list(TASKS)
+        self._cleanup_links_after_delete(set(indices), old_tasks)
+        kept_tasks = [task for index, task in enumerate(TASKS) if index not in set(indices)]
+        TASKS[:] = kept_tasks
+        self.blueprint_selection.clear()
+        self.blueprint_selected_edge = None
+        self.selected_task_index = min(indices[0], max(len(TASKS) - 1, 0))
+        self.save_current_tasks()
+        self.refresh_task_list()
+        if TASKS:
+            self.load_task_to_form(self.selected_task_index)
+        else:
+            self.clear_task_form()
+        self.refresh_blueprint()
+        self.append_log(f"已删除选中的 {len(indices)} 个蓝图步骤")
+
+    def paste_blueprint_tasks(self):
+        if not self.blueprint_clipboard:
+            return
+        self._push_blueprint_history()
+        pasted = deepcopy(self.blueprint_clipboard)
+        id_map = {str(task.get("id")): str(uuid.uuid4()) for task in pasted}
+        for task in pasted:
+            task["id"] = id_map.get(str(task.get("id")), str(uuid.uuid4()))
+            if task.get("flow_next") in id_map:
+                task["flow_next"] = id_map[str(task["flow_next"])]
+            else:
+                task.pop("flow_next", None)
+        insert_index = max(self.blueprint_selection, default=self.selected_task_index if isinstance(self.selected_task_index, int) else len(TASKS) - 1) + 1
+        TASKS[insert_index:insert_index] = pasted
+        self.selected_task_index = insert_index
+        self.blueprint_selection = set(range(insert_index, insert_index + len(pasted)))
+        self.save_current_tasks()
+        self.refresh_task_list()
+        self.load_task_to_form(insert_index)
+        self.refresh_blueprint()
+        self.append_log(f"已粘贴 {len(pasted)} 个蓝图步骤")
+
+    def change_blueprint_task_type(self, task_index):
+        if not (0 <= task_index < len(TASKS)):
+            return
+        win = tk.Toplevel(self.blueprint_window or self.root)
+        win.title("更改步骤类型")
+        win.geometry("300x150")
+        win.transient(self.blueprint_window or self.root)
+        win.grab_set()
+        type_var = tk.StringVar(value=TASKS[task_index].get("type", "normal"))
+        ttk.Label(win, text="步骤类型:").pack(anchor="w", padx=14, pady=(16, 6))
+        ttk.Combobox(win, textvariable=type_var, values=["normal", "advanced", "condition", "switch", "loop", "event", "keyboard_move", "key_press", "drag", "click_until_gone", "delay"], state="readonly", width=24).pack(padx=14, fill="x")
+
+        def confirm():
+            task = TASKS[task_index]
+            task_type = type_var.get() or "normal"
+            self._push_blueprint_history()
+            task["type"] = task_type
+            defaults = {
+                "normal": (task.get("template") or "new_step", True),
+                "advanced": (task.get("template") or "new_step", True),
+                "keyboard_move": ("rest_room_entry", False),
+                "key_press": (task.get("key") or "E", False),
+                "drag": ("drag", False),
+                "click_until_gone": (task.get("template") or "", True),
+                "delay": ("", False),
+                "condition": (task.get("condition_template") or "", False),
+                "switch": ("", False),
+                "loop": ("", False),
+                "event": (task.get("event_template") or "", False),
+            }
+            task["template"], task["click"] = defaults[task_type]
+            task["description"] = task.get("description") or f"新增{task_type}步骤"
+            self.selected_task_index = task_index
+            self.selected_group_id = None
+            self.save_current_tasks()
+            self.refresh_task_list()
+            self.load_task_to_form(task_index)
+            self.refresh_blueprint()
+            win.destroy()
+
+        ttk.Button(win, text="确定", command=confirm).pack(pady=16)
+
+    def _blueprint_edge_at(self, event):
+        item = self.blueprint_canvas.find_withtag("current")
+        if not item:
+            return None
+        for tag in self.blueprint_canvas.gettags(item[0]):
+            if tag.startswith("blueprint_edge:"):
+                parts = tag.split(":")
+                if len(parts) == 4:
+                    try:
+                        return parts[1], int(parts[2]), int(parts[3])
+                    except ValueError:
+                        return None
+        return None
+
+    def delete_blueprint_connection(self, edge):
+        edge_kind, source_index, target_index = edge
+        if not (0 <= source_index < len(TASKS)):
+            return
+        source_task = TASKS[source_index]
+        if edge_kind in ("flow", "default"):
+            source_task["flow_next"] = None
+            source_task["flow_next_disabled"] = True
+        elif edge_kind == "detour_success":
+            source_task["detour_success_jump_to"] = None
+        elif edge_kind == "detour_failure":
+            source_task["detour_jump_to"] = None
+        elif edge_kind == "condition_true":
+            source_task["condition_true_jump_to"] = None
+        elif edge_kind == "condition_false":
+            source_task["condition_false_jump_to"] = None
+        elif edge_kind == "timeout":
+            source_task["timeout_jump_to"] = None
+        self.save_current_tasks()
+        self.refresh_blueprint()
+        self.append_log(f"已删除步骤 {source_index + 1} 到步骤 {target_index + 1} 的连接")
+
+    def set_blueprint_edge_bend(self, edge):
+        edge_kind, source_index, target_index = edge
+        if not (0 <= source_index < len(TASKS)):
+            return
+        source_x, source_y = self._blueprint_node_position(source_index)
+        target_x, target_y = self._blueprint_node_position(target_index)
+        bend_map = TASKS[source_index].setdefault("blueprint_bends", {})
+        saved_bend = bend_map.get(edge_kind) or ((source_x + target_x + 220) / 2, (source_y + target_y + 112) / 2)
+        win = tk.Toplevel(self.blueprint_window or self.root)
+        win.title("设置连线转接点")
+        win.geometry("300x150")
+        win.transient(self.blueprint_window or self.root)
+        win.grab_set()
+        x_var = tk.StringVar(value=str(round(saved_bend[0], 1)))
+        y_var = tk.StringVar(value=str(round(saved_bend[1], 1)))
+        for label, variable in (("X", x_var), ("Y", y_var)):
+            row = ttk.Frame(win)
+            row.pack(fill="x", padx=14, pady=5)
+            ttk.Label(row, text=f"转接点 {label}:", width=10).pack(side="left")
+            ttk.Entry(row, textvariable=variable).pack(side="left", fill="x", expand=True)
+
+        def save():
+            self._push_blueprint_history()
+            bend_map[edge_kind] = (float(x_var.get()), float(y_var.get()))
+            self.save_current_tasks()
+            self.refresh_blueprint()
+            win.destroy()
+
+        ttk.Button(win, text="保存转接点", command=save).pack(pady=10)
+
+    def clear_blueprint_edge_bend(self, edge):
+        edge_kind, source_index, _ = edge
+        if not (0 <= source_index < len(TASKS)):
+            return
+        bends = TASKS[source_index].get("blueprint_bends") or {}
+        if edge_kind in bends:
+            self._push_blueprint_history()
+            bends.pop(edge_kind, None)
+            self.save_current_tasks()
+            self.refresh_blueprint()
+
+    def _select_task_in_list(self, task_index):
+        display_index = self._find_display_index_for_task(task_index)
+        if display_index is not None:
+            self.task_listbox.selection_clear(0, tk.END)
+            self.task_listbox.selection_set(display_index)
+            self.task_listbox.see(display_index)
+        self.show_task_editor()
+        self.load_task_to_form(task_index)
+        self.refresh_blueprint_editor(TASKS[task_index])
 
     def _append_task_drag_handle(self, label):
         """在任务行右侧显示专用拖动手柄。"""
@@ -3943,6 +5669,14 @@ class AutoScriptGUI:
         self.log_box.configure(state="disabled")
 
     def start_script(self):
+        self._start_script_from_node(None)
+
+    def start_from_current(self):
+        if not (isinstance(self.selected_task_index, int) and 0 <= self.selected_task_index < len(TASKS)):
+            return
+        self._start_script_from_node(TASKS[self.selected_task_index].get("id"))
+
+    def _start_script_from_node(self, start_node_id):
         if self.worker_thread and self.worker_thread.is_alive():
             return
 
@@ -3954,9 +5688,14 @@ class AutoScriptGUI:
         config.USE_WINDOW_MODE = bool(window_title)
 
         self.stop_event.clear()
+        self.pause_event.clear()
+        self.single_step_event.clear()
+        self.debug_node_states.clear()
         self.status_var.set("运行中")
         self.start_btn.config(state="disabled")
         self.stop_btn.config(state="normal")
+        self.pause_btn.config(state="normal", text="暂停")
+        self.step_btn.config(state="normal")
         self.append_log(f"脚本启动... 当前功能: {mode}，任务路径: {[task.get('description', task.get('template', 'unknown')) for task in selected_tasks]}")
         if window_title:
             self.append_log(f"目标窗口: {window_title}")
@@ -3965,24 +5704,51 @@ class AutoScriptGUI:
 
         self.worker_thread = threading.Thread(
             target=self.run_worker,
-            args=(selected_tasks,),
+            args=(selected_tasks, start_node_id),
             daemon=True,
         )
         self.worker_thread.start()
 
     def stop_script(self):
         self.stop_event.set()
+        self.pause_event.clear()
+        self.single_step_event.set()
         self.status_var.set("停止中")
         self.append_log("正在停止脚本...")
         self.stop_btn.config(state="disabled")
 
-    def run_worker(self, selected_tasks):
+    def toggle_pause(self):
+        if not self.worker_thread or not self.worker_thread.is_alive():
+            return
+        if self.pause_event.is_set():
+            self.pause_event.clear()
+            self.pause_btn.config(text="暂停")
+            self.status_var.set("运行中")
+        else:
+            self.pause_event.set()
+            self.pause_btn.config(text="继续")
+            self.status_var.set("已暂停")
+
+    def step_script(self):
+        if not self.worker_thread or not self.worker_thread.is_alive():
+            return
+        self.pause_event.set()
+        self.pause_btn.config(text="继续")
+        self.single_step_event.set()
+        self.status_var.set("单步执行")
+
+    def run_worker(self, selected_tasks, start_node_id=None):
         try:
             run_task_queue(
                 selected_tasks,
                 loop=self.loop_var.get(),
                 stop_flag=self.stop_event,
                 log_callback=self.append_log,
+                execution_callback=self.on_execution_task,
+                execution_result_callback=self.on_execution_result,
+                pause_flag=self.pause_event,
+                single_step_flag=self.single_step_event,
+                start_node_id=start_node_id,
             )
             self.status_var.set("已停止" if self.stop_event.is_set() else "已完成")
             self.append_log("脚本执行结束。")
@@ -3992,6 +5758,106 @@ class AutoScriptGUI:
         finally:
             self.start_btn.config(state="normal")
             self.stop_btn.config(state="disabled")
+            self.pause_btn.config(state="disabled", text="暂停")
+            self.step_btn.config(state="disabled")
+
+    def on_execution_task(self, task):
+        """在 GUI 线程中高亮当前正在执行的蓝图节点。"""
+        task_id = str(task.get("id")) if task.get("id") is not None else None
+        task_index = next(
+            (index for index, item in enumerate(TASKS) if task_id and str(item.get("id")) == task_id),
+            None,
+        )
+        if task_index is None:
+            try:
+                task_index = int(task.get("_outer_step_number")) - 1
+            except (TypeError, ValueError):
+                return
+        if not (0 <= task_index < len(TASKS)):
+            return
+
+        def update():
+            previous_index = getattr(self, "blueprint_active_task_index", None)
+            if previous_index is not None and previous_index != task_index:
+                previous_task = TASKS[previous_index]
+                target_index = next(
+                    (index for index, item in enumerate(TASKS) if item.get("id") == previous_task.get("flow_next")),
+                    None,
+                )
+                if target_index == task_index:
+                    self.blueprint_active_edge = ("flow", previous_index, task_index)
+                elif previous_task.get("flow_next") is None and task_index == previous_index + 1:
+                    self.blueprint_active_edge = ("default", previous_index, task_index)
+            self.blueprint_active_task_index = task_index
+            self.selected_group_id = None
+            self.selected_task_index = task_index
+            if getattr(self, "blueprint_canvas", None) is not None:
+                self.blueprint_selection = {task_index}
+                self.refresh_blueprint()
+
+        try:
+            self.root.after(0, update)
+        except tk.TclError:
+            return
+
+    def on_execution_result(self, task, state):
+        task_id = str(task.get("id")) if task.get("id") is not None else None
+        task_index = next((index for index, item in enumerate(TASKS) if task_id and str(item.get("id")) == task_id), None)
+        if task_index is None:
+            return
+        self.debug_node_states[task_index] = state
+        if getattr(self, "blueprint_canvas", None) is not None:
+            try:
+                self.root.after(0, self.refresh_blueprint)
+            except tk.TclError:
+                return
+
+    def validate_blueprint(self):
+        errors = NodeGraph(TASKS).validate()
+        errors.extend(self._validate_blueprint_connections())
+        errors = list(dict.fromkeys(errors))
+        if TASKS:
+            id_to_index = {str(task.get("id")): index for index, task in enumerate(TASKS)}
+            incoming = {
+                id_to_index[str(task.get("flow_next"))]
+                for task in TASKS
+                if task.get("flow_next") is not None and str(task.get("flow_next")) in id_to_index
+            }
+            entry = next((index for index in range(len(TASKS)) if index not in incoming), 0)
+            reachable = set()
+            pending = [entry]
+            while pending:
+                index = pending.pop()
+                if index in reachable or not (0 <= index < len(TASKS)):
+                    continue
+                reachable.add(index)
+                task = TASKS[index]
+                targets = []
+                target_index = id_to_index.get(str(task.get("flow_next"))) if task.get("flow_next") is not None else None
+                if target_index is not None:
+                    targets.append(target_index)
+                for key in ("detour_jump_to", "detour_success_jump_to", "condition_true_jump_to", "condition_false_jump_to", "switch_default_jump_to", "loop_target", "loop_exit_target", "event_timeout_target", "timeout_jump_to"):
+                    value = task.get(key)
+                    if value is not None:
+                        try:
+                            targets.append(int(value) - 1)
+                        except (TypeError, ValueError):
+                            pass
+                for value in (task.get("switch_cases") or {}).values():
+                    try:
+                        targets.append(int(value) - 1)
+                    except (TypeError, ValueError):
+                        pass
+                if target_index is None and not task.get("flow_next_disabled") and index + 1 < len(TASKS):
+                    targets.append(index + 1)
+                pending.extend(targets)
+            unreachable = [str(index + 1) for index in range(len(TASKS)) if index not in reachable]
+            if unreachable:
+                errors.append(f"不可达步骤: {', '.join(unreachable)}")
+        if errors:
+            messagebox.showwarning("蓝图检查结果", "\n".join(errors), parent=self.blueprint_window or self.root)
+        else:
+            messagebox.showinfo("蓝图检查结果", "蓝图连接完整，未发现不可达步骤。", parent=self.blueprint_window or self.root)
 
 
 if __name__ == "__main__":

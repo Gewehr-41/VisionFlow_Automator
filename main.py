@@ -6,6 +6,7 @@ from tkinter import messagebox
 import numpy as np
 import pyautogui
 
+import config
 from config import ICON_DIR, THRESHOLD, SHOW_PREVIEW, DEFAULT_TIMEOUT, DEFAULT_POLL_INTERVAL, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP
 from core.screen import capture_screen, to_global_position, get_window_rect
 from core.template_match import load_templates, match_all_templates
@@ -15,6 +16,17 @@ from nodes import NodeGraph, TaskNode
 
 
 templates = load_templates(ICON_DIR)
+_active_pause_flag = None
+_single_step_active = False
+
+
+def get_task_threshold(task=None):
+    """读取步骤匹配阈值；未设置时使用 config.py 中的全局默认值。"""
+    value = task.get("threshold") if isinstance(task, dict) else None
+    try:
+        return float(config.THRESHOLD if value in (None, "") else value)
+    except (TypeError, ValueError):
+        return float(config.THRESHOLD)
 
 
 def interruptible_sleep(duration, stop_flag=None):
@@ -23,7 +35,19 @@ def interruptible_sleep(duration, stop_flag=None):
     if stop_flag is None:
         time.sleep(duration)
         return False
-    return stop_flag.wait(duration)
+    deadline = time.monotonic() + duration
+    while True:
+        if stop_flag.is_set():
+            return True
+        pause_flag = _active_pause_flag
+        if pause_flag is not None and pause_flag.is_set() and not _single_step_active:
+            stop_flag.wait(0.1)
+            continue
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        if stop_flag.wait(min(remaining, 0.1)):
+            return True
 
 
 def reload_templates():
@@ -85,12 +109,12 @@ def find_leftmost_match(results, template_names):
     return best_name, best_center, best_conf
 
 
-def wait_until_template_disappears(template_name, timeout=DEFAULT_TIMEOUT, poll_interval=DEFAULT_POLL_INTERVAL, stop_flag=None):
+def wait_until_template_disappears(template_name, timeout=DEFAULT_TIMEOUT, poll_interval=DEFAULT_POLL_INTERVAL, stop_flag=None, threshold=THRESHOLD):
     """等待模板消失。"""
     start = time.time()
     while True:
         screen_img = capture_screen()
-        results = match_all_templates(screen_img, templates, THRESHOLD, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP)
+        results = match_all_templates(screen_img, templates, threshold, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP)
         center, _ = results.get(template_name, (None, -1.0))
         if center is None:
             return True
@@ -100,12 +124,12 @@ def wait_until_template_disappears(template_name, timeout=DEFAULT_TIMEOUT, poll_
             return False
 
 
-def wait_until_template_appears(template_name, timeout=DEFAULT_TIMEOUT, poll_interval=DEFAULT_POLL_INTERVAL, search_rect=None, stop_flag=None):
+def wait_until_template_appears(template_name, timeout=DEFAULT_TIMEOUT, poll_interval=DEFAULT_POLL_INTERVAL, search_rect=None, stop_flag=None, threshold=THRESHOLD):
     """等待模板出现。"""
     start = time.time()
     while True:
         screen_img = capture_screen()
-        results = match_all_templates(screen_img, templates, THRESHOLD, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP, search_rect=search_rect)
+        results = match_all_templates(screen_img, templates, threshold, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP, search_rect=search_rect)
         center, conf = results.get(template_name, (None, -1.0))
         if center is not None:
             return center, conf
@@ -115,7 +139,7 @@ def wait_until_template_appears(template_name, timeout=DEFAULT_TIMEOUT, poll_int
             return None, None
 
 
-def wait_until_any_template_appears(template_names, timeout=DEFAULT_TIMEOUT, poll_interval=DEFAULT_POLL_INTERVAL, search_rect=None, stop_flag=None):
+def wait_until_any_template_appears(template_names, timeout=DEFAULT_TIMEOUT, poll_interval=DEFAULT_POLL_INTERVAL, search_rect=None, stop_flag=None, threshold=THRESHOLD):
     """等待任一模板出现，并返回匹配到的模板名。"""
     template_names = normalize_template_names(template_names)
     if not template_names:
@@ -124,7 +148,7 @@ def wait_until_any_template_appears(template_names, timeout=DEFAULT_TIMEOUT, pol
     start = time.time()
     while True:
         screen_img = capture_screen()
-        results = match_all_templates(screen_img, templates, THRESHOLD, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP, search_rect=search_rect)
+        results = match_all_templates(screen_img, templates, threshold, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP, search_rect=search_rect)
         name, center, conf = find_first_match(results, template_names)
         if center is not None:
             return name, center, conf
@@ -148,7 +172,7 @@ def wait_for_step_result(task, template_name=None, next_template_names=None, tim
 
     while True:
         current = capture_screen()
-        results = match_all_templates(current, templates, THRESHOLD, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP, search_rect=task.get("next_match_rect") or task.get("next_search_rect"))
+        results = match_all_templates(current, templates, get_task_threshold(task), USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP, search_rect=task.get("next_match_rect") or task.get("next_search_rect"))
         diff = float(np.mean(np.abs(current.astype(np.int16) - baseline.astype(np.int16))))
         if diff > 2.0:
             screen_changed = True
@@ -245,6 +269,7 @@ def execute_stage_farm_task(task, stop_flag=None, log_callback=None):
                     timeout=get_task_timeout(task, 12),
                     search_rect=task.get("next_match_rect") or task.get("next_search_rect"),
                     stop_flag=stop_flag,
+                    threshold=get_task_threshold(task),
                 )
                 if next_center is not None:
                     log(f"  检测到下一步 UI '{next_name}'，置信度 {next_conf:.2f}，坐标 {next_center}", log_callback)
@@ -327,7 +352,7 @@ def resolve_search_rects(task):
     return [rect] if rect is not None else []
 
 
-def match_in_expanding_rect(screen_img, match_templates, search_rect):
+def match_in_expanding_rect(screen_img, match_templates, search_rect, threshold=THRESHOLD):
     """先匹配框选区域，未命中时以中心为基准逐次扩大到整张截图。"""
     screen_height, screen_width = screen_img.shape[:2]
     left, top, right, bottom = map(int, search_rect)
@@ -351,7 +376,7 @@ def match_in_expanding_rect(screen_img, match_templates, search_rect):
         results = match_all_templates(
             screen_img,
             match_templates,
-            THRESHOLD,
+            threshold,
             USE_MULTI_SCALE,
             SCALE_RANGE,
             SCALE_STEP,
@@ -397,7 +422,7 @@ def match_task_templates(task, screen_img, template_names=None):
             results = match_all_templates(
                 screen_img,
                 match_templates,
-                THRESHOLD,
+                get_task_threshold(task),
                 USE_MULTI_SCALE,
                 SCALE_RANGE,
                 SCALE_STEP,
@@ -409,13 +434,13 @@ def match_task_templates(task, screen_img, template_names=None):
                     merged_results[name] = result
         return merged_results
     if search_rects:
-        return match_in_expanding_rect(screen_img, match_templates, search_rects[0])
+        return match_in_expanding_rect(screen_img, match_templates, search_rects[0], get_task_threshold(task))
 
     center, radius = task_match_region(task)
     return match_all_templates(
         screen_img,
         match_templates,
-        THRESHOLD,
+        get_task_threshold(task),
         USE_MULTI_SCALE,
         SCALE_RANGE,
         SCALE_STEP,
@@ -424,7 +449,7 @@ def match_task_templates(task, screen_img, template_names=None):
     )
 
 
-def click_template_name(template_name, offset=(0, 0), timeout=DEFAULT_TIMEOUT, fallback_position=None, log_callback=None, poll_interval=DEFAULT_POLL_INTERVAL, stop_flag=None):
+def click_template_name(template_name, offset=(0, 0), timeout=DEFAULT_TIMEOUT, fallback_position=None, log_callback=None, poll_interval=DEFAULT_POLL_INTERVAL, stop_flag=None, threshold=THRESHOLD):
     """持续扫描目标模板；记录点击点只用于点击，四元组参数才用于限制识别区域。"""
     start_time = time.time()
     while True:
@@ -436,9 +461,9 @@ def click_template_name(template_name, offset=(0, 0), timeout=DEFAULT_TIMEOUT, f
         screen_img = capture_screen()
         if isinstance(fallback_position, (list, tuple)) and len(fallback_position) >= 4:
             match_templates = {template_name: templates[template_name]} if template_name in templates else {}
-            results = match_in_expanding_rect(screen_img, match_templates, fallback_position)
+            results = match_in_expanding_rect(screen_img, match_templates, fallback_position, threshold)
         else:
-            results = match_all_templates(screen_img, templates, THRESHOLD, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP)
+            results = match_all_templates(screen_img, templates, threshold, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP)
         center, conf = results.get(template_name, (None, -1.0))
         if center is not None:
             click_target = None
@@ -558,21 +583,21 @@ def execute_reward_claim_task(task, stop_flag=None, log_callback=None):
     fallback_position = resolve_search_rect(task) or resolve_click_position(task)
 
     if entry_template:
-        if not click_template_name(entry_template, offset=task.get("offset", (0, 0)), timeout=get_task_timeout(task, 5), fallback_position=fallback_position, log_callback=log_callback, stop_flag=stop_flag):
+        if not click_template_name(entry_template, offset=task.get("offset", (0, 0)), timeout=get_task_timeout(task, 5), fallback_position=fallback_position, log_callback=log_callback, stop_flag=stop_flag, threshold=get_task_threshold(task)):
             if task.get("required", True):
                 raise RuntimeError(f"奖励入口模板 '{entry_template}' 未出现，脚本停止。")
             return False
         wait_for_step_result(task, template_name=entry_template, log_callback=log_callback, stop_flag=stop_flag)
 
     if confirm_template:
-        if not click_template_name(confirm_template, offset=(0, 0), timeout=get_task_timeout(task, 5), fallback_position=resolve_search_rect(task) or resolve_click_position({**task, "click_position": task.get("confirm_click_position") or task.get("click_position")}), log_callback=log_callback, stop_flag=stop_flag):
+        if not click_template_name(confirm_template, offset=(0, 0), timeout=get_task_timeout(task, 5), fallback_position=resolve_search_rect(task) or resolve_click_position({**task, "click_position": task.get("confirm_click_position") or task.get("click_position")}), log_callback=log_callback, stop_flag=stop_flag, threshold=get_task_threshold(task)):
             if task.get("required", True):
                 raise RuntimeError(f"确认奖励模板 '{confirm_template}' 未出现，脚本停止。")
             return False
         wait_for_step_result(task, template_name=confirm_template, log_callback=log_callback, stop_flag=stop_flag)
 
     if back_template:
-        if not click_template_name(back_template, offset=(0, 0), timeout=get_task_timeout(task, 5), fallback_position=resolve_search_rect(task) or resolve_click_position({**task, "click_position": task.get("back_click_position") or task.get("click_position")}), log_callback=log_callback, stop_flag=stop_flag):
+        if not click_template_name(back_template, offset=(0, 0), timeout=get_task_timeout(task, 5), fallback_position=resolve_search_rect(task) or resolve_click_position({**task, "click_position": task.get("back_click_position") or task.get("click_position")}), log_callback=log_callback, stop_flag=stop_flag, threshold=get_task_threshold(task)):
             if task.get("required", True):
                 raise RuntimeError(f"返回主菜单模板 '{back_template}' 未出现，脚本停止。")
             return False
@@ -586,7 +611,7 @@ def execute_event_entry_task(task, stop_flag=None, log_callback=None):
     tpl_name = task.get("template")
     if not tpl_name:
         return True
-    clicked = click_template_name(tpl_name, offset=task.get("offset", (0, 0)), timeout=get_task_timeout(task, 8), fallback_position=resolve_search_rect(task) or resolve_click_position(task), log_callback=log_callback, stop_flag=stop_flag)
+    clicked = click_template_name(tpl_name, offset=task.get("offset", (0, 0)), timeout=get_task_timeout(task, 8), fallback_position=resolve_search_rect(task) or resolve_click_position(task), log_callback=log_callback, stop_flag=stop_flag, threshold=get_task_threshold(task))
     if clicked:
         wait_for_step_result(task, template_name=tpl_name, next_template_names=task.get("next_template"), log_callback=log_callback, stop_flag=stop_flag)
     return clicked
@@ -704,7 +729,7 @@ def execute_condition_task(task, stop_flag=None, log_callback=None):
     if not template_names:
         raise ValueError("条件节点必须配置 condition_template。")
     screen_img = capture_screen()
-    results = match_all_templates(screen_img, templates, THRESHOLD, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP, search_rect=task.get("search_rect"))
+    results = match_all_templates(screen_img, templates, get_task_threshold(task), USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP, search_rect=task.get("search_rect"))
     matches = [results.get(name, (None, -1.0))[0] is not None for name in template_names]
     operator = str(task.get("condition_operator", "any" if len(matches) > 1 else "all")).lower()
     if operator == "all":
@@ -747,6 +772,7 @@ def execute_event_task(task, stop_flag=None, log_callback=None):
         timeout=timeout,
         search_rect=task.get("search_rect"),
         stop_flag=stop_flag,
+        threshold=get_task_threshold(task),
     )
     if center is not None:
         log(f"  事件已触发，置信度 {confidence:.2f}。", log_callback)
@@ -834,7 +860,7 @@ def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True):
             wait_mode = task.get("wait_for", "time")
             wait_succeeded = True
             if wait_mode == "disappear":
-                wait_result = wait_until_template_disappears(tpl_name, timeout=get_task_timeout(task, 12), stop_flag=stop_flag)
+                wait_result = wait_until_template_disappears(tpl_name, timeout=get_task_timeout(task, 12), stop_flag=stop_flag, threshold=get_task_threshold(task))
                 wait_succeeded = bool(wait_result)
                 if wait_result:
                     log(f"  '{tpl_name}' 已消失，继续下一步。", log_callback)
@@ -849,6 +875,7 @@ def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True):
                     timeout=get_task_timeout(task, 12),
                     search_rect=task.get("next_match_rect") or task.get("next_search_rect"),
                     stop_flag=stop_flag,
+                    threshold=get_task_threshold(task),
                 )
                 wait_succeeded = next_center is not None
                 if next_center is None:
@@ -921,6 +948,9 @@ def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True):
 
 def run_task_queue(tasks, loop=False, stop_flag=None, log_callback=None, execution_callback=None, execution_result_callback=None, pause_flag=None, single_step_flag=None, start_node_id=None):
     """按顺序执行任务列表。"""
+    global _active_pause_flag, _single_step_active
+    _active_pause_flag = pause_flag
+    _single_step_active = False
     log("开始执行自动脚本，按 Ctrl+C 手动停止", log_callback)
 
     try:
@@ -962,6 +992,7 @@ def run_task_queue(tasks, loop=False, stop_flag=None, log_callback=None, executi
                     while pause_flag.is_set() and not (stop_flag is not None and stop_flag.is_set()):
                         if single_step_flag is not None and single_step_flag.wait(0.1):
                             single_step_flag.clear()
+                            _single_step_active = True
                             break
                     if stop_flag is not None and stop_flag.is_set():
                         return
@@ -993,6 +1024,8 @@ def run_task_queue(tasks, loop=False, stop_flag=None, log_callback=None, executi
                             log("  循环次数已完成，离开循环。", log_callback)
                     else:
                         result = node.execute({"stop_flag": stop_flag, "log_callback": log_callback})
+                    if _single_step_active:
+                        _single_step_active = False
                     if execution_result_callback:
                         execution_result_callback(task, "success")
                     if isinstance(result, dict) and ("outer_jump_to" in result or "next_step" in result or "next_node_id" in result):
@@ -1056,6 +1089,10 @@ def run_task_queue(tasks, loop=False, stop_flag=None, log_callback=None, executi
 
     except KeyboardInterrupt:
         log("\n用户手动停止脚本。", log_callback)
+    finally:
+        if _active_pause_flag is pause_flag:
+            _active_pause_flag = None
+        _single_step_active = False
 
 
 if __name__ == "__main__":

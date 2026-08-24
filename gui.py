@@ -56,6 +56,7 @@ class AutoScriptGUI:
         self.selection_canvas = None
         self.selection_box_id = None
         self.blueprint_positions = {}
+        self.blueprint_group_positions = {}
         self.blueprint_node_items = {}
         self.blueprint_drag = None
         self.blueprint_connection_drag = None
@@ -115,21 +116,7 @@ class AutoScriptGUI:
         ttk.Button(topbar, text="删除预设", command=self.delete_current_preset).pack(side="left", padx=(0, 8))
         self.refresh_mode_values()
 
-        ttk.Label(topbar, text="目标窗口:").pack(side="left")
         self.window_var = tk.StringVar()
-        self.window_combo = ttk.Combobox(
-            topbar,
-            textvariable=self.window_var,
-            state="readonly",
-            width=26,
-        )
-        self.window_combo.pack(side="left", padx=(8, 8), fill="x", expand=True)
-
-        ttk.Button(topbar, text="刷新窗口", command=self.refresh_window_list).pack(side="left")
-
-        if config.TARGET_WINDOW_TITLE:
-            self.window_var.set(config.TARGET_WINDOW_TITLE)
-
         toolbar = ttk.Frame(self.root)
         toolbar.pack(fill="x", padx=14, pady=(0, 8))
         self.start_btn = ttk.Button(toolbar, text="开始执行", command=self.start_script)
@@ -142,6 +129,20 @@ class AutoScriptGUI:
         self.pause_btn.pack(side="left", padx=(0, 8))
         self.step_btn = ttk.Button(toolbar, text="单步", command=self.step_script, state="disabled")
         self.step_btn.pack(side="left", padx=(0, 8))
+
+        ttk.Label(toolbar, text="目标窗口:").pack(side="left", padx=(4, 0))
+        self.window_combo = ttk.Combobox(
+            toolbar,
+            textvariable=self.window_var,
+            state="readonly",
+            width=20,
+        )
+        self.window_combo.pack(side="left", padx=(8, 8), fill="x", expand=True)
+        ttk.Button(toolbar, text="刷新窗口", command=self.refresh_window_list).pack(side="left", padx=(0, 8))
+
+        if config.TARGET_WINDOW_TITLE:
+            self.window_var.set(config.TARGET_WINDOW_TITLE)
+
         self.status_var = tk.StringVar(value="待机")
         ttk.Label(toolbar, textvariable=self.status_var, foreground="#2b7a2b", font=("Microsoft YaHei", 10, "bold")).pack(side="left", padx=(12, 0))
 
@@ -223,6 +224,7 @@ class AutoScriptGUI:
 
         self.template_var = tk.StringVar()
         self.description_var = tk.StringVar()
+        self.threshold_var = tk.StringVar()
         self.timeout_var = tk.StringVar()
         self.offset_x_var = tk.StringVar()
         self.offset_y_var = tk.StringVar()
@@ -281,6 +283,11 @@ class AutoScriptGUI:
             ttk.Label(row, text=f"{label}:", width=14, anchor="w").pack(side="left")
             ttk.Entry(row, textvariable=variable, width=32).pack(side="left", fill="x", expand=True)
 
+        self.threshold_row = ttk.Frame(form)
+        self.threshold_row.pack(fill="x", pady=4)
+        ttk.Label(self.threshold_row, text="匹配阈值(0-1):", width=14, anchor="w").pack(side="left")
+        ttk.Entry(self.threshold_row, textvariable=self.threshold_var, width=32).pack(side="left", fill="x", expand=True)
+
         region_pairs = [
             ("左上", self.region_left_var, self.region_top_var),
             ("右下", self.region_right_var, self.region_bottom_var),
@@ -337,8 +344,7 @@ class AutoScriptGUI:
         ttk.Label(group_form_inner, text="组颜色:", font=("Microsoft YaHei", 10, "bold")).pack(anchor="w", pady=(14, 6))
         color_frame = ttk.Frame(group_form_inner)
         color_frame.pack(fill="x")
-        ttk.Button(color_frame, text="HSV 颜色盘", command=self.choose_group_color).pack(side="left")
-        ttk.Label(color_frame, textvariable=self.group_color_var, width=14, anchor="w", foreground="#374151").pack(side="left", padx=(8, 0))
+        self._build_group_color_palette(color_frame, self.group_color_var)
 
         ttk.Label(group_form_inner, text="显示状态:", font=("Microsoft YaHei", 10, "bold")).pack(anchor="w", pady=(14, 6))
         ttk.Checkbutton(group_form_inner, text="展开该组", variable=self.group_expanded_var).pack(anchor="w")
@@ -763,8 +769,27 @@ class AutoScriptGUI:
         config_frame = ttk.Frame(container)
         config_frame.pack(fill="both", expand=True)
 
+        special_threshold_var = tk.StringVar(value=str(task.get("threshold", config.THRESHOLD)))
+        threshold_row = ttk.Frame(config_frame)
+        ttk.Label(threshold_row, text="匹配阈值(0-1):").pack(side="left", padx=(0, 8))
+        ttk.Entry(threshold_row, textvariable=special_threshold_var, width=12).pack(side="left")
+
+        def sync_special_threshold(*_args):
+            try:
+                threshold = min(1.0, max(0.0, float(special_threshold_var.get() or config.THRESHOLD)))
+            except (TypeError, ValueError):
+                return
+            if threshold == float(config.THRESHOLD):
+                task.pop("threshold", None)
+            else:
+                task["threshold"] = threshold
+
+        special_threshold_var.trace_add("write", sync_special_threshold)
+
+        if self._task_uses_image_matching(task):
+            threshold_row.pack(fill="x", pady=(0, 8))
+
         if task_type == "keyboard_move":
-            name_var = tk.StringVar(value=str(task.get("description", "每日移动步骤")))
             key_var = tk.StringVar(value="W")
             duration_var = tk.StringVar(value="1.0")
             delay_before_var = tk.StringVar(value=str(task.get("delay_before", 0.0)))
@@ -1053,14 +1078,36 @@ class AutoScriptGUI:
                 saved_templates = ", ".join(str(item) for item in saved_templates)
             template_var = tk.StringVar(value=str(saved_templates))
             operator_var = tk.StringVar(value=str(task.get("condition_operator", "any")))
-            true_var = tk.StringVar(value=str(task.get("condition_true_jump_to") or ""))
-            false_var = tk.StringVar(value=str(task.get("condition_false_jump_to") or ""))
+            jump_options = ["不跳转"]
+            jump_option_numbers = {}
+            for task_index, main_task in enumerate(TASKS):
+                description = main_task.get("description") or main_task.get("template") or main_task.get("type", "步骤")
+                option = f"{task_index + 1}. {description}"
+                jump_options.append(option)
+                jump_option_numbers[option] = task_index + 1
+
+            def jump_label(target_number):
+                if target_number is None:
+                    return "不跳转"
+                for option, option_number in jump_option_numbers.items():
+                    if option_number == int(target_number):
+                        return option
+                return "不跳转"
+
+            true_var = tk.StringVar(value=jump_label(task.get("condition_true_jump_to")))
+            false_var = tk.StringVar(value=jump_label(task.get("condition_false_jump_to")))
             invert_var = tk.BooleanVar(value=bool(task.get("condition_invert", False)))
-            for label_text, variable in (("条件模板(逗号分隔)", template_var), ("成立跳转步骤", true_var), ("不成立跳转步骤", false_var)):
+            row = ttk.Frame(config_frame)
+            row.pack(fill="x", pady=6)
+            ttk.Label(row, text="条件模板:").pack(side="left", padx=(0, 8))
+            ttk.Entry(row, textvariable=template_var, width=24).pack(side="left")
+            ttk.Button(row, text="绑定图片", command=lambda: self.open_bind_image_menu(task)).pack(side="left", padx=(8, 0))
+
+            for label_text, variable in (("成立跳转步骤", true_var), ("不成立跳转步骤", false_var)):
                 row = ttk.Frame(config_frame)
                 row.pack(fill="x", pady=6)
                 ttk.Label(row, text=f"{label_text}:").pack(side="left", padx=(0, 8))
-                ttk.Entry(row, textvariable=variable, width=24).pack(side="left")
+                ttk.Combobox(row, textvariable=variable, values=jump_options, state="readonly", width=28).pack(side="left")
             operator_row = ttk.Frame(config_frame)
             operator_row.pack(fill="x", pady=6)
             ttk.Label(operator_row, text="条件运算:").pack(side="left", padx=(0, 8))
@@ -1074,8 +1121,8 @@ class AutoScriptGUI:
                 task["template"] = task["condition_template"]
                 task["condition_operator"] = operator_var.get() or "any"
                 task["condition_invert"] = bool(invert_var.get())
-                task["condition_true_jump_to"] = int(true_var.get()) if true_var.get().strip() else None
-                task["condition_false_jump_to"] = int(false_var.get()) if false_var.get().strip() else None
+                task["condition_true_jump_to"] = jump_option_numbers.get(true_var.get())
+                task["condition_false_jump_to"] = jump_option_numbers.get(false_var.get())
                 self.save_current_tasks()
                 self.refresh_task_list()
                 self.load_task_to_form(self.selected_task_index)
@@ -1150,6 +1197,12 @@ class AutoScriptGUI:
 
             ttk.Button(config_frame, text="保存事件设置", command=save_event).pack(anchor="w", pady=(8, 0))
 
+    @staticmethod
+    def _task_uses_image_matching(task):
+        return task.get("type", "normal") not in {
+            "loop", "key_press", "keyboard_move", "drag", "delay", "switch"
+        }
+
     def show_task_editor(self, task=None):
         self.group_form.pack_forget()
         if task is None:
@@ -1164,10 +1217,12 @@ class AutoScriptGUI:
             self.special_task_form.pack_forget()
             self.action_buttons.pack(fill="x", pady=(12, 10))
             self.task_form.pack(fill="both", expand=True)
+            self.threshold_row.pack(fill="x", pady=4)
             return
 
         self.action_buttons.pack_forget()
         self.task_form.pack_forget()
+        self.threshold_row.pack_forget()
         self.special_task_form.pack(fill="both", expand=True)
 
         if task_type == "keyboard_move":
@@ -1262,6 +1317,31 @@ class AutoScriptGUI:
 
         ttk.Button(win, text="确定", command=win.destroy).pack(pady=(0, 12))
         update_preview()
+
+    def _build_group_color_palette(self, parent, color_var):
+        palette = [
+            "#2563eb", "#3b82f6", "#0ea5e9", "#06b6d4", "#14b8a6",
+            "#16a34a", "#65a30d", "#eab308", "#f59e0b", "#f97316",
+            "#ef4444", "#e11d48", "#db2777", "#9333ea", "#7c3aed",
+            "#64748b", "#475569", "#334155", "#1e293b", "#f8fafc",
+        ]
+        palette_frame = ttk.Frame(parent)
+        palette_frame.pack(fill="x")
+        for index, color in enumerate(palette):
+            button = tk.Button(
+                palette_frame,
+                background=color,
+                activebackground=color,
+                width=2,
+                height=1,
+                relief="flat",
+                bd=1,
+                highlightthickness=1,
+                highlightbackground="#cbd5e1",
+                command=lambda value=color: color_var.set(value),
+            )
+            button.grid(row=index // 10, column=index % 10, padx=2, pady=2)
+        ttk.Label(parent, textvariable=color_var, width=14, anchor="w", foreground="#374151").pack(anchor="w", pady=(4, 0))
 
     def apply_group_settings(self):
         if self.selected_group_id is None:
@@ -1366,7 +1446,10 @@ class AutoScriptGUI:
         self._reconcile_group_hierarchy()
 
         for task in TASKS:
-            group_id = str(task.get("group_id") or self._get_default_group_id())
+            if not task.get("group_id"):
+                task.pop("group_name", None)
+                continue
+            group_id = str(task.get("group_id"))
             task["group_id"] = group_id
             group_name = str(task.get("group_name") or self.group_names.get(group_id) or "默认分组")
             task["group_name"] = group_name
@@ -1611,17 +1694,19 @@ class AutoScriptGUI:
         self.refresh_task_list()
         self.append_log(f"已复制组: {source_name}")
 
-    def delete_group(self):
-        selected = list(self.task_listbox.curselection())
-        if not selected:
-            return
-        display_index = selected[0]
-        entry = self.task_display_map.get(display_index)
-        if not entry or entry[0] != "group":
-            return
-        group_id = entry[1]
+    def delete_group(self, group_id=None):
+        if group_id is None:
+            selected = list(self.task_listbox.curselection())
+            if not selected:
+                return
+            display_index = selected[0]
+            entry = self.task_display_map.get(display_index)
+            if not entry or entry[0] != "group":
+                return
+            group_id = entry[1]
+        group_id = str(group_id)
         group_name = self.group_names.get(group_id, "组")
-        if not messagebox.askyesno("确认删除", f"确定删除组“{group_name}”及其包含的步骤吗？"):
+        if not messagebox.askyesno("确认删除", f"确定删除组“{group_name}”及其包含的步骤吗？", parent=self.blueprint_window if getattr(self, "blueprint_window", None) else self.root):
             return
         remove_ids = {group_id}
         for child_group_id in self.group_children.get(group_id, []):
@@ -1639,6 +1724,10 @@ class AutoScriptGUI:
                 self.group_children[parent_id] = [child for child in children if child != remove_group_id]
         self.save_current_tasks()
         self.refresh_task_list()
+        self.selected_group_id = None
+        if getattr(self, "blueprint_canvas", None) is not None:
+            self.refresh_blueprint()
+            self.blueprint_group_form.pack_forget()
         self.append_log(f"已删除组: {group_name}")
 
     def load_task_to_form(self, index):
@@ -1657,6 +1746,7 @@ class AutoScriptGUI:
             template_names = ", ".join(str(item) for item in template_names)
         self.template_var.set(str(template_names))
         self.description_var.set(task.get("description", task.get("template", "new_step")))
+        self.threshold_var.set(str(task.get("threshold", config.THRESHOLD)))
         self.timeout_var.set(str(task.get("timeout", 5)))
         self.offset_x_var.set(str(task.get("offset", (0, 0))[0]))
         self.offset_y_var.set(str(task.get("offset", (0, 0))[1]))
@@ -1711,6 +1801,7 @@ class AutoScriptGUI:
     def clear_task_form(self):
         self.template_var.set("")
         self.description_var.set("")
+        self.threshold_var.set(str(config.THRESHOLD))
         self.timeout_var.set("5")
         self.offset_x_var.set("0")
         self.offset_y_var.set("0")
@@ -1760,6 +1851,11 @@ class AutoScriptGUI:
             for index, position in saved_positions.items()
             if isinstance(position, (list, tuple)) and len(position) == 2
         }
+        self.blueprint_group_positions[mode] = {
+            str(group_id): (float(position[0]), float(position[1]))
+            for group_id, position in (blueprint_metadata.get("group_positions", {}) or {}).items()
+            if isinstance(position, (list, tuple)) and len(position) == 2
+        }
         if mode == self.current_mode and isinstance(blueprint_metadata, dict):
             try:
                 self.blueprint_zoom = min(2.0, max(0.45, float(blueprint_metadata.get("zoom", 1.0))))
@@ -1774,6 +1870,7 @@ class AutoScriptGUI:
         self.save_all_presets()
         self.blueprint_layouts[self.current_mode] = {
             "positions": deepcopy(self.blueprint_positions.get(self.current_mode, {})),
+            "group_positions": deepcopy(self.blueprint_group_positions.get(self.current_mode, {})),
             "zoom": self.blueprint_zoom,
         }
         save_blueprint_layouts(self.blueprint_layouts)
@@ -1795,6 +1892,11 @@ class AutoScriptGUI:
         else:
             task["template"] = template_value
         task["description"] = self.description_var.get().strip() or task["template"]
+        threshold = min(1.0, max(0.0, float(self.threshold_var.get() or config.THRESHOLD)))
+        if threshold == float(config.THRESHOLD):
+            task.pop("threshold", None)
+        else:
+            task["threshold"] = threshold
         task["timeout"] = float(self.timeout_var.get() or 5)
         task["offset"] = (
             int(float(self.offset_x_var.get() or 0)),
@@ -2153,11 +2255,12 @@ class AutoScriptGUI:
 
         ttk.Label(win, text="绑定图片操作", font=("Microsoft YaHei", 10, "bold")).pack(pady=(14, 8))
         image_list = None
-        supports_multiple_templates = task.get("type") in ("advanced", "click_until_gone")
+        supports_multiple_templates = task.get("type") in ("advanced", "condition", "click_until_gone")
         if supports_multiple_templates:
             image_list = tk.Listbox(win, height=8, selectmode=tk.SINGLE, exportselection=False)
             image_list.pack(fill="both", expand=True, padx=12, pady=(0, 10))
-            current = task.get("templates") or task.get("template") or []
+            template_key = "condition_templates" if task.get("type") == "condition" else "templates"
+            current = task.get(template_key) or task.get("template") or []
             if isinstance(current, str):
                 current = [current]
             for image_name in current:
@@ -2187,6 +2290,8 @@ class AutoScriptGUI:
                         existing.append(image_name)
                 if task.get("type") == "advanced":
                     save_advanced_images()
+                elif task.get("type") == "condition":
+                    save_condition_images()
                 else:
                     save_multiple_click_until_gone_images()
             else:
@@ -2200,7 +2305,8 @@ class AutoScriptGUI:
             self._start_region_capture("image")
 
         def preview_images():
-            image_names = task.get("templates") or task.get("template") or []
+            template_key = "condition_templates" if task.get("type") == "condition" else "templates"
+            image_names = task.get(template_key) or task.get("template") or []
             if isinstance(image_names, str):
                 image_names = [image_names]
             icons_dir = os.path.join(os.path.dirname(__file__), "icons")
@@ -2224,6 +2330,19 @@ class AutoScriptGUI:
             self.refresh_task_list()
             self.load_task_to_form(self.selected_task_index)
             self.append_log(f"已保存高级步骤图片: {', '.join(values)}")
+
+        def save_condition_images():
+            values = [image_list.get(index) for index in range(image_list.size())]
+            if not values:
+                messagebox.showwarning("无法保存", "条件步骤至少需要绑定一张图片。", parent=win)
+                return
+            task["condition_templates"] = values
+            task["condition_template"] = values[0]
+            task["template"] = values[0]
+            self.save_current_tasks()
+            self.refresh_task_list()
+            self.load_task_to_form(self.selected_task_index)
+            self.append_log(f"已保存条件步骤图片: {', '.join(values)}")
 
         def save_multiple_click_until_gone_images():
             values = [image_list.get(index) for index in range(image_list.size())]
@@ -2253,11 +2372,13 @@ class AutoScriptGUI:
                     return
                 if task.get("type") == "advanced":
                     save_advanced_images()
+                elif task.get("type") == "condition":
+                    save_condition_images()
                 else:
                     save_multiple_click_until_gone_images()
                 close_menu()
 
-            button_text = "保存图片列表并关闭" if task.get("type") == "advanced" else "保存持续点击图片并关闭"
+            button_text = "保存图片列表并关闭" if task.get("type") in ("advanced", "condition") else "保存持续点击图片并关闭"
             ttk.Button(win, text=button_text, command=save_and_close).pack(pady=(0, 12))
         else:
             ttk.Button(win, text="关闭", command=close_menu).pack(pady=(10, 12))
@@ -2274,14 +2395,17 @@ class AutoScriptGUI:
         screenshot.crop((left, top, right, bottom)).save(image_path)
         reload_templates()
         task = TASKS[self.selected_task_index]
-        if task.get("type") in ("advanced", "click_until_gone"):
-            templates = task.get("templates") or task.get("template") or []
+        if task.get("type") in ("advanced", "condition", "click_until_gone"):
+            template_key = "condition_templates" if task.get("type") == "condition" else "templates"
+            templates = task.get(template_key) or task.get("template") or []
             if isinstance(templates, str):
                 templates = [templates]
             templates = [str(item).strip() for item in templates if str(item).strip()]
             if image_name not in templates:
                 templates.append(image_name)
-            task["templates"] = templates
+            task[template_key] = templates
+            if task.get("type") == "condition":
+                task["condition_template"] = templates[0]
             task["template"] = templates[0]
         else:
             task["template"] = image_name
@@ -2323,6 +2447,7 @@ class AutoScriptGUI:
         fields = {
             "模板名": tk.StringVar(value=task.get("template", "")),
             "描述": tk.StringVar(value=task.get("description", "")),
+            "匹配阈值": tk.StringVar(value=str(task.get("threshold", config.THRESHOLD))),
             "超时秒": tk.StringVar(value=str(task.get("timeout", 5))),
             "X偏移": tk.StringVar(value=str(task.get("offset", (0, 0))[0])),
             "Y偏移": tk.StringVar(value=str(task.get("offset", (0, 0))[1])),
@@ -2353,6 +2478,11 @@ class AutoScriptGUI:
         def save():
             task["template"] = fields["模板名"].get().strip() or task.get("template", "new_step")
             task["description"] = fields["描述"].get().strip() or task["template"]
+            threshold = min(1.0, max(0.0, float(fields["匹配阈值"].get() or config.THRESHOLD)))
+            if threshold == float(config.THRESHOLD):
+                task.pop("threshold", None)
+            else:
+                task["threshold"] = threshold
             task["timeout"] = float(fields["超时秒"].get() or 5)
             task["offset"] = (
                 int(float(fields["X偏移"].get() or 0)),
@@ -3073,7 +3203,7 @@ class AutoScriptGUI:
 
         add_row = ttk.Frame(win)
         add_row.pack(fill="x", padx=12, pady=(0, 6))
-        ttk.Combobox(add_row, textvariable=step_type_var, values=["normal", "advanced", "condition", "switch", "loop", "event", "key_press", "keyboard_move", "drag", "click_until_gone", "delay"], state="readonly", width=20).pack(side="left")
+        ttk.Combobox(add_row, textvariable=step_type_var, values=["normal", "advanced", "loop", "key_press", "keyboard_move", "drag", "click_until_gone", "delay"], state="readonly", width=20).pack(side="left")
         ttk.Button(add_row, text="新增步骤", command=lambda: (detour_steps.append({"type": step_type_var.get() or "normal"}), refresh_list())).pack(side="left", padx=(8, 0))
 
         action_row = ttk.Frame(win)
@@ -3504,7 +3634,7 @@ class AutoScriptGUI:
 
         ttk.Button(form, text="保存", command=save).pack(pady=(12, 0))
 
-    def add_task(self):
+    def add_task(self, target_group_id=None, use_current_context=True):
         win = tk.Toplevel(self.root)
         win.title("新增步骤类型")
         win.geometry("320x180")
@@ -3516,25 +3646,28 @@ class AutoScriptGUI:
         ttk.Combobox(
             win,
             textvariable=task_type_var,
-            values=["normal", "advanced", "condition", "switch", "loop", "event", "keyboard_move", "key_press", "drag", "click_until_gone", "delay"],
+            values=["normal", "advanced", "loop", "keyboard_move", "key_press", "drag", "click_until_gone", "delay"],
             state="readonly",
             width=20,
         ).pack()
 
         def confirm_add():
             task_type = task_type_var.get() or "normal"
-            selected_group_id = str(self.selected_group_id) if self.selected_group_id is not None else None
+            selected_group_id = str(target_group_id) if target_group_id is not None else None
             selected_group_name = self.group_names.get(selected_group_id, "默认分组") if selected_group_id else None
-            selected = list(self.task_listbox.curselection())
-            if selected:
-                entry = self.task_display_map.get(selected[0])
-                if entry and entry[0] == "group" and selected_group_id is None:
-                    selected_group_id = entry[1]
-                    selected_group_name = self.group_names.get(selected_group_id, "默认分组")
-                elif entry and entry[0] == "task" and selected_group_id is None:
-                    selected_task = TASKS[entry[1]]
-                    selected_group_id = str(selected_task.get("group_id") or "group_default")
-                    selected_group_name = selected_task.get("group_name") or self.group_names.get(selected_group_id, "默认分组")
+            if use_current_context:
+                selected_group_id = str(self.selected_group_id) if self.selected_group_id is not None else None
+                selected_group_name = self.group_names.get(selected_group_id, "默认分组") if selected_group_id else None
+                selected = list(self.task_listbox.curselection())
+                if selected:
+                    entry = self.task_display_map.get(selected[0])
+                    if entry and entry[0] == "group" and selected_group_id is None:
+                        selected_group_id = entry[1]
+                        selected_group_name = self.group_names.get(selected_group_id, "默认分组")
+                    elif entry and entry[0] == "task" and selected_group_id is None:
+                        selected_task = TASKS[entry[1]]
+                        selected_group_id = str(selected_task.get("group_id")) if selected_task.get("group_id") else None
+                        selected_group_name = selected_task.get("group_name") or self.group_names.get(selected_group_id, "默认分组") if selected_group_id else None
             if task_type == "advanced":
                 new_task = {
                     "type": "advanced",
@@ -3611,28 +3744,6 @@ class AutoScriptGUI:
                     "stop_on_change": False,
                     "required": True,
                 }
-            elif task_type == "condition":
-                new_task = {
-                    "type": "condition",
-                    "mode": "custom",
-                    "template": "",
-                    "condition_template": "",
-                    "description": "新增条件节点",
-                    "condition_true_jump_to": None,
-                    "condition_false_jump_to": None,
-                    "required": True,
-                }
-            elif task_type == "switch":
-                new_task = {
-                    "type": "switch",
-                    "mode": "custom",
-                    "template": "",
-                    "switch_value": "",
-                    "switch_cases": {},
-                    "switch_default_jump_to": None,
-                    "description": "新增选择节点",
-                    "required": True,
-                }
             elif task_type == "loop":
                 new_task = {
                     "type": "loop",
@@ -3641,18 +3752,7 @@ class AutoScriptGUI:
                     "loop_count": 1,
                     "loop_target": None,
                     "loop_exit_target": None,
-                    "description": "新增循环节点",
-                    "required": True,
-                }
-            elif task_type == "event":
-                new_task = {
-                    "type": "event",
-                    "mode": "custom",
-                    "template": "",
-                    "event_template": "",
-                    "event_timeout": 30.0,
-                    "event_timeout_target": None,
-                    "description": "新增事件节点",
+                    "description": "新增循环步骤",
                     "required": True,
                 }
             elif task_type == "delay":
@@ -3680,7 +3780,7 @@ class AutoScriptGUI:
                 }
 
             selected_index = self.selected_task_index if isinstance(self.selected_task_index, int) and 0 <= self.selected_task_index < len(TASKS) else len(TASKS)
-            if selected_group_id is None:
+            if selected_group_id is None and TASKS:
                 selected_group_id = self._get_default_group_id()
             if selected_group_id:
                 new_task["group_id"] = str(selected_group_id)
@@ -3837,6 +3937,10 @@ class AutoScriptGUI:
         for group_id in list(self.group_order):
             walk_group(group_id, 0)
 
+        for task_index, task in enumerate(TASKS):
+            if not task.get("group_id"):
+                visible.append({"kind": "task", "task_index": task_index, "depth": 0, "group_id": None})
+
         return visible
 
     def refresh_task_list(self):
@@ -3922,7 +4026,7 @@ class AutoScriptGUI:
         ttk.Button(canvas_toolbar, text="自动排列", command=self.auto_arrange_blueprint).pack(side="left", padx=(8, 0))
         ttk.Button(canvas_toolbar, text="对齐选中", command=self.align_blueprint_selection).pack(side="left", padx=(5, 0))
         ttk.Checkbutton(canvas_toolbar, text="网格吸附", command=self.toggle_blueprint_grid_snap).pack(side="left", padx=(8, 0))
-        ttk.Label(canvas_toolbar, text="点击节点编辑，拖动节点调整布局").pack(side="left", padx=(10, 0))
+        ttk.Label(canvas_toolbar, text="点击步骤编辑，拖动步骤调整布局").pack(side="left", padx=(10, 0))
         surface = ttk.Frame(canvas_panel)
         surface.pack(fill="both", expand=True, padx=8, pady=(0, 8))
         self.blueprint_canvas = tk.Canvas(surface, background="#111827", highlightthickness=0, takefocus=True, scrollregion=(0, 0, 1600, 1200))
@@ -3962,6 +4066,20 @@ class AutoScriptGUI:
         self.blueprint_special_task_container = ttk.Frame(self.blueprint_special_task_form)
         self.blueprint_special_task_container.pack(fill="both", expand=True)
         self.blueprint_special_task_form.pack_forget()
+        self.blueprint_group_form = ttk.Frame(editor_host, padding=12)
+        self.blueprint_group_form.pack_forget()
+        self.blueprint_group_name_var = tk.StringVar()
+        self.blueprint_group_color_var = tk.StringVar()
+        self.blueprint_group_expanded_var = tk.BooleanVar()
+        ttk.Label(self.blueprint_group_form, text="组设置", font=("Microsoft YaHei", 11, "bold")).pack(anchor="w")
+        row = ttk.Frame(self.blueprint_group_form)
+        row.pack(fill="x", pady=6)
+        ttk.Label(row, text="组名称:", width=10, anchor="w").pack(side="left")
+        ttk.Entry(row, textvariable=self.blueprint_group_name_var).pack(side="left", fill="x", expand=True)
+        ttk.Label(self.blueprint_group_form, text="组颜色:", width=10, anchor="w").pack(anchor="w", pady=(8, 2))
+        self._build_group_color_palette(self.blueprint_group_form, self.blueprint_group_color_var)
+        ttk.Checkbutton(self.blueprint_group_form, text="展开组", variable=self.blueprint_group_expanded_var).pack(anchor="w", pady=6)
+        ttk.Button(self.blueprint_group_form, text="应用组设置", command=self.apply_blueprint_group_settings).pack(anchor="w", pady=(12, 0))
         ttk.Label(form, textvariable=self.summary_var, wraplength=360, justify="left", foreground="#374151").pack(anchor="w", pady=(0, 10))
 
         action_buttons = ttk.Frame(form)
@@ -3986,6 +4104,11 @@ class AutoScriptGUI:
             row.pack(fill="x", pady=4)
             ttk.Label(row, text=f"{label}:", width=12, anchor="w").pack(side="left")
             ttk.Entry(row, textvariable=variable).pack(side="left", fill="x", expand=True)
+
+        self.blueprint_threshold_row = ttk.Frame(form)
+        self.blueprint_threshold_row.pack(fill="x", pady=4)
+        ttk.Label(self.blueprint_threshold_row, text="匹配阈值(0-1):", width=12, anchor="w").pack(side="left")
+        ttk.Entry(self.blueprint_threshold_row, textvariable=self.threshold_var).pack(side="left", fill="x", expand=True)
 
         region_pairs = [
             ("左上", self.region_left_var, self.region_top_var),
@@ -4305,23 +4428,26 @@ class AutoScriptGUI:
             return
 
         task_type = task.get("type", "normal")
+        self.blueprint_group_form.pack_forget()
         self.blueprint_special_task_form.pack_forget()
         self.blueprint_editor_form.pack_forget()
         if task_type in ("normal", "advanced"):
             self.blueprint_editor_form.pack(fill="both", expand=True)
+            self.blueprint_threshold_row.pack(fill="x", pady=4)
             self._active_special_task_container = self.special_task_container
             return
 
+        self.blueprint_threshold_row.pack_forget()
         self.mode_task_title_var.set({
             "keyboard_move": "每日移动步骤",
             "key_press": "按键步骤",
             "drag": "拖曳步骤",
             "click_until_gone": "持续点击直到识别步骤",
             "delay": "延迟步骤",
-            "condition": "条件节点",
-            "switch": "选择节点",
-            "loop": "循环节点",
-            "event": "事件节点",
+            "condition": "条件步骤",
+            "switch": "选择步骤",
+            "loop": "循环步骤",
+            "event": "事件步骤",
         }.get(task_type, "自定义步骤"))
         if task_type == "keyboard_move":
             self.mode_task_summary_var.set(f"移动步数: {len(task.get('move_steps', []))}\n仅执行键盘移动序列，不触发额外动作")
@@ -4341,15 +4467,38 @@ class AutoScriptGUI:
             self.mode_task_summary_var.set(f"循环次数: {task.get('loop_count', 1)}\n循环体: 步骤 {task.get('loop_target', '-')}\n退出: 步骤 {task.get('loop_exit_target', '-')}")
         elif task_type == "event":
             self.mode_task_summary_var.set(f"事件模板: {task.get('event_template', task.get('template', '-'))}\n超时: {task.get('event_timeout', 30)} 秒")
-        elif task_type == "switch":
-            self.mode_task_summary_var.set(f"选择值: {task.get('switch_value', '')}\n分支数: {len(task.get('switch_cases') or {})}")
-        elif task_type == "loop":
-            self.mode_task_summary_var.set(f"循环次数: {task.get('loop_count', 1)}\n循环体: 步骤 {task.get('loop_target', '-')}\n退出: 步骤 {task.get('loop_exit_target', '-')}" )
         else:
             self.mode_task_summary_var.set(f"模板: {task.get('template', '-')}\n描述: {task.get('description', '-')}")
         self._active_special_task_container = self.blueprint_special_task_container
         self.blueprint_special_task_form.pack(fill="both", expand=True)
         self._render_special_task_config(task)
+
+    def show_blueprint_group_editor(self, group_id):
+        group_id = str(group_id)
+        self.selected_group_id = group_id
+        self.selected_task_index = None
+        self.blueprint_editor_form.pack_forget()
+        self.blueprint_special_task_form.pack_forget()
+        self.blueprint_group_name_var.set(self.group_names.get(group_id, "默认分组"))
+        self.blueprint_group_color_var.set(self.group_colors.get(group_id, "#eaf1ff"))
+        self.blueprint_group_expanded_var.set(self.group_expanded.get(group_id, True))
+        self.blueprint_group_form.pack(fill="both", expand=True)
+
+    def apply_blueprint_group_settings(self):
+        group_id = self.selected_group_id
+        if group_id is None or group_id not in self.group_names:
+            return
+        group_id = str(group_id)
+        self.group_names[group_id] = self.blueprint_group_name_var.get().strip() or self.group_names.get(group_id, "默认分组")
+        self.group_colors[group_id] = self.blueprint_group_color_var.get().strip() or "#eaf1ff"
+        self.group_expanded[group_id] = bool(self.blueprint_group_expanded_var.get())
+        for task in TASKS:
+            if str(task.get("group_id") or "") == group_id:
+                task["group_name"] = self.group_names[group_id]
+                task["group_color"] = self.group_colors[group_id]
+        self.save_current_tasks()
+        self.refresh_task_list()
+        self.refresh_blueprint()
 
     def _blueprint_node_position(self, task_index):
         positions = self.blueprint_positions.setdefault(self.current_mode, {})
@@ -4371,6 +4520,66 @@ class AutoScriptGUI:
         red, green, blue = colorsys.hls_to_rgb(hue, lightness, saturation)
         return "#%02x%02x%02x" % (int(red * 255), int(green * 255), int(blue * 255))
 
+    def _blueprint_group_bounds(self, group_id):
+        group_id = str(group_id)
+        indices = self._get_group_task_indices(group_id)
+        for child_id in self._get_group_descendants(group_id):
+            indices.extend(self._get_group_task_indices(child_id))
+        if indices:
+            left = min(self._blueprint_node_position(index)[0] for index in indices) - 24
+            top = min(self._blueprint_node_position(index)[1] for index in indices) - 38
+            right = max(self._blueprint_node_position(index)[0] + self._blueprint_node_size(index)[0] for index in indices) + 24
+            bottom = max(self._blueprint_node_position(index)[1] + self._blueprint_node_size(index)[1] for index in indices) + 24
+            if not self.group_expanded.get(group_id, True):
+                return left, top, left + 220, top + 44
+            return left, top, right, bottom
+        position = self.blueprint_group_positions.setdefault(self.current_mode, {}).get(group_id, (70, 70))
+        return position[0], position[1], position[0] + 260, position[1] + 76
+
+    def _blueprint_task_hidden(self, task_index):
+        group_id = str(TASKS[task_index].get("group_id") or "")
+        while group_id:
+            if not self.group_expanded.get(group_id, True):
+                return True
+            group_id = str(self.group_parents.get(group_id) or "")
+        return False
+
+    def _blueprint_group_hidden(self, group_id):
+        parent_id = self.group_parents.get(str(group_id))
+        while parent_id is not None:
+            if not self.group_expanded.get(str(parent_id), True):
+                return True
+            parent_id = self.group_parents.get(str(parent_id))
+        return False
+
+    def _blueprint_group_at(self, event):
+        item = self.blueprint_canvas.find_withtag("current")
+        if not item:
+            return None
+        for tag in self.blueprint_canvas.gettags(item[0]):
+            if tag.startswith("blueprint_group:"):
+                return tag.split(":", 1)[1]
+        return None
+
+    def _blueprint_group_endpoint(self, task_index, side):
+        group_id = str(TASKS[task_index].get("group_id") or "")
+        while group_id:
+            if not self.group_expanded.get(group_id, True):
+                left, top, right, _ = self._blueprint_group_bounds(group_id)
+                return (right if side == "output" else left), (top + 22)
+            group_id = str(self.group_parents.get(group_id) or "")
+        x, y = self._blueprint_node_position(task_index)
+        width, height = self._blueprint_node_size(task_index)
+        return (x + width if side == "output" else x), y + height / 2
+
+    def _blueprint_collapsed_group(self, task_index):
+        group_id = str(TASKS[task_index].get("group_id") or "")
+        while group_id:
+            if not self.group_expanded.get(group_id, True):
+                return group_id
+            group_id = str(self.group_parents.get(group_id) or "")
+        return None
+
     def refresh_blueprint(self):
         if getattr(self, "blueprint_canvas", None) is None:
             return
@@ -4386,20 +4595,54 @@ class AutoScriptGUI:
             if index not in active_indices:
                 positions.pop(index, None)
 
+        group_positions = self.blueprint_group_positions.setdefault(self.current_mode, {})
+        for group_id in list(group_positions):
+            if group_id not in self.group_names:
+                group_positions.pop(group_id, None)
+
+        for group_id in self.group_order:
+            for nested_group_id in [group_id, *self._get_group_descendants(group_id)]:
+                if self._blueprint_group_hidden(nested_group_id):
+                    continue
+                left, top, right, bottom = self._blueprint_group_bounds(nested_group_id)
+                color = self.group_colors.get(nested_group_id, "#334155")
+                group_tag = f"blueprint_group:{nested_group_id}"
+                canvas.create_rectangle(
+                    left * zoom, top * zoom, right * zoom, bottom * zoom,
+                    fill="", outline="#64748b" if self.group_expanded.get(nested_group_id, True) else color, width=1,
+                    tags=(group_tag, "blueprint_group_item"),
+                )
+                header_bottom = min(bottom, top + 44)
+                canvas.create_rectangle(
+                    left * zoom, top * zoom, right * zoom, header_bottom * zoom,
+                    fill=color, outline=color, width=1,
+                    tags=(group_tag, "blueprint_group_item"),
+                )
+                canvas.create_text(
+                    (left + 10) * zoom, (top + 14) * zoom, anchor="w",
+                    text=("▼ " if self.group_expanded.get(nested_group_id, True) else "▶ ") + self.group_names.get(nested_group_id, "默认分组") + (f" · {len(self._get_group_task_indices(nested_group_id))} 步骤" if not self.group_expanded.get(nested_group_id, True) else ""),
+                    fill="#ffffff", font=("Microsoft YaHei", max(8, int(10 * zoom)), "bold"),
+                    tags=(group_tag, "blueprint_group_item"),
+                )
+
         node_width, node_height = 220, 112
         def draw_edge(source_index, target_index, color, label, offset=0, edge_kind="detour"):
             if not (0 <= target_index < len(TASKS)):
                 return
-            source_x, source_y = self._blueprint_node_position(source_index)
-            target_x, target_y = self._blueprint_node_position(target_index)
+            source_group = self._blueprint_group_endpoint(source_index, "output")
+            target_group = self._blueprint_group_endpoint(target_index, "input")
+            if self._blueprint_collapsed_group(source_index) == self._blueprint_collapsed_group(target_index) and self._blueprint_collapsed_group(source_index) is not None:
+                return
+            source_x, source_y = source_group
+            target_x, target_y = target_group
             _, source_height = self._blueprint_node_size(source_index)
             _, target_height = self._blueprint_node_size(target_index)
             if TASKS[source_index].get("blueprint_collapsed"):
                 offset = 0
-            start_x = (source_x + node_width) * zoom
-            start_y = (source_y + source_height / 2 + offset) * zoom
+            start_x = source_x * zoom
+            start_y = (source_y + offset) * zoom
             end_x = target_x * zoom
-            end_y = (target_y + target_height / 2) * zoom
+            end_y = target_y * zoom
             bend_x = (start_x + end_x) / 2
             edge_tag = f"blueprint_edge:{edge_kind}:{source_index}:{target_index}"
             saved_bends = (TASKS[source_index].get("blueprint_bends") or {}).get(edge_kind, [])
@@ -4476,13 +4719,13 @@ class AutoScriptGUI:
             if task.get("flow_next") is not None:
                 target_index = task_id_to_index.get(str(task.get("flow_next")))
                 if target_index is not None:
-                    start_x, start_y = self._blueprint_node_position(index)
-                    end_x, end_y = self._blueprint_node_position(target_index)
-                    _, source_height = self._blueprint_node_size(index)
-                    _, target_height = self._blueprint_node_size(target_index)
+                    start_x, start_y = self._blueprint_group_endpoint(index, "output")
+                    end_x, end_y = self._blueprint_group_endpoint(target_index, "input")
+                    if self._blueprint_collapsed_group(index) == self._blueprint_collapsed_group(target_index) and self._blueprint_collapsed_group(index) is not None:
+                        continue
                     edge_tag = f"blueprint_edge:flow:{index}:{target_index}"
-                    start_point = ((start_x + node_width) * zoom, (start_y + source_height / 2) * zoom)
-                    end_point = (end_x * zoom, (end_y + target_height / 2) * zoom)
+                    start_point = (start_x * zoom, start_y * zoom)
+                    end_point = (end_x * zoom, end_y * zoom)
                     saved_bends = (task.get("blueprint_bends") or {}).get("flow", [])
                     if isinstance(saved_bends, (list, tuple)) and len(saved_bends) == 2 and all(isinstance(value, (int, float)) for value in saved_bends):
                         saved_bends = [saved_bends]
@@ -4504,13 +4747,13 @@ class AutoScriptGUI:
                     if self.blueprint_active_edge == ("flow", index, target_index):
                         canvas.itemconfigure(edge_tag, fill="#facc15", width=4)
             elif not task.get("flow_next_disabled") and index < len(TASKS) - 1:
-                start_x, start_y = self._blueprint_node_position(index)
-                end_x, end_y = self._blueprint_node_position(index + 1)
-                _, source_height = self._blueprint_node_size(index)
-                _, target_height = self._blueprint_node_size(index + 1)
+                start_x, start_y = self._blueprint_group_endpoint(index, "output")
+                end_x, end_y = self._blueprint_group_endpoint(index + 1, "input")
+                if self._blueprint_collapsed_group(index) == self._blueprint_collapsed_group(index + 1) and self._blueprint_collapsed_group(index) is not None:
+                    continue
                 edge_tag = f"blueprint_edge:default:{index}:{index + 1}"
-                start_point = ((start_x + node_width) * zoom, (start_y + source_height / 2) * zoom)
-                end_point = (end_x * zoom, (end_y + target_height / 2) * zoom)
+                start_point = (start_x * zoom, start_y * zoom)
+                end_point = (end_x * zoom, end_y * zoom)
                 saved_bends = (task.get("blueprint_bends") or {}).get("default", [])
                 if isinstance(saved_bends, (list, tuple)) and len(saved_bends) == 2 and all(isinstance(value, (int, float)) for value in saved_bends):
                     saved_bends = [saved_bends]
@@ -4565,6 +4808,8 @@ class AutoScriptGUI:
             "loop": "#ef4444",
         }
         for index, task in enumerate(TASKS):
+            if self._blueprint_task_hidden(index):
+                continue
             x, y = self._blueprint_node_position(index)
             x *= zoom
             y *= zoom
@@ -4631,8 +4876,17 @@ class AutoScriptGUI:
                 ))
             self.blueprint_node_items[index] = items
 
-        max_x = max([(self._blueprint_node_position(i)[0] + node_width + 80) * zoom for i in range(len(TASKS))] or [900])
-        max_y = max([(self._blueprint_node_position(i)[1] + self._blueprint_node_size(i)[1] + 80) * zoom for i in range(len(TASKS))] or [500])
+        group_bounds = [self._blueprint_group_bounds(group_id) for group_id in self.group_names if not self._blueprint_group_hidden(group_id)]
+        max_x = max(
+            [((self._blueprint_node_position(i)[0] + node_width + 80) * zoom) for i in range(len(TASKS))]
+            + [bounds[2] * zoom + 80 for bounds in group_bounds]
+            or [900]
+        )
+        max_y = max(
+            [((self._blueprint_node_position(i)[1] + self._blueprint_node_size(i)[1] + 80) * zoom) for i in range(len(TASKS))]
+            + [bounds[3] * zoom + 80 for bounds in group_bounds]
+            or [500]
+        )
         canvas.configure(scrollregion=(0, 0, max_x, max_y))
 
     def _blueprint_index_at(self, event):
@@ -4683,7 +4937,21 @@ class AutoScriptGUI:
             self.blueprint_drag = None
             self.blueprint_selected_edge = bend[:3]
             return
+        group_id = self._blueprint_group_at(event)
         index = self._blueprint_index_at(event)
+        if group_id is not None and index is None:
+            self.blueprint_drag = (
+                "group", group_id,
+                self.blueprint_canvas.canvasx(event.x) / self.blueprint_zoom,
+                self.blueprint_canvas.canvasy(event.y) / self.blueprint_zoom,
+            )
+            self.blueprint_selected_edge = None
+            self.selected_group_id = group_id
+            self.show_blueprint_group_editor(group_id)
+            self.blueprint_selection.clear()
+            self._push_blueprint_history()
+            self.refresh_blueprint()
+            return
         edge = self._blueprint_edge_at(event)
         if edge is not None and index is None:
             self.blueprint_selected_edge = edge
@@ -4719,7 +4987,7 @@ class AutoScriptGUI:
             self.blueprint_selection = {index}
         self.blueprint_selected_edge = None
         self.blueprint_drag = (
-            index,
+            "node", index,
             self.blueprint_canvas.canvasx(event.x) / self.blueprint_zoom,
             self.blueprint_canvas.canvasy(event.y) / self.blueprint_zoom,
         )
@@ -4730,6 +4998,15 @@ class AutoScriptGUI:
         self.refresh_blueprint()
 
     def on_blueprint_double_click(self, event):
+        group_id = self._blueprint_group_at(event)
+        if group_id is not None:
+            self._push_blueprint_history()
+            self.group_expanded[group_id] = not self.group_expanded.get(group_id, True)
+            self.selected_group_id = group_id
+            self.blueprint_selection.clear()
+            self.save_current_tasks()
+            self.refresh_blueprint()
+            return "break"
         index = self._blueprint_index_at(event)
         if index is None or not (0 <= index < len(TASKS)):
             return "break"
@@ -4776,19 +5053,29 @@ class AutoScriptGUI:
             return
         if self.blueprint_drag is None:
             return
-        index, start_x, start_y = self.blueprint_drag
+        drag_kind, drag_target, start_x, start_y = self.blueprint_drag
         current_x = self.blueprint_canvas.canvasx(event.x) / self.blueprint_zoom
         current_y = self.blueprint_canvas.canvasy(event.y) / self.blueprint_zoom
         delta_x = current_x - start_x
         delta_y = current_y - start_y
-        selected = self.blueprint_selection or {index}
+        if drag_kind == "group":
+            selected = self._get_group_task_indices(drag_target)
+            for child_id in self._get_group_descendants(drag_target):
+                selected.extend(self._get_group_task_indices(child_id))
+            if not selected:
+                old_x, old_y = self.blueprint_group_positions.setdefault(self.current_mode, {}).get(drag_target, (70, 70))
+                self.blueprint_group_positions[self.current_mode][drag_target] = (
+                    max(20, old_x + delta_x), max(20, old_y + delta_y)
+                )
+        else:
+            selected = self.blueprint_selection or {drag_target}
         for selected_index in selected:
             old_x, old_y = self._blueprint_node_position(selected_index)
             next_x, next_y = max(20, old_x + delta_x), max(20, old_y + delta_y)
             if self.blueprint_grid_snap:
                 next_x, next_y = round(next_x / 20) * 20, round(next_y / 20) * 20
             self.blueprint_positions[self.current_mode][selected_index] = (next_x, next_y)
-        self.blueprint_drag = (index, current_x, current_y)
+        self.blueprint_drag = (drag_kind, drag_target, current_x, current_y)
         self.refresh_blueprint()
 
     def on_blueprint_release(self, event):
@@ -4899,7 +5186,24 @@ class AutoScriptGUI:
             menu.add_command(label="删除此转折点", command=lambda: self.delete_blueprint_bend(bend))
             menu.tk_popup(event.x_root, event.y_root)
             return
+        group_id = self._blueprint_group_at(event)
         index = self._blueprint_index_at(event)
+        if group_id is not None and index is None:
+            self.selected_group_id = group_id
+            self.blueprint_selection.clear()
+            self.blueprint_selected_edge = None
+            self.refresh_blueprint()
+            menu = tk.Menu(self.blueprint_canvas, tearoff=False)
+            menu.add_command(label="新增组", command=lambda: self.add_blueprint_group(group_id))
+            menu.add_command(
+                label="收起组" if self.group_expanded.get(group_id, True) else "展开组",
+                command=lambda: self._toggle_blueprint_group(group_id),
+            )
+            menu.add_command(label="编辑组设置", command=lambda: self.show_blueprint_group_editor(group_id))
+            menu.add_command(label="新建步骤到此组", command=lambda: self.add_task(group_id, use_current_context=False))
+            menu.add_command(label="删除组", command=lambda: self.delete_group(group_id))
+            menu.tk_popup(event.x_root, event.y_root)
+            return
         edge = self._blueprint_edge_at(event)
         if edge is not None and index is None:
             self.blueprint_selected_edge = edge
@@ -4915,7 +5219,8 @@ class AutoScriptGUI:
             self._select_task_in_list(index)
 
         menu = tk.Menu(self.blueprint_canvas, tearoff=False)
-        menu.add_command(label="新建步骤", command=self.add_task)
+        menu.add_command(label="新建步骤", command=lambda: self.add_task(None, use_current_context=False))
+        menu.add_command(label="新增组", command=lambda: self.add_blueprint_group())
         if index is not None:
             if index in self.blueprint_selection and len(self.blueprint_selection) > 1:
                 menu.add_command(label=f"删除选中的 {len(self.blueprint_selection)} 个步骤", command=self.delete_blueprint_selection)
@@ -4924,10 +5229,11 @@ class AutoScriptGUI:
                 menu.add_command(label="删除当前步骤", command=lambda: self.delete_task(index))
                 menu.add_command(label="复制当前步骤", command=self.copy_blueprint_selection)
                 menu.add_command(label="更改当前步骤类型", command=lambda: self.change_blueprint_task_type(index))
-                menu.add_command(label="编辑节点注释", command=lambda: self.edit_blueprint_comment(index))
-                menu.add_command(label="重命名节点", command=lambda: self.rename_blueprint_node(index))
-                menu.add_command(label="更改节点颜色", command=lambda: self.color_blueprint_node(index))
-                menu.add_command(label="折叠/展开节点", command=lambda: self.toggle_blueprint_node_collapse(index))
+                menu.add_command(label="编辑步骤注释", command=lambda: self.edit_blueprint_comment(index))
+                menu.add_command(label="重命名步骤", command=lambda: self.rename_blueprint_node(index))
+                menu.add_command(label="更改步骤颜色", command=lambda: self.color_blueprint_node(index))
+                menu.add_command(label="折叠/展开步骤", command=lambda: self.toggle_blueprint_node_collapse(index))
+            self._add_blueprint_group_commands(menu)
         elif self.blueprint_selection:
             menu.add_command(label=f"删除选中的 {len(self.blueprint_selection)} 个步骤", command=self.delete_blueprint_selection)
             menu.add_command(label=f"复制选中的 {len(self.blueprint_selection)} 个步骤", command=self.copy_blueprint_selection)
@@ -4936,6 +5242,62 @@ class AutoScriptGUI:
             menu.add_command(label="在线上添加转折点", command=lambda: self.add_blueprint_bend(edge, event))
             menu.add_command(label="删除连接", command=lambda: self.delete_blueprint_connection(edge))
         menu.tk_popup(event.x_root, event.y_root)
+
+    def _toggle_blueprint_group(self, group_id):
+        self._push_blueprint_history()
+        group_id = str(group_id)
+        self.group_expanded[group_id] = not self.group_expanded.get(group_id, True)
+        self.save_current_tasks()
+        self.refresh_blueprint()
+
+    def add_blueprint_group(self, parent_group_id=None):
+        self._push_blueprint_history()
+        group_id = self._ensure_group_exists(parent_id=parent_group_id)
+        self.selected_group_id = group_id
+        self.selected_task_index = None
+        self.save_current_tasks()
+        self.refresh_task_list()
+        self.refresh_blueprint()
+        self.show_blueprint_group_editor(group_id)
+
+    def _set_blueprint_selection_group(self, group_id):
+        indices = sorted(self.blueprint_selection)
+        if not indices:
+            return
+        group_id = str(group_id)
+        self._push_blueprint_history()
+        for index in indices:
+            TASKS[index]["group_id"] = group_id
+            TASKS[index]["group_name"] = self.group_names.get(group_id, "默认分组")
+        self.selected_group_id = group_id
+        self.save_current_tasks()
+        self.refresh_task_list()
+        self.refresh_blueprint()
+
+    def _remove_blueprint_selection_from_group(self):
+        indices = sorted(self.blueprint_selection)
+        if not indices:
+            return
+        current_groups = {str(TASKS[index].get("group_id") or "") for index in indices}
+        target_group_id = self._get_default_group_id()
+        if current_groups == {target_group_id}:
+            return
+        self._set_blueprint_selection_group(target_group_id)
+
+    def _add_blueprint_group_commands(self, menu):
+        if not self.blueprint_selection:
+            return
+        group_menu = tk.Menu(menu, tearoff=False)
+        for group_id in self.group_order:
+            self._add_blueprint_group_menu_item(group_menu, group_id)
+        menu.add_cascade(label="加入组", menu=group_menu)
+        menu.add_command(label="移出当前组（放到根组）", command=self._remove_blueprint_selection_from_group)
+
+    def _add_blueprint_group_menu_item(self, menu, group_id, depth=0):
+        label = ("  " * depth) + self.group_names.get(group_id, "默认分组")
+        menu.add_command(label=label, command=lambda gid=group_id: self._set_blueprint_selection_group(gid))
+        for child_id in self.group_children.get(group_id, []):
+            self._add_blueprint_group_menu_item(menu, child_id, depth + 1)
 
     def _blueprint_bend_at(self, event):
         item = self.blueprint_canvas.find_withtag("current")
@@ -4978,12 +5340,12 @@ class AutoScriptGUI:
         if not (0 <= task_index < len(TASKS)):
             return
         win = tk.Toplevel(self.blueprint_window or self.root)
-        win.title("编辑节点注释")
+        win.title("编辑步骤注释")
         win.geometry("360x150")
         win.transient(self.blueprint_window or self.root)
         win.grab_set()
         value = tk.StringVar(value=str(TASKS[task_index].get("blueprint_comment", "")))
-        ttk.Label(win, text="节点注释:").pack(anchor="w", padx=14, pady=(14, 6))
+        ttk.Label(win, text="步骤注释:").pack(anchor="w", padx=14, pady=(14, 6))
         ttk.Entry(win, textvariable=value, width=42).pack(padx=14, fill="x")
 
         def save():
@@ -5003,12 +5365,12 @@ class AutoScriptGUI:
         if not (0 <= task_index < len(TASKS)):
             return
         win = tk.Toplevel(self.blueprint_window or self.root)
-        win.title("重命名节点")
+        win.title("重命名步骤")
         win.geometry("360x140")
         win.transient(self.blueprint_window or self.root)
         win.grab_set()
         value = tk.StringVar(value=str(TASKS[task_index].get("description", "")))
-        ttk.Label(win, text="节点名称:").pack(anchor="w", padx=14, pady=(14, 6))
+        ttk.Label(win, text="步骤名称:").pack(anchor="w", padx=14, pady=(14, 6))
         ttk.Entry(win, textvariable=value, width=42).pack(padx=14, fill="x")
 
         def save():
@@ -5024,7 +5386,7 @@ class AutoScriptGUI:
     def color_blueprint_node(self, task_index):
         if not (0 <= task_index < len(TASKS)):
             return
-        selected = colorchooser.askcolor(title="选择节点颜色", parent=self.blueprint_window or self.root)
+        selected = colorchooser.askcolor(title="选择步骤颜色", parent=self.blueprint_window or self.root)
         if not selected or not selected[1]:
             return
         self._push_blueprint_history()
@@ -5106,7 +5468,7 @@ class AutoScriptGUI:
         win.grab_set()
         type_var = tk.StringVar(value=TASKS[task_index].get("type", "normal"))
         ttk.Label(win, text="步骤类型:").pack(anchor="w", padx=14, pady=(16, 6))
-        ttk.Combobox(win, textvariable=type_var, values=["normal", "advanced", "condition", "switch", "loop", "event", "keyboard_move", "key_press", "drag", "click_until_gone", "delay"], state="readonly", width=24).pack(padx=14, fill="x")
+        ttk.Combobox(win, textvariable=type_var, values=["normal", "advanced", "loop", "keyboard_move", "key_press", "drag", "click_until_gone", "delay"], state="readonly", width=24).pack(padx=14, fill="x")
 
         def confirm():
             task = TASKS[task_index]
@@ -5762,7 +6124,7 @@ class AutoScriptGUI:
             self.step_btn.config(state="disabled")
 
     def on_execution_task(self, task):
-        """在 GUI 线程中高亮当前正在执行的蓝图节点。"""
+        """在 GUI 线程中高亮当前正在执行的蓝图步骤。"""
         task_id = str(task.get("id")) if task.get("id") is not None else None
         task_index = next(
             (index for index, item in enumerate(TASKS) if task_id and str(item.get("id")) == task_id),

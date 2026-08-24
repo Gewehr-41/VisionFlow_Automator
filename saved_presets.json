@@ -39,7 +39,7 @@
       "next_template": "13",
       "click_requires_match": true,
       "optional": false,
-      "group_color": "#ffffff",
+      "group_color": "#2563eb",
       "next_templates": [
         "13"
       ],
@@ -74,7 +74,7 @@
         },
         {
           "key": "A",
-          "duration": 0.5
+          "duration": 0.3
         },
         {
           "key": "W",
@@ -82,13 +82,13 @@
         },
         {
           "key": "D",
-          "duration": 0.5
+          "duration": 0.3
         }
       ],
       "group_id": "group_37b807c3_copy",
       "group_name": "每日任务 复制",
       "enabled": false,
-      "group_color": "#ffffff",
+      "group_color": "#2563eb",
       "delay_before": 1.0,
       "id": "task_copy",
       "timeout": 8
@@ -109,7 +109,7 @@
       "group_name": "每日任务 复制",
       "enabled": false,
       "delay_before": 1.0,
-      "group_color": "#ffffff",
+      "group_color": "#2563eb",
       "id": "task_copy",
       "timeout": 1.0
     },
@@ -187,7 +187,7 @@
       ],
       "detour_enabled": true,
       "detour_jump_to": 8,
-      "group_color": "#ffffff",
+      "group_color": "#2563eb",
       "id": "task_copy"
     },
     {
@@ -230,52 +230,35 @@
       "next_templates": [
         "15"
       ],
-      "group_color": "#ffffff",
+      "group_color": "#2563eb",
       "click_requires_match": true,
       "optional": false,
       "id": "task_copy"
     },
     {
-      "type": "normal",
+      "type": "click_until_gone",
       "mode": "custom",
-      "template": "captured_52caa0b55d",
-      "timeout": 5.0,
+      "template": "",
+      "description": "新增持续点击直到识别步骤",
       "click": true,
-      "offset": [
-        0,
-        0
-      ],
-      "after_wait": 0.25,
-      "wait_for": "time",
-      "wait_timeout": 2.5,
+      "click_interval": 0.5,
+      "stop_delay": 2.0,
+      "timeout": 5.0,
+      "continue_after_timeout": false,
+      "stop_on_change": true,
       "required": true,
-      "description": "跳过对话",
       "group_id": "group_37b807c3_copy",
       "group_name": "每日任务 复制",
       "enabled": false,
-      "click_x": 1823,
-      "click_y": 44,
+      "click_x": 1833,
+      "click_y": 41,
       "click_position": [
-        1823,
-        44
+        1833,
+        41
       ],
-      "next_template": "None",
-      "click_requires_match": true,
-      "optional": false,
-      "group_color": "#ffffff",
-      "match_rect": [
-        1261,
-        154,
-        1440,
-        282
-      ],
-      "search_rect": [
-        1261,
-        154,
-        1440,
-        282
-      ],
-      "id": "task_copy"
+      "templates": [],
+      "id": "0aa20ac6-e299-43f3-8f39-8405faff6dec",
+      "group_color": "#2563eb"
     },
     {
       "type": "normal",
@@ -316,7 +299,7 @@
       "next_template": null,
       "click_requires_match": true,
       "optional": false,
-      "group_color": "#ffffff",
+      "group_color": "#2563eb",
       "id": "task_copy"
     },
     {
@@ -350,7 +333,7 @@
       "group_id": "group_37b807c3_copy",
       "group_name": "每日任务 复制",
       "enabled": false,
-      "group_color": "#ffffff",
+      "group_color": "#2563eb",
       "delay_before": 0.0,
       "id": "task_copy",
       "timeout": 8
@@ -371,7 +354,7 @@
       "group_id": "group_37b807c3_copy",
       "group_name": "每日任务 复制",
       "enabled": false,
-      "group_color": "#ffffff",
+      "group_color": "#2563eb",
       "id": "task_copy",
       "timeout": 1.0
     },
@@ -414,7 +397,7 @@
       "next_template": null,
       "click_requires_match": true,
       "optional": false,
-      "group_color": "#ffffff",
+      "group_color": "#2563eb",
       "id": "task_copy"
     },
     {
@@ -456,7 +439,7 @@
         1324,
         990
       ],
-      "group_color": "#ffffff",
+      "group_color": "#2563eb",
       "id": "task_copy"
     },
     {
@@ -479,7 +462,7 @@
         46
       ],
       "continue_after_timeout": true,
-      "group_color": "#ffffff",
+      "group_color": "#2563eb",
       "stop_on_change": false,
       "id": "task_copy"
     },
@@ -515,7 +498,7 @@
         777,
         786
       ],
-      "group_color": "#ffffff",
+      "group_color": "#2563eb",
       "stop_on_change": false,
       "id": "task_copy"
     },
@@ -523,7 +506,7 @@
       "type": "normal",
       "mode": "custom",
       "template": "start_loop",
-      "timeout": 50.0,
+      "timeout": 80.0,
       "click": true,
       "offset": [
         0,
@@ -558,7 +541,7 @@
       "next_template": "confirm_white",
       "click_requires_match": true,
       "optional": false,
-      "group_color": "#ffffff",
+      "group_color": "#2563eb",
       "next_templates": [
         "confirm_white"
       ],
@@ -574,7 +557,15 @@
         1163,
         1033
       ],
-      "id": "task_copy"
+      "id": "task_copy",
+      "match_rects": [
+        [
+          146,
+          966,
+          424,
+          1041
+        ]
+      ]
     },
     {
       "type": "normal",
@@ -615,7 +606,7 @@
       "next_template": null,
       "click_requires_match": true,
       "optional": false,
-      "group_color": "#ffffff",
+      "group_color": "#2563eb",
       "id": "task_copy"
     },
     {
@@ -657,7 +648,7 @@
       "next_template": "None",
       "click_requires_match": true,
       "optional": false,
-      "group_color": "#ffffff",
+      "group_color": "#2563eb",
       "id": "task_copy"
     },
     {
@@ -676,7 +667,7 @@
       "group_id": "group_37b807c3_copy",
       "group_name": "每日任务 复制",
       "enabled": false,
-      "group_color": "#ffffff",
+      "group_color": "#2563eb",
       "id": "task_copy",
       "timeout": 1.0
     },
@@ -719,7 +710,7 @@
       "next_template": "None",
       "click_requires_match": true,
       "optional": false,
-      "group_color": "#ffffff",
+      "group_color": "#2563eb",
       "id": "task_copy"
     },
     {
@@ -776,7 +767,7 @@
         170,
         84
       ],
-      "group_color": "#ffffff",
+      "group_color": "#06b6d4",
       "id": "task_copy"
     },
     {
@@ -790,7 +781,7 @@
         0
       ],
       "after_wait": 0.25,
-      "wait_for": "next_appear",
+      "wait_for": "time",
       "wait_timeout": 2.5,
       "required": true,
       "description": "选择品质",
@@ -833,8 +824,16 @@
         1060,
         161
       ],
-      "group_color": "#ffffff",
-      "id": "task_copy"
+      "group_color": "#06b6d4",
+      "id": "task_copy",
+      "match_rects": [
+        [
+          77,
+          358,
+          202,
+          418
+        ]
+      ]
     },
     {
       "type": "normal",
@@ -890,7 +889,7 @@
       ],
       "click_requires_match": true,
       "optional": false,
-      "group_color": "#ffffff",
+      "group_color": "#06b6d4",
       "id": "task_copy"
     },
     {
@@ -947,7 +946,7 @@
         1382,
         872
       ],
-      "group_color": "#ffffff",
+      "group_color": "#06b6d4",
       "id": "task_copy"
     },
     {
@@ -989,7 +988,7 @@
       "next_template": null,
       "click_requires_match": true,
       "optional": false,
-      "group_color": "#ffffff",
+      "group_color": "#06b6d4",
       "id": "task_copy"
     },
     {
@@ -1025,7 +1024,7 @@
         1867,
         708
       ],
-      "group_color": "#ffffff",
+      "group_color": "#06b6d4",
       "id": "task_copy"
     },
     {
@@ -1044,7 +1043,7 @@
       "required": true,
       "description": "进入班组",
       "group_id": "group_c9dda062_copy",
-      "group_name": "领取班组奖励 复制",
+      "group_name": "领取每日礼包 复制",
       "enabled": false,
       "click_x": 1493,
       "click_y": 971,
@@ -1067,7 +1066,7 @@
       "next_template": "None",
       "click_requires_match": true,
       "optional": false,
-      "group_color": "#eaf1ff",
+      "group_color": "#16a34a",
       "id": "task_copy"
     },
     {
@@ -1080,13 +1079,13 @@
         0,
         0
       ],
-      "after_wait": 0.25,
+      "after_wait": 0.5,
       "wait_for": "time",
       "wait_timeout": 2.5,
       "required": true,
       "description": "补给",
       "group_id": "group_c9dda062_copy",
-      "group_name": "领取班组奖励 复制",
+      "group_name": "领取每日礼包 复制",
       "enabled": false,
       "click_x": 1317,
       "click_y": 988,
@@ -1124,8 +1123,16 @@
         940,
         322
       ],
-      "group_color": "#eaf1ff",
-      "id": "task_copy"
+      "group_color": "#16a34a",
+      "id": "task_copy",
+      "match_rects": [
+        [
+          1285,
+          975,
+          1349,
+          1002
+        ]
+      ]
     },
     {
       "type": "normal",
@@ -1143,7 +1150,7 @@
       "required": true,
       "description": "领取",
       "group_id": "group_c9dda062_copy",
-      "group_name": "领取班组奖励 复制",
+      "group_name": "领取每日礼包 复制",
       "enabled": false,
       "click_x": 1676,
       "click_y": 981,
@@ -1157,7 +1164,7 @@
       "detour_steps": [],
       "detour_enabled": true,
       "detour_jump_to": 28,
-      "group_color": "#eaf1ff",
+      "group_color": "#16a34a",
       "match_rect": [
         1784,
         963,
@@ -1185,7 +1192,7 @@
       "stop_on_change": false,
       "required": true,
       "group_id": "group_c9dda062_copy",
-      "group_name": "领取班组奖励 复制",
+      "group_name": "领取每日礼包 复制",
       "enabled": false,
       "click_x": 147,
       "click_y": 51,
@@ -1193,7 +1200,7 @@
         147,
         51
       ],
-      "group_color": "#eaf1ff",
+      "group_color": "#16a34a",
       "match_rect": [
         1724,
         444,
@@ -1262,7 +1269,7 @@
         1736,
         65
       ],
-      "group_color": "#eaf1ff",
+      "group_color": "#f97316",
       "id": "task_copy"
     },
     {
@@ -1304,7 +1311,7 @@
       "next_template": "None",
       "click_requires_match": true,
       "optional": false,
-      "group_color": "#eaf1ff",
+      "group_color": "#f97316",
       "id": "task_copy"
     },
     {
@@ -1349,7 +1356,7 @@
       "detour_steps": [],
       "detour_enabled": true,
       "detour_jump_to": 32,
-      "group_color": "#eaf1ff",
+      "group_color": "#f97316",
       "id": "task_copy"
     },
     {
@@ -1362,7 +1369,7 @@
         0,
         0
       ],
-      "after_wait": 0.25,
+      "after_wait": 0.5,
       "wait_for": "time",
       "wait_timeout": 2.5,
       "required": true,
@@ -1379,7 +1386,7 @@
       "next_template": "None",
       "click_requires_match": true,
       "optional": false,
-      "group_color": "#eaf1ff",
+      "group_color": "#f97316",
       "id": "task_copy"
     },
     {
@@ -1409,10 +1416,10 @@
       "next_template": "None",
       "click_requires_match": true,
       "optional": false,
-      "group_color": "#eaf1ff",
+      "group_color": "#f97316",
       "detour_steps": [],
       "detour_enabled": true,
-      "detour_jump_to": 35,
+      "detour_jump_to": 37,
       "match_rect": [
         92,
         968,
@@ -1466,8 +1473,115 @@
       "next_template": null,
       "click_requires_match": true,
       "optional": false,
-      "group_color": "#eaf1ff",
-      "id": "task_copy"
+      "group_color": "#f97316",
+      "id": "task_copy",
+      "flow_next": "dc56e361-f237-46bd-beab-10d5cd68202c"
+    },
+    {
+      "type": "normal",
+      "mode": "custom",
+      "template": "captured_d8b5ebf9eb",
+      "timeout": 5.0,
+      "click": true,
+      "offset": [
+        0,
+        0
+      ],
+      "after_wait": 0.25,
+      "wait_for": "time",
+      "wait_timeout": 2.5,
+      "required": true,
+      "description": "点击晶条",
+      "group_id": "group_8f247b3d_copy",
+      "group_name": "领取巡录 复制",
+      "enabled": true,
+      "id": "dc56e361-f237-46bd-beab-10d5cd68202c",
+      "detour_enabled": true,
+      "detour_success_jump_to": null,
+      "detour_jump_to": 37,
+      "timeout_jump_to": null,
+      "match_rects": [
+        [
+          991,
+          764,
+          1074,
+          826
+        ]
+      ],
+      "click_x": 595,
+      "click_y": 409,
+      "click_position": [
+        595,
+        409
+      ],
+      "match_rect": [
+        991,
+        764,
+        1074,
+        826
+      ],
+      "search_rect": [
+        991,
+        764,
+        1074,
+        826
+      ],
+      "next_template": "None",
+      "click_requires_match": true,
+      "optional": false,
+      "flow_next": "5e884c00-ac6f-4d9d-91f2-d91044aeb763",
+      "group_color": "#f97316"
+    },
+    {
+      "type": "normal",
+      "mode": "custom",
+      "template": "captured_d8b5ebf9eb",
+      "timeout": 5.0,
+      "click": true,
+      "offset": [
+        0,
+        0
+      ],
+      "after_wait": 0.25,
+      "wait_for": "time",
+      "wait_timeout": 2.5,
+      "required": true,
+      "description": "领取",
+      "group_id": "group_8f247b3d_copy",
+      "group_name": "领取巡录 复制",
+      "enabled": true,
+      "id": "5e884c00-ac6f-4d9d-91f2-d91044aeb763",
+      "click_x": 1161,
+      "click_y": 798,
+      "click_position": [
+        1161,
+        798
+      ],
+      "match_rects": [
+        [
+          996,
+          763,
+          1076,
+          827
+        ]
+      ],
+      "match_rect": [
+        996,
+        763,
+        1076,
+        827
+      ],
+      "search_rect": [
+        996,
+        763,
+        1076,
+        827
+      ],
+      "next_template": null,
+      "click_requires_match": true,
+      "optional": false,
+      "flow_next": "task_copy",
+      "group_color": "#f97316"
     },
     {
       "type": "click_until_gone",
@@ -1483,8 +1597,8 @@
       "required": true,
       "group_id": "group_8f247b3d_copy",
       "group_name": "领取巡录 复制",
-      "enabled": false,
-      "group_color": "#eaf1ff",
+      "enabled": true,
+      "group_color": "#f97316",
       "click_x": 143,
       "click_y": 47,
       "click_position": [
@@ -1503,7 +1617,9 @@
         151,
         897
       ],
-      "id": "task_copy"
+      "id": "task_copy",
+      "flow_next": null,
+      "flow_next_disabled": true
     }
   ],
   "追放主线关卡": [
@@ -1557,7 +1673,8 @@
         1901,
         687
       ],
-      "id": "f530c5de-589e-4c72-ae0c-6f6e709319a9"
+      "id": "f530c5de-589e-4c72-ae0c-6f6e709319a9",
+      "blueprint_collapsed": false
     },
     {
       "type": "normal",
@@ -1967,7 +2084,8 @@
           1023
         ]
       ],
-      "id": "9e25fd49-e435-4d01-9da7-3ebfc6eb78d6"
+      "id": "9e25fd49-e435-4d01-9da7-3ebfc6eb78d6",
+      "blueprint_collapsed": false
     },
     {
       "type": "normal",
@@ -2078,7 +2196,8 @@
           1024
         ]
       ],
-      "id": "0ba04041-ec92-4e94-a108-9fc7c32ba73a"
+      "id": "0ba04041-ec92-4e94-a108-9fc7c32ba73a",
+      "blueprint_collapsed": false
     },
     {
       "type": "drag",
@@ -2100,10 +2219,11 @@
       "enabled": false,
       "group_color": "#eaf1ff",
       "id": "938f7684-4a87-47cf-8667-12625ff4cbc4",
-      "timeout": 1.0
+      "timeout": 1.0,
+      "blueprint_collapsed": false
     }
   ],
-  "测试": [
+  "追放周回": [
     {
       "type": "normal",
       "mode": "custom",
@@ -2121,7 +2241,7 @@
       "description": "进入委托",
       "group_id": "group_default",
       "group_name": "峰值",
-      "enabled": false,
+      "enabled": true,
       "id": "a8fa4700-58d5-4b37-9494-f16ef0f7a781",
       "match_rects": [
         [
@@ -2172,7 +2292,7 @@
       "description": "进入周订单",
       "group_id": "group_default",
       "group_name": "峰值",
-      "enabled": false,
+      "enabled": true,
       "id": "392386ec-bcb1-4e93-b6f4-c151652381b5",
       "match_rects": [
         [
@@ -2203,7 +2323,8 @@
       "next_template": null,
       "click_requires_match": true,
       "optional": false,
-      "group_color": "#eaf1ff"
+      "group_color": "#eaf1ff",
+      "detour_steps": []
     },
     {
       "type": "normal",
@@ -2222,7 +2343,7 @@
       "description": "进入峰值推定",
       "group_id": "group_default",
       "group_name": "峰值",
-      "enabled": false,
+      "enabled": true,
       "id": "31b88977-a3bb-4cfb-a065-192fc70cceec",
       "blueprint_collapsed": false,
       "match_rects": [
@@ -2273,7 +2394,7 @@
       "description": "前往极限峰值",
       "group_id": "group_default",
       "group_name": "峰值",
-      "enabled": false,
+      "enabled": true,
       "id": "5b8130c8-39ec-46fd-9bf8-03e01cb985b6",
       "match_rects": [
         [
@@ -2323,7 +2444,7 @@
       "description": "进入第一关",
       "group_id": "group_default",
       "group_name": "峰值",
-      "enabled": false,
+      "enabled": true,
       "id": "2d1a80e5-6b9e-4b11-944a-4bbe6dbdea02",
       "match_rects": [
         [
@@ -2373,7 +2494,7 @@
       "description": "开始作战",
       "group_id": "group_default",
       "group_name": "峰值",
-      "enabled": false,
+      "enabled": true,
       "id": "18d51d03-4999-434c-839d-20a1ff03985b",
       "match_rects": [
         [
@@ -2438,7 +2559,7 @@
       "description": "作战开始",
       "group_id": "group_default",
       "group_name": "峰值",
-      "enabled": false,
+      "enabled": true,
       "match_rects": [
         [
           677,
@@ -2485,7 +2606,7 @@
       "required": true,
       "group_id": "group_default",
       "group_name": "峰值",
-      "enabled": false,
+      "enabled": true,
       "click_x": 1579,
       "click_y": 984,
       "click_position": [
@@ -2535,7 +2656,7 @@
       "description": "回到关卡选择页面",
       "group_id": "group_default",
       "group_name": "峰值",
-      "enabled": false,
+      "enabled": true,
       "match_rects": [
         [
           1401,
@@ -2585,7 +2706,7 @@
       "description": "进入第二关",
       "group_id": "group_default",
       "group_name": "峰值",
-      "enabled": false,
+      "enabled": true,
       "id": "2b6fd778-2d0d-4ec3-8b06-a45993a39784",
       "match_rects": [
         [
@@ -2635,7 +2756,7 @@
       "description": "开始作战",
       "group_id": "group_default",
       "group_name": "峰值",
-      "enabled": false,
+      "enabled": true,
       "id": "981d1b8a-8724-42bb-ad85-67fdf745a606",
       "match_rects": [
         [
@@ -2700,7 +2821,7 @@
       "description": "作战开始",
       "group_id": "group_default",
       "group_name": "峰值",
-      "enabled": false,
+      "enabled": true,
       "match_rects": [
         [
           677,
@@ -2747,7 +2868,7 @@
       "required": true,
       "group_id": "group_default",
       "group_name": "峰值",
-      "enabled": false,
+      "enabled": true,
       "click_x": 1579,
       "click_y": 984,
       "click_position": [
@@ -2797,7 +2918,7 @@
       "description": "回到关卡选择页面",
       "group_id": "group_default",
       "group_name": "峰值",
-      "enabled": false,
+      "enabled": true,
       "match_rects": [
         [
           1401,
@@ -2847,7 +2968,7 @@
       "description": "进入第三关",
       "group_id": "group_default",
       "group_name": "峰值",
-      "enabled": false,
+      "enabled": true,
       "id": "5ee0e954-1e44-4796-b4fd-805d506dfae2",
       "match_rects": [
         [
@@ -2897,7 +3018,7 @@
       "description": "开始作战",
       "group_id": "group_default",
       "group_name": "峰值",
-      "enabled": false,
+      "enabled": true,
       "id": "5292eae6-6731-4b04-aa51-831e2a549863",
       "match_rects": [
         [
@@ -2962,7 +3083,7 @@
       "description": "作战开始",
       "group_id": "group_default",
       "group_name": "峰值",
-      "enabled": false,
+      "enabled": true,
       "match_rects": [
         [
           677,
@@ -3009,7 +3130,7 @@
       "required": true,
       "group_id": "group_default",
       "group_name": "峰值",
-      "enabled": false,
+      "enabled": true,
       "click_x": 1579,
       "click_y": 984,
       "click_position": [
@@ -3060,7 +3181,7 @@
       "description": "回到关卡选择页面",
       "group_id": "group_default",
       "group_name": "峰值",
-      "enabled": false,
+      "enabled": true,
       "match_rects": [
         [
           1401,
@@ -3147,6 +3268,219 @@
       "flow_next_disabled": true
     }
   ],
+  "测试": [
+    {
+      "type": "normal",
+      "mode": "custom",
+      "template": "new_step",
+      "timeout": 5,
+      "click": true,
+      "offset": [
+        0,
+        0
+      ],
+      "after_wait": 0.25,
+      "wait_for": "time",
+      "wait_timeout": 2.5,
+      "required": true,
+      "description": "新增普通步骤",
+      "enabled": true,
+      "id": "81972d7d-259b-40e9-90a7-cea12aac4c4c",
+      "group_id": "group_35fda057",
+      "group_name": "组 1",
+      "blueprint_collapsed": false
+    },
+    {
+      "type": "normal",
+      "mode": "custom",
+      "template": "new_step",
+      "timeout": 5,
+      "click": true,
+      "offset": [
+        0,
+        0
+      ],
+      "after_wait": 0.25,
+      "wait_for": "time",
+      "wait_timeout": 2.5,
+      "required": true,
+      "description": "新增普通步骤",
+      "group_id": "group_35fda057",
+      "group_name": "组 1",
+      "enabled": true,
+      "id": "893b98f8-f10f-4648-9b30-44d9d422561e"
+    },
+    {
+      "type": "normal",
+      "mode": "custom",
+      "template": "new_step",
+      "timeout": 5,
+      "click": true,
+      "offset": [
+        0,
+        0
+      ],
+      "after_wait": 0.25,
+      "wait_for": "time",
+      "wait_timeout": 2.5,
+      "required": true,
+      "description": "新增普通步骤",
+      "group_id": "group_35fda057",
+      "group_name": "组 1",
+      "enabled": true,
+      "id": "f5016da8-1613-49dc-b50d-667b1f006cf8"
+    },
+    {
+      "type": "normal",
+      "mode": "custom",
+      "template": "new_step",
+      "timeout": 5,
+      "click": true,
+      "offset": [
+        0,
+        0
+      ],
+      "after_wait": 0.25,
+      "wait_for": "time",
+      "wait_timeout": 2.5,
+      "required": true,
+      "description": "新增普通步骤",
+      "group_id": "group_35fda057",
+      "group_name": "组 1",
+      "enabled": true,
+      "id": "681e3e42-b024-4b43-b7a5-453e62a382e6",
+      "flow_next": "8789cfe8-02eb-45e9-a5a0-edf5e5cb15ad"
+    },
+    {
+      "type": "normal",
+      "mode": "custom",
+      "template": "new_step",
+      "timeout": 5,
+      "click": true,
+      "offset": [
+        0,
+        0
+      ],
+      "after_wait": 0.25,
+      "wait_for": "time",
+      "wait_timeout": 2.5,
+      "required": true,
+      "description": "新增普通步骤",
+      "group_id": "group_35fda057",
+      "group_name": "组 1",
+      "enabled": true,
+      "id": "8789cfe8-02eb-45e9-a5a0-edf5e5cb15ad",
+      "flow_next": "dd77da19-1b2e-4960-9bf4-9262e21de438"
+    },
+    {
+      "type": "advanced",
+      "mode": "custom",
+      "template": "new_step",
+      "timeout": 5,
+      "click": true,
+      "offset": [
+        0,
+        0
+      ],
+      "after_wait": 0.25,
+      "wait_for": "time",
+      "wait_timeout": 2.5,
+      "required": true,
+      "description": "新增普通步骤",
+      "group_id": "group_06fce48f",
+      "group_name": "组 2",
+      "enabled": true,
+      "id": "dd77da19-1b2e-4960-9bf4-9262e21de438",
+      "detour_enabled": true,
+      "detour_jump_to": 7,
+      "detour_success_jump_to": 8,
+      "blueprint_collapsed": false
+    },
+    {
+      "type": "normal",
+      "mode": "custom",
+      "template": "new_step",
+      "timeout": 5,
+      "click": true,
+      "offset": [
+        0,
+        0
+      ],
+      "after_wait": 0.25,
+      "wait_for": "time",
+      "wait_timeout": 2.5,
+      "required": true,
+      "description": "新增普通步骤",
+      "group_id": "group_06fce48f",
+      "group_name": "组 2",
+      "enabled": true,
+      "id": "632244d1-75b5-46a7-804a-27bc6c69d360"
+    },
+    {
+      "type": "normal",
+      "mode": "custom",
+      "template": "new_step",
+      "timeout": 5,
+      "click": true,
+      "offset": [
+        0,
+        0
+      ],
+      "after_wait": 0.25,
+      "wait_for": "time",
+      "wait_timeout": 2.5,
+      "required": true,
+      "description": "新增普通步骤",
+      "group_id": "group_06fce48f",
+      "group_name": "组 2",
+      "enabled": true,
+      "id": "67257c62-96d2-45cd-9f48-992a8483805e",
+      "flow_next": "f7ca5b55-f3b9-420a-953e-789a99d7bf14"
+    },
+    {
+      "type": "normal",
+      "mode": "custom",
+      "template": "new_step",
+      "timeout": 5,
+      "click": true,
+      "offset": [
+        0,
+        0
+      ],
+      "after_wait": 0.25,
+      "wait_for": "time",
+      "wait_timeout": 2.5,
+      "required": true,
+      "description": "新增普通步骤",
+      "group_id": "group_06fce48f",
+      "group_name": "组 2",
+      "enabled": true,
+      "id": "f7ca5b55-f3b9-420a-953e-789a99d7bf14"
+    },
+    {
+      "type": "advanced",
+      "mode": "custom",
+      "template": "new_step",
+      "templates": [
+        "new_step"
+      ],
+      "timeout": 5,
+      "click": true,
+      "offset": [
+        0,
+        0
+      ],
+      "after_wait": 0.25,
+      "wait_for": "time",
+      "wait_timeout": 2.5,
+      "required": true,
+      "description": "新增高级步骤",
+      "group_id": "group_06fce48f",
+      "group_name": "组 2",
+      "enabled": true,
+      "id": "2220794f-a4c2-4208-9e21-bcd47fb2cf47"
+    }
+  ],
   "__deleted__": [
     "daily",
     "side",
@@ -3155,42 +3489,36 @@
   "__group_metadata__": {
     "custom": {
       "names": {
-        "group_default": "刷主线/活动关卡",
         "group_37b807c3": "每日任务",
         "group_896c3838": "领取每日礼包",
         "group_c9dda062": "领取班组奖励",
         "group_8f247b3d": "领取巡录"
       },
       "colors": {
-        "group_default": "#eaf1ff",
         "group_37b807c3": "#ffffff",
         "group_896c3838": "#ffffff",
         "group_c9dda062": "#eaf1ff",
         "group_8f247b3d": "#eaf1ff"
       },
       "expanded": {
-        "group_default": true,
         "group_37b807c3": true,
         "group_896c3838": true,
         "group_c9dda062": true,
         "group_8f247b3d": true
       },
       "order": [
-        "group_default",
         "group_37b807c3",
         "group_896c3838",
         "group_c9dda062",
         "group_8f247b3d"
       ],
       "parents": {
-        "group_default": null,
         "group_37b807c3": null,
         "group_896c3838": null,
         "group_c9dda062": null,
         "group_8f247b3d": null
       },
       "children": {
-        "group_default": [],
         "group_37b807c3": [],
         "group_896c3838": [],
         "group_c9dda062": [],
@@ -3201,18 +3529,18 @@
       "names": {
         "group_37b807c3_copy": "每日任务 复制",
         "group_896c3838_copy": "领取每日礼包 复制",
-        "group_c9dda062_copy": "领取班组奖励 复制",
+        "group_c9dda062_copy": "领取每日礼包 复制",
         "group_8f247b3d_copy": "领取巡录 复制"
       },
       "colors": {
-        "group_37b807c3_copy": "#ffffff",
-        "group_896c3838_copy": "#ffffff",
-        "group_c9dda062_copy": "#eaf1ff",
-        "group_8f247b3d_copy": "#eaf1ff"
+        "group_37b807c3_copy": "#2563eb",
+        "group_896c3838_copy": "#06b6d4",
+        "group_c9dda062_copy": "#16a34a",
+        "group_8f247b3d_copy": "#f97316"
       },
       "expanded": {
         "group_37b807c3_copy": false,
-        "group_896c3838_copy": false,
+        "group_896c3838_copy": true,
         "group_c9dda062_copy": false,
         "group_8f247b3d_copy": false
       },
@@ -3291,7 +3619,27 @@
         "group_default": []
       }
     },
-    "测试": {
+    "导出测试": {
+      "names": {
+        "group_default": "刷主线/活动关卡"
+      },
+      "colors": {
+        "group_default": "#eaf1ff"
+      },
+      "expanded": {
+        "group_default": true
+      },
+      "order": [
+        "group_default"
+      ],
+      "parents": {
+        "group_default": null
+      },
+      "children": {
+        "group_default": []
+      }
+    },
+    "追放周回": {
       "names": {
         "group_default": "峰值"
       },
@@ -3311,24 +3659,32 @@
         "group_default": []
       }
     },
-    "导出测试": {
+    "测试": {
       "names": {
-        "group_default": "刷主线/活动关卡"
+        "group_35fda057": "组 1",
+        "group_06fce48f": "组 2"
       },
       "colors": {
-        "group_default": "#eaf1ff"
+        "group_default": "#f97316",
+        "group_26888861": "#0ea5e9",
+        "group_3b69ec0a": "#06b6d4",
+        "group_d01976a7": "#14b8a6"
       },
       "expanded": {
-        "group_default": true
+        "group_35fda057": true,
+        "group_06fce48f": true
       },
       "order": [
-        "group_default"
+        "group_35fda057",
+        "group_06fce48f"
       ],
       "parents": {
-        "group_default": null
+        "group_35fda057": null,
+        "group_06fce48f": null
       },
       "children": {
-        "group_default": []
+        "group_35fda057": [],
+        "group_06fce48f": []
       }
     }
   }

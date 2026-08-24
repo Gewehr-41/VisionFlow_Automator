@@ -1,5 +1,6 @@
 import json
 import os
+import uuid
 from copy import deepcopy
 from nodes import normalize_task
 
@@ -116,10 +117,33 @@ def load_tasks():
             with open(TASKS_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data, list) and data:
-                return [normalize_task(task) for task in data]
+                return normalize_task_list(data)
         except Exception:
             pass
     return deepcopy(DEFAULT_TASKS)
+
+
+def normalize_task_list(tasks):
+    normalized_tasks = [normalize_task(task) for task in tasks]
+    used_ids = set()
+    duplicate_id_map = {}
+    for task in normalized_tasks:
+        task_id = str(task.get("id"))
+        if task_id not in used_ids:
+            used_ids.add(task_id)
+            continue
+        new_id = str(uuid.uuid4())
+        while new_id in used_ids:
+            new_id = str(uuid.uuid4())
+        duplicate_id_map.setdefault(task_id, []).append(new_id)
+        task["id"] = new_id
+        used_ids.add(new_id)
+
+    for task in normalized_tasks:
+        target_id = task.get("flow_next")
+        if target_id in duplicate_id_map:
+            task["flow_next"] = duplicate_id_map[target_id][0]
+    return normalized_tasks
 
 
 def save_tasks(tasks):
@@ -187,7 +211,7 @@ def load_presets():
                     presets.pop(str(name), None)
                 for name, preset_tasks in data.items():
                     if name not in ("custom", "__deleted__") and isinstance(preset_tasks, list):
-                        presets[str(name)] = [normalize_task(task) for task in preset_tasks]
+                        presets[str(name)] = normalize_task_list(preset_tasks)
         except Exception:
             pass
     return presets

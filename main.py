@@ -1059,6 +1059,10 @@ def run_task_queue(tasks, loop=False, stop_flag=None, log_callback=None, executi
                     pause_flag.set()
                 if task.get("flow_next") is not None or task.get("flow_next_disabled"):
                     flow_target = task.get("flow_next")
+                    if flow_target is None and not task.get("flow_next_disabled"):
+                        flow_chain = []
+                        index += 1
+                        continue
                     if flow_target is None:
                         log("  当前步骤未连接下一节点，流程结束。", log_callback)
                         break
@@ -1073,8 +1077,9 @@ def run_task_queue(tasks, loop=False, stop_flag=None, log_callback=None, executi
                     index = flow_target_index
                     continue
                 if graph_mode:
-                    log("  当前蓝图节点没有下一连接，流程结束。", log_callback)
-                    break
+                    flow_chain = []
+                    index += 1
+                    continue
                 flow_chain = []
                 jump_chain = []
                 index += 1

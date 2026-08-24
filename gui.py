@@ -539,14 +539,20 @@ class AutoScriptGUI:
                 group_id_map[source_group_id] = candidate
 
         copied_tasks = []
+        copied_id_map = {}
         for task in source_tasks:
             copied_task = deepcopy(task)
             source_group_id = str(task.get("group_id") or "group_default")
             if source_group_id in group_id_map:
                 copied_task["group_id"] = group_id_map[source_group_id]
                 copied_task["group_name"] = f"{task.get('group_name', '默认分组')} 复制"
-            copied_task["id"] = f"{task.get('id', 'task')}_copy"
+            copied_task["id"] = str(uuid.uuid4())
+            copied_id_map[str(task.get("id"))] = copied_task["id"]
             copied_tasks.append(copied_task)
+        for copied_task in copied_tasks:
+            flow_target = copied_task.get("flow_next")
+            if flow_target in copied_id_map:
+                copied_task["flow_next"] = copied_id_map[flow_target]
         return copied_tasks
 
     def delete_current_preset(self):
@@ -790,6 +796,7 @@ class AutoScriptGUI:
             threshold_row.pack(fill="x", pady=(0, 8))
 
         if task_type == "keyboard_move":
+            name_var = tk.StringVar(value=str(task.get("description", "每日移动步骤")))
             key_var = tk.StringVar(value="W")
             duration_var = tk.StringVar(value="1.0")
             delay_before_var = tk.StringVar(value=str(task.get("delay_before", 0.0)))
@@ -1863,6 +1870,10 @@ class AutoScriptGUI:
                 self.blueprint_zoom = 1.0
 
     def save_current_tasks(self):
+        validation_errors = self._validate_blueprint_connections()
+        if validation_errors:
+            self.append_log("蓝图校验失败，未保存当前任务：" + "；".join(validation_errors))
+            return False
         self.mode_tasks[self.current_mode] = deepcopy(TASKS)
         self.mode_group_metadata[self.current_mode] = self._capture_group_metadata()
         if self.current_mode == "custom":
@@ -1876,6 +1887,7 @@ class AutoScriptGUI:
         save_blueprint_layouts(self.blueprint_layouts)
         self.blueprint_graphs[self.current_mode] = NodeGraph(TASKS).to_payload()
         save_blueprint_graphs(self.blueprint_graphs)
+        return True
 
     def apply_selected_task(self):
         if self.selected_group_id is not None:
@@ -3815,6 +3827,7 @@ class AutoScriptGUI:
                 cloned[key] = value
         cloned["description"] = f"{task.get('description', task.get('template', 'step'))} (副本)"
         cloned["template"] = f"{task.get('template', 'new_step')}_copy"
+        cloned["id"] = str(uuid.uuid4())
         insert_index = self.selected_task_index + 1
         TASKS.insert(insert_index, cloned)
         self.save_current_tasks()
@@ -4258,8 +4271,13 @@ class AutoScriptGUI:
 
     def _validate_blueprint_connections(self):
         errors = []
+        task_ids = []
         for task in TASKS:
             task.setdefault("id", str(uuid.uuid4()))
+            task_ids.append(str(task.get("id")))
+        duplicate_ids = sorted({task_id for task_id in task_ids if task_ids.count(task_id) > 1})
+        if duplicate_ids:
+            errors.append(f"存在重复节点 ID: {', '.join(duplicate_ids)}")
         task_id_to_index = {
             str(task.get("id")): index
             for index, task in enumerate(TASKS)
@@ -5848,7 +5866,10 @@ class AutoScriptGUI:
             task["group_id"] = target_group_id
             task["group_name"] = self.group_names.get(target_group_id, "默认分组")
             target_indices = [idx for idx, item in enumerate(TASKS) if str(item.get("group_id") or "group_default") == target_group_id]
-            insert_at = max(target_indices) + 1 if target_indices else len(TASKS)
+            if target_indices:
+                insert_at = max(target_indices) + 1 if insert_after else min(target_indices)
+            else:
+                insert_at = len(TASKS)
         else:
             target_index = target_entry[1]
             if target_index > source_index:

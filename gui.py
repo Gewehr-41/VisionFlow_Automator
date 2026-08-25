@@ -52,6 +52,11 @@ class AutoScriptGUI:
         self.region_capture_end = None
         self.region_capture_rect = None
         self.region_capture_target = "match"
+        self.image_capture_task = None
+        self.image_capture_template_key = "template"
+        self.image_capture_template_var = None
+        self.image_capture_on_saved = None
+        self.image_capture_on_cancel = None
         self.selection_overlay = None
         self.selection_canvas = None
         self.selection_box_id = None
@@ -307,6 +312,7 @@ class AutoScriptGUI:
         ttk.Label(next_row, text="下一模板:", width=12, anchor="w").pack(side="left")
         ttk.Entry(next_row, textvariable=self.next_template_var, width=22).pack(side="left")
         ttk.Button(next_row, text="选择图片", command=self.select_next_template_image).pack(side="left", padx=(8, 0))
+        ttk.Button(next_row, text="手动框选图片", command=self.capture_next_template_image).pack(side="left", padx=(8, 0))
         ttk.Button(next_row, text="框选出现位置", command=self.capture_next_template_region).pack(side="left", padx=(8, 0))
 
         timeout_row = ttk.Frame(form)
@@ -1009,21 +1015,7 @@ class AutoScriptGUI:
             action_row = ttk.Frame(config_frame)
             action_row.pack(fill="x", pady=(8, 4))
 
-            def bind_image():
-                file_paths = filedialog.askopenfilenames(
-                    title="选择持续点击图片",
-                    initialdir=os.path.join(os.getcwd(), "icons"),
-                    filetypes=[("PNG Images", "*.png"), ("All Files", "*.*")],
-                )
-                if file_paths:
-                    current_names = [item.strip() for item in template_var.get().replace("，", ",").split(",") if item.strip()]
-                    for file_path in file_paths:
-                        image_name = os.path.splitext(os.path.basename(file_path))[0]
-                        if image_name not in current_names:
-                            current_names.append(image_name)
-                    template_var.set(", ".join(current_names))
-
-            ttk.Button(action_row, text="绑定图片", command=bind_image).pack(side="left", padx=(0, 8))
+            ttk.Button(action_row, text="绑定图片", command=lambda: self.open_bind_image_menu(task)).pack(side="left", padx=(0, 8))
             ttk.Button(action_row, text="记录点击点", command=self.capture_current_click_position).pack(side="left", padx=(0, 8))
             ttk.Button(action_row, text="框选识别区域", command=self.capture_current_match_region).pack(side="left")
             ttk.Button(action_row, text="清空识别区域", command=self.clear_current_match_regions).pack(side="left", padx=(8, 0))
@@ -2126,7 +2118,7 @@ class AutoScriptGUI:
             return
         self._start_region_capture("next")
 
-    def _start_region_capture(self, target):
+    def _start_region_capture(self, target, image_task=None, template_key="template", template_var=None, on_saved=None, on_cancel=None):
         if self.selected_group_id is not None:
             return
         if not (0 <= self.selected_task_index < len(TASKS)):
@@ -2137,6 +2129,11 @@ class AutoScriptGUI:
 
         self.waiting_for_region_capture = True
         self.region_capture_target = target
+        self.image_capture_task = image_task
+        self.image_capture_template_key = template_key
+        self.image_capture_template_var = template_var
+        self.image_capture_on_saved = on_saved
+        self.image_capture_on_cancel = on_cancel
         self.region_capture_start = None
         self.region_capture_end = None
         if config.USE_WINDOW_MODE and config.TARGET_WINDOW_TITLE:
@@ -2179,9 +2176,16 @@ class AutoScriptGUI:
         self.region_capture_start = None
         self.region_capture_end = None
         self.region_capture_rect = None
+        self.image_capture_task = None
+        self.image_capture_template_var = None
+        self.image_capture_on_saved = None
+        on_cancel = self.image_capture_on_cancel
+        self.image_capture_on_cancel = None
         self._clear_selection_preview()
         self.root.deiconify()
         self.root.focus_force()
+        if on_cancel is not None:
+            on_cancel()
         self.append_log("已取消框选识别区域")
 
     def _finish_region_capture(self, start_x, start_y, end_x, end_y):
@@ -2208,7 +2212,21 @@ class AutoScriptGUI:
         if self.region_capture_target == "image":
             self.region_capture_rect = None
             self._clear_selection_preview()
-            self._save_captured_image(int(left), int(top), int(right), int(bottom))
+            image_task = self.image_capture_task
+            template_key = self.image_capture_template_key
+            template_var = self.image_capture_template_var
+            on_saved = self.image_capture_on_saved
+            self._save_captured_image(
+                int(left), int(top), int(right), int(bottom),
+                image_task,
+                template_key,
+                template_var,
+                on_saved,
+            )
+            self.image_capture_task = None
+            self.image_capture_template_var = None
+            self.image_capture_on_saved = None
+            self.image_capture_on_cancel = None
             self.root.deiconify()
             self.root.focus_force()
             return
@@ -2314,7 +2332,8 @@ class AutoScriptGUI:
 
         def manual_capture():
             close_menu()
-            self._start_region_capture("image")
+            template_key = "condition_templates" if task.get("type") == "condition" else "templates" if supports_multiple_templates else "template"
+            self._start_region_capture("image", image_task=task, template_key=template_key)
 
         def preview_images():
             template_key = "condition_templates" if task.get("type") == "condition" else "templates"
@@ -2395,7 +2414,7 @@ class AutoScriptGUI:
         else:
             ttk.Button(win, text="关闭", command=close_menu).pack(pady=(10, 12))
 
-    def _save_captured_image(self, left, top, right, bottom):
+    def _save_captured_image(self, left, top, right, bottom, task=None, template_key="template", template_var=None, on_saved=None):
         if right <= left or bottom <= top:
             messagebox.showwarning("框选失败", "框选区域太小，请重新拖曳选择。", parent=self.root)
             return
@@ -2406,9 +2425,8 @@ class AutoScriptGUI:
         screenshot = pyautogui.screenshot()
         screenshot.crop((left, top, right, bottom)).save(image_path)
         reload_templates()
-        task = TASKS[self.selected_task_index]
-        if task.get("type") in ("advanced", "condition", "click_until_gone"):
-            template_key = "condition_templates" if task.get("type") == "condition" else "templates"
+        task = task or TASKS[self.selected_task_index]
+        if template_key in ("templates", "condition_templates"):
             templates = task.get(template_key) or task.get("template") or []
             if isinstance(templates, str):
                 templates = [templates]
@@ -2419,11 +2437,19 @@ class AutoScriptGUI:
             if task.get("type") == "condition":
                 task["condition_template"] = templates[0]
             task["template"] = templates[0]
+        elif template_key == "next_template":
+            task["next_template"] = image_name
+            task["next_templates"] = [image_name]
         else:
-            task["template"] = image_name
+            task[template_key] = image_name
+        if template_var is not None:
+            template_var.set(image_name)
         self.save_current_tasks()
-        self.refresh_task_list()
-        self.load_task_to_form(self.selected_task_index)
+        if task in TASKS:
+            self.refresh_task_list()
+            self.load_task_to_form(self.selected_task_index)
+        if on_saved is not None:
+            on_saved(image_name)
         self.append_log(f"已将框选图片保存并绑定: {image_path}")
 
     def open_advanced_image_menu(self, task):
@@ -2553,6 +2579,13 @@ class AutoScriptGUI:
         self.refresh_task_list()
         self.append_log(f"已绑定等待目标图片: {template_name} -> {file_path}")
 
+    def capture_next_template_image(self):
+        if self.selected_group_id is not None:
+            return
+        if not (0 <= self.selected_task_index < len(TASKS)):
+            return
+        self._start_region_capture("image", image_task=TASKS[self.selected_task_index], template_key="next_template", template_var=self.next_template_var)
+
     def _bind_detour_template_image(self, detour_task, template_var):
         default_dir = os.path.join(os.getcwd(), "icons")
         file_path = filedialog.askopenfilename(
@@ -2567,6 +2600,39 @@ class AutoScriptGUI:
         template_var.set(template_name)
         detour_task["template"] = template_name
         self.append_log(f"已绑定迂回图片: {template_name} -> {file_path}")
+
+    def _capture_detour_template_image(self, detour_task, template_var, editor):
+        editor.grab_release()
+        editor.withdraw()
+        restore_editor = lambda: (editor.deiconify(), editor.grab_set(), editor.focus_force())
+        self._start_region_capture(
+            "image",
+            image_task=detour_task,
+            template_var=template_var,
+            on_saved=lambda _image_name: restore_editor(),
+            on_cancel=restore_editor,
+        )
+
+    def _capture_multiple_template_image(self, task, template_var, editor=None):
+        if editor is not None:
+            editor.grab_release()
+            editor.withdraw()
+        restore_editor = lambda: (editor.deiconify(), editor.grab_set(), editor.focus_force()) if editor is not None else None
+
+        def update_value(_image_name):
+            values = task.get("templates") or task.get("template") or []
+            if isinstance(values, str):
+                values = [values]
+            template_var.set(", ".join(str(value) for value in values if str(value).strip()))
+            restore_editor()
+
+        self._start_region_capture(
+            "image",
+            image_task=task,
+            template_key="templates",
+            on_saved=update_value,
+            on_cancel=restore_editor,
+        )
 
     def _bind_detour_next_template_image(self, detour_task, template_var):
         default_dir = os.path.join(os.getcwd(), "icons")
@@ -2583,6 +2649,19 @@ class AutoScriptGUI:
         detour_task["next_template"] = template_name
         detour_task["next_templates"] = [template_name]
         self.append_log(f"已绑定迂回下一模板: {template_name} -> {file_path}")
+
+    def _capture_detour_next_template_image(self, detour_task, template_var, editor):
+        editor.grab_release()
+        editor.withdraw()
+        restore_editor = lambda: (editor.deiconify(), editor.grab_set(), editor.focus_force())
+        self._start_region_capture(
+            "image",
+            image_task=detour_task,
+            template_key="next_template",
+            template_var=template_var,
+            on_saved=lambda _image_name: restore_editor(),
+            on_cancel=restore_editor,
+        )
 
     def _capture_detour_click_position(self, detour_task, click_x_var, click_y_var, editor=None):
         if editor is not None:
@@ -2791,8 +2870,9 @@ class AutoScriptGUI:
 
             action_row = ttk.Frame(form)
             action_row.pack(fill="x", pady=(8, 4))
-            ttk.Button(action_row, text="绑定图片", command=lambda: self._bind_detour_template_image(detour_task, template_var)).pack(side="left", padx=(0, 8))
+            ttk.Button(action_row, text="绑定图片", command=lambda: self.open_bind_image_menu(detour_task)).pack(side="left", padx=(0, 8))
             ttk.Button(action_row, text="绑定下一模板", command=lambda: self._bind_detour_next_template_image(detour_task, next_template_var)).pack(side="left", padx=(0, 8))
+            ttk.Button(action_row, text="框选下一模板", command=lambda: self._capture_detour_next_template_image(detour_task, next_template_var, win)).pack(side="left", padx=(0, 8))
             ttk.Button(action_row, text="记录点击点", command=lambda: self._capture_detour_click_position(detour_task, click_x_var, click_y_var, win)).pack(side="left", padx=(0, 8))
             ttk.Button(action_row, text="框选识别区域", command=lambda: self._capture_detour_match_region(detour_task, region_left_var, region_top_var, region_right_var, region_bottom_var, region_center_x_var, region_center_y_var, click_x_var, click_y_var, win)).pack(side="left")
             ttk.Button(action_row, text="清空识别区域", command=lambda: self._clear_detour_match_region(detour_task, region_left_var, region_top_var, region_right_var, region_bottom_var, region_center_x_var, region_center_y_var)).pack(side="left", padx=(8, 0))
@@ -3067,20 +3147,7 @@ class AutoScriptGUI:
             ttk.Entry(win, textvariable=name_var).pack(fill="x", padx=12)
             ttk.Label(win, text="绑定图片:").pack(anchor="w", padx=12, pady=(8, 0))
             ttk.Entry(win, textvariable=template_var).pack(fill="x", padx=12)
-            def bind_image():
-                file_paths = filedialog.askopenfilenames(
-                    title="选择持续点击图片",
-                    initialdir=os.path.join(os.path.dirname(__file__), "icons"),
-                    filetypes=[("PNG Images", "*.png"), ("All Files", "*.*")],
-                )
-                if file_paths:
-                    current_names = [item.strip() for item in template_var.get().replace("，", ",").split(",") if item.strip()]
-                    for file_path in file_paths:
-                        image_name = os.path.splitext(os.path.basename(file_path))[0]
-                        if image_name not in current_names:
-                            current_names.append(image_name)
-                    template_var.set(", ".join(current_names))
-            ttk.Button(win, text="绑定图片", command=bind_image).pack(anchor="w", padx=12, pady=(4, 0))
+            ttk.Button(win, text="绑定图片", command=lambda: self.open_bind_image_menu(detour_task)).pack(anchor="w", padx=12, pady=(4, 0))
             ttk.Label(win, text="点击间隔(秒):").pack(anchor="w", padx=12, pady=(8, 0))
             ttk.Entry(win, textvariable=interval_var).pack(fill="x", padx=12)
             ttk.Label(win, text="超时(秒，0为不限制):").pack(anchor="w", padx=12, pady=(8, 0))
@@ -3279,6 +3346,26 @@ class AutoScriptGUI:
                 return
             template_list.insert(tk.END, template_name)
 
+        def capture_template():
+            win.grab_release()
+            win.withdraw()
+
+            def add_captured_template(template_name):
+                existing = [template_list.get(i) for i in range(template_list.size())]
+                if template_name not in existing:
+                    template_list.insert(tk.END, template_name)
+                win.deiconify()
+                win.grab_set()
+                win.focus_force()
+
+            self._start_region_capture(
+                "image",
+                image_task=task,
+                template_key=key_name,
+                on_saved=add_captured_template,
+                on_cancel=lambda: (win.deiconify(), win.grab_set(), win.focus_force()),
+            )
+
         def remove_template():
             selection = template_list.curselection()
             if not selection:
@@ -3289,6 +3376,7 @@ class AutoScriptGUI:
         action_row = ttk.Frame(win)
         action_row.pack(fill="x", padx=12, pady=(0, 10))
         ttk.Button(action_row, text="新增图片", command=add_template).pack(side="left", padx=(0, 8))
+        ttk.Button(action_row, text="手动框选图片", command=capture_template).pack(side="left", padx=(0, 8))
         ttk.Button(action_row, text="删除选中", command=remove_template).pack(side="left")
 
         def save_list():
@@ -3303,6 +3391,7 @@ class AutoScriptGUI:
                 task["next_template"] = values[0] if values else None
                 task["next_templates"] = values
             self.refresh_task_list()
+            self.save_current_tasks()
             self.append_log(f"已保存模板列表: {values}")
             win.destroy()
 
@@ -3342,6 +3431,7 @@ class AutoScriptGUI:
         next_row.pack(fill="x", pady=4)
         ttk.Label(next_row, text="二级模板:").pack(side="left", padx=(0, 8), anchor="w")
         ttk.Button(next_row, text="编辑图片列表", command=lambda: self.open_template_list_editor("二级界面模板", task, "next_templates")).pack(side="left")
+        ttk.Button(next_row, text="手动框选图片", command=self.capture_next_template_image).pack(side="left", padx=(8, 0))
         ttk.Label(next_row, text=str(next_templates_value)).pack(side="left", padx=(10, 0), anchor="w")
 
         fields = [
@@ -4142,6 +4232,7 @@ class AutoScriptGUI:
         ttk.Label(next_row, text="下一模板:", width=12, anchor="w").pack(side="left")
         ttk.Entry(next_row, textvariable=self.next_template_var).pack(side="left", fill="x", expand=True)
         ttk.Button(next_row, text="选择图片", command=self.select_next_template_image).pack(side="left", padx=(5, 0))
+        ttk.Button(next_row, text="手动框选图片", command=self.capture_next_template_image).pack(side="left", padx=(5, 0))
         ttk.Button(next_row, text="框选出现位置", command=self.capture_next_template_region).pack(side="left", padx=(5, 0))
 
         wait_row = ttk.Frame(form)
@@ -4598,6 +4689,16 @@ class AutoScriptGUI:
             group_id = str(self.group_parents.get(group_id) or "")
         return None
 
+    def _raise_selected_blueprint_edges(self):
+        """将选中的连线及其标签、转折点提升到所有蓝图元素之上。"""
+        selected_edges = set(self.blueprint_selection_edges)
+        if self.blueprint_selected_edge is not None:
+            selected_edges.add(self.blueprint_selected_edge)
+        for edge_kind, source_index, target_index in selected_edges:
+            edge_tag = f"blueprint_edge:{edge_kind}:{source_index}:{target_index}"
+            self.blueprint_canvas.tag_raise(edge_tag)
+        self.blueprint_canvas.tag_raise("blueprint_bend")
+
     def refresh_blueprint(self):
         if getattr(self, "blueprint_canvas", None) is None:
             return
@@ -4893,6 +4994,8 @@ class AutoScriptGUI:
                     tags=(node_tag, "blueprint_item"),
                 ))
             self.blueprint_node_items[index] = items
+
+        self._raise_selected_blueprint_edges()
 
         group_bounds = [self._blueprint_group_bounds(group_id) for group_id in self.group_names if not self._blueprint_group_hidden(group_id)]
         max_x = max(

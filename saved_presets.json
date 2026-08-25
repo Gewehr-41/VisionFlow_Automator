@@ -4,7 +4,7 @@
       "type": "normal",
       "mode": "custom",
       "template": "16",
-      "timeout": 10.0,
+      "timeout": 20.0,
       "click": true,
       "offset": [
         0,
@@ -39,7 +39,7 @@
       "next_template": "19",
       "click_requires_match": true,
       "optional": false,
-      "group_color": "#2563eb",
+      "group_color": "#eab308",
       "next_templates": [
         "19"
       ],
@@ -96,7 +96,7 @@
       "group_id": "group_37b807c3_copy",
       "group_name": "每日任务 复制",
       "enabled": false,
-      "group_color": "#2563eb",
+      "group_color": "#eab308",
       "delay_before": 1.0,
       "id": "task_copy",
       "timeout": 8
@@ -117,7 +117,7 @@
       "group_name": "每日任务 复制",
       "enabled": false,
       "delay_before": 1.0,
-      "group_color": "#2563eb",
+      "group_color": "#eab308",
       "id": "f3ec4923-1364-4956-b4c2-7cb44b892339",
       "timeout": 1.0
     },
@@ -195,7 +195,7 @@
       ],
       "detour_enabled": true,
       "detour_jump_to": 7,
-      "group_color": "#2563eb",
+      "group_color": "#eab308",
       "id": "807bf3d2-de29-49db-be04-dddd4ad85138"
     },
     {
@@ -238,7 +238,7 @@
       "next_templates": [
         "15"
       ],
-      "group_color": "#2563eb",
+      "group_color": "#eab308",
       "click_requires_match": true,
       "optional": false,
       "id": "713e259f-5aaf-4f58-82e2-153d63828094"
@@ -246,14 +246,14 @@
     {
       "type": "click_until_gone",
       "mode": "custom",
-      "template": "",
+      "template": "captured_2ae591eced",
       "description": "跳过对话",
       "click": true,
       "click_interval": 0.5,
       "stop_delay": 2.0,
       "timeout": 5.0,
       "continue_after_timeout": false,
-      "stop_on_change": true,
+      "stop_on_change": false,
       "required": true,
       "group_id": "group_37b807c3_copy",
       "group_name": "每日任务 复制",
@@ -264,9 +264,32 @@
         1833,
         41
       ],
-      "templates": [],
+      "templates": [
+        "captured_2ae591eced",
+        "captured_c563e1ea94"
+      ],
       "id": "0aa20ac6-e299-43f3-8f39-8405faff6dec",
-      "group_color": "#2563eb"
+      "group_color": "#eab308",
+      "match_rects": [
+        [
+          1147,
+          708,
+          1205,
+          758
+        ]
+      ],
+      "match_rect": [
+        1147,
+        708,
+        1205,
+        758
+      ],
+      "search_rect": [
+        1147,
+        708,
+        1205,
+        758
+      ]
     },
     {
       "type": "normal",
@@ -307,7 +330,7 @@
       "next_template": null,
       "click_requires_match": true,
       "optional": false,
-      "group_color": "#2563eb",
+      "group_color": "#eab308",
       "id": "87c49aa0-7526-459b-9ec6-e63278d6cd30"
     },
     {
@@ -341,7 +364,7 @@
       "group_id": "group_37b807c3_copy",
       "group_name": "每日任务 复制",
       "enabled": false,
-      "group_color": "#2563eb",
+      "group_color": "#eab308",
       "delay_before": 0.0,
       "id": "ca24ea78-bf39-428d-b400-944c89fd02d6",
       "timeout": 8
@@ -362,7 +385,7 @@
       "group_id": "group_37b807c3_copy",
       "group_name": "每日任务 复制",
       "enabled": false,
-      "group_color": "#2563eb",
+      "group_color": "#eab308",
       "id": "ccb74687-6045-40bb-96f4-1f9d978d0a1e",
       "timeout": 1.0
     },
@@ -405,7 +428,7 @@
       "next_template": null,
       "click_requires_match": true,
       "optional": false,
-      "group_color": "#2563eb",
+      "group_color": "#eab308",
       "id": "85081c83-9269-426e-bb4f-a802911c952f"
     },
     {
@@ -447,7 +470,7 @@
         1324,
         990
       ],
-      "group_color": "#2563eb",
+      "group_color": "#eab308",
       "id": "25113088-777e-4135-99b1-8a06b2129238"
     },
     {
@@ -470,7 +493,7 @@
         46
       ],
       "continue_after_timeout": true,
-      "group_color": "#2563eb",
+      "group_color": "#eab308",
       "stop_on_change": false,
       "id": "7ef7dbb0-1eb4-488a-8366-f225ead4c3b4"
     },
@@ -506,7 +529,7 @@
         777,
         786
       ],
-      "group_color": "#2563eb",
+      "group_color": "#eab308",
       "stop_on_change": false,
       "id": "34b653c7-12aa-4fad-981d-f0c7aa5d666d"
     },
@@ -549,7 +572,7 @@
       "next_template": "confirm_white",
       "click_requires_match": true,
       "optional": false,
-      "group_color": "#2563eb",
+      "group_color": "#eab308",
       "next_templates": [
         "confirm_white"
       ],
@@ -614,7 +637,7 @@
       "next_template": null,
       "click_requires_match": true,
       "optional": false,
-      "group_color": "#2563eb",
+      "group_color": "#eab308",
       "id": "e9a5666f-7556-45f0-9e23-1a27db274301"
     },
     {
@@ -656,7 +679,7 @@
       "next_template": "None",
       "click_requires_match": true,
       "optional": false,
-      "group_color": "#2563eb",
+      "group_color": "#eab308",
       "id": "b23ad9e3-88bc-408f-bce4-40f3180bfd8f"
     },
     {
@@ -675,7 +698,7 @@
       "group_id": "group_37b807c3_copy",
       "group_name": "每日任务 复制",
       "enabled": false,
-      "group_color": "#2563eb",
+      "group_color": "#eab308",
       "id": "63fe2632-509d-41b5-9fe3-55eb1602e333",
       "timeout": 1.0
     },
@@ -718,7 +741,7 @@
       "next_template": "None",
       "click_requires_match": true,
       "optional": false,
-      "group_color": "#2563eb",
+      "group_color": "#eab308",
       "id": "63a1a973-0373-469c-9b8a-7eeb6c48b017"
     },
     {
@@ -1559,7 +1582,7 @@
       "description": "领取",
       "group_id": "group_8f247b3d_copy",
       "group_name": "领取巡录 复制",
-      "enabled": false,
+      "enabled": true,
       "id": "5e884c00-ac6f-4d9d-91f2-d91044aeb763",
       "click_x": 1161,
       "click_y": 798,
@@ -1591,7 +1614,8 @@
       "click_requires_match": true,
       "optional": false,
       "flow_next": "8a7c4c3b-54c2-4399-9f78-7905e62b86cd",
-      "group_color": "#f97316"
+      "group_color": "#f97316",
+      "timeout_jump_to": 37
     },
     {
       "type": "click_until_gone",
@@ -1607,7 +1631,7 @@
       "required": true,
       "group_id": "group_8f247b3d_copy",
       "group_name": "领取巡录 复制",
-      "enabled": false,
+      "enabled": true,
       "group_color": "#f97316",
       "click_x": 143,
       "click_y": 47,
@@ -3467,7 +3491,8 @@
       "group_name": "组 2",
       "enabled": true,
       "id": "2220794f-a4c2-4208-9e21-bcd47fb2cf47",
-      "group_color": "#06b6d4"
+      "group_color": "#06b6d4",
+      "timeout_jump_to": null
     }
   ],
   "__deleted__": [
@@ -3481,43 +3506,37 @@
         "group_37b807c3": "每日任务",
         "group_896c3838": "领取每日礼包",
         "group_c9dda062": "领取班组奖励",
-        "group_8f247b3d": "领取巡录",
-        "group_8f247b3d_copy": "领取巡录 复制"
+        "group_8f247b3d": "领取巡录"
       },
       "colors": {
         "group_37b807c3": "#ffffff",
         "group_896c3838": "#ffffff",
         "group_c9dda062": "#eaf1ff",
-        "group_8f247b3d": "#eaf1ff",
-        "group_8f247b3d_copy": "#f97316"
+        "group_8f247b3d": "#eaf1ff"
       },
       "expanded": {
-        "group_37b807c3": true,
-        "group_896c3838": true,
-        "group_c9dda062": true,
-        "group_8f247b3d": true,
-        "group_8f247b3d_copy": true
+        "group_37b807c3": false,
+        "group_896c3838": false,
+        "group_c9dda062": false,
+        "group_8f247b3d": false
       },
       "order": [
         "group_37b807c3",
         "group_896c3838",
         "group_c9dda062",
-        "group_8f247b3d",
-        "group_8f247b3d_copy"
+        "group_8f247b3d"
       ],
       "parents": {
         "group_37b807c3": null,
         "group_896c3838": null,
         "group_c9dda062": null,
-        "group_8f247b3d": null,
-        "group_8f247b3d_copy": null
+        "group_8f247b3d": null
       },
       "children": {
         "group_37b807c3": [],
         "group_896c3838": [],
         "group_c9dda062": [],
-        "group_8f247b3d": [],
-        "group_8f247b3d_copy": []
+        "group_8f247b3d": []
       }
     },
     "追放每日任务": {
@@ -3528,7 +3547,7 @@
         "group_8f247b3d_copy": "领取巡录 复制"
       },
       "colors": {
-        "group_37b807c3_copy": "#2563eb",
+        "group_37b807c3_copy": "#eab308",
         "group_896c3838_copy": "#06b6d4",
         "group_c9dda062_copy": "#16a34a",
         "group_8f247b3d_copy": "#f97316"
@@ -3537,7 +3556,7 @@
         "group_37b807c3_copy": false,
         "group_896c3838_copy": false,
         "group_c9dda062_copy": false,
-        "group_8f247b3d_copy": false
+        "group_8f247b3d_copy": true
       },
       "order": [
         "group_37b807c3_copy",

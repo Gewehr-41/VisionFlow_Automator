@@ -1,3 +1,4 @@
+# 项目待办：记录 PySide6 界面迁移、验证和后续维护事项。
 PySide6 UI 框架迁移
 
 一、迁移原则
@@ -7,62 +8,120 @@ PySide6 UI 框架迁移
 - 每完成一个阶段都启动程序并进行实际操作验证，避免最后一次性排查大量问题。
 
 二、准备工作
-- 安装依赖：在项目虚拟环境中安装 PySide6，并记录版本。
+- [已完成] 在当前配置的 Python 3.10.8 环境中安装 PySide6 6.11.2，并记录版本。
 - 增加项目依赖说明，更新 README.md 的安装和启动命令。
 - 检查 Python 3.10、Windows 和当前打包/启动方式与 PySide6 的兼容性。
-- 规划新的入口文件，例如 gui_pyside6.py；迁移稳定后再决定是否替换 gui.py。
-- 梳理 gui.py 中的状态变量、数据读写函数和纯业务函数，明确哪些代码可以直接复用。
-- 建立旧 Tkinter 版本的启动回退方式，迁移期间不要删除旧入口。
+- [已完成] 创建独立入口 gui_pyside6.py；迁移稳定后再决定是否替换 gui.py。
+- [已完成] 梳理 gui.py 中的状态变量、数据读写函数和纯业务函数，明确可直接复用与必须重写的代码边界。
+- [已完成] 保留旧 Tkinter 入口作为回退方式，迁移期间不删除 gui.py。
 
-三、第一阶段：主窗口和基础控件
-- 使用 QApplication、QMainWindow 和中央布局重建主窗口。
-- 重建顶部工具栏：循环执行、预设选择、预设管理、目标窗口、开始/停止/暂停/单步等控制。
-- 使用 QComboBox、QPushButton、QCheckBox、QLabel、QLineEdit、QListWidget 或 QTreeWidget 替换对应 Tk 控件。
-- 使用 QSplitter 重建左右面板和日志区域，保留窗口最小尺寸、伸缩比例和状态提示。
-- 使用 Qt Designer 或集中式 Qt Style Sheet 统一字体、颜色、间距和控件状态，避免大量散落的样式设置。
-- 迁移预设创建、重命名、复制、导入、导出和删除对话框。
-- 迁移任务列表的选择、多选、双击启用、Enter 批量切换、拖拽排序和分组显示。
-- 迁移普通步骤和特殊步骤编辑表单，保证字段默认值、旧字段兼容和保存行为不变。
+三、第一阶段：主窗口和基础控件（已完成）
+- [已完成] 使用 QApplication、QMainWindow 和中央布局创建 PySide6 主窗口。
+- [已完成] 创建顶部控制区：循环执行、预设选择、目标窗口、开始/停止/暂停/单步等控制。
+- [已完成] 使用 QComboBox、QPushButton、QCheckBox、QLabel、QLineEdit、QListWidget 等替换基础 Tk 控件。
+- [已完成] 使用 QSplitter 重建左右面板和日志区域，保留窗口最小尺寸、伸缩比例和状态提示。
+- [已完成] 创建独立的 TaskWorker，通过 Qt Signal 将日志、执行步骤、结果和完成状态传回主线程。
+- [已完成] 为 run_task_queue 增加可选完成回调，避免 PySide6 执行线程创建 Tk 完成提示。
+- [已完成] 实现基础任务列表、通用步骤字段编辑、启用状态切换和保存当前任务。
+- [已完成] 已迁移预设新建、重命名、复制、删除和 ZIP 导入/导出，沿用 visionflow-preset/preset.json/icons 格式。
+- [已完成] 迁移任务列表多选、双击启用、Enter 批量切换和基于任务 ID 的拖拽排序；分组树仍待迁移。
+- [已完成] 已提供通用字段、常见专用标量字段和 JSON 专用字段编辑；复杂嵌套字段继续通过 JSON 编辑。
+- [已完成] 使用 Qt Style Sheet 统一字体、颜色、间距、焦点和按钮状态。
 
-四、第二阶段：信号、线程和任务执行
-- 将按钮命令和 Tkinter bind 回调改为 Qt signal/slot。
-- 保证所有控件更新只发生在 Qt 主线程，不从后台线程直接操作界面。
-- 将任务执行线程的日志、状态、当前步骤、完成和异常结果通过 Signal 发送给主窗口。
-- 评估现有 threading.Thread 是否继续保留；如改用 QThread，明确 worker 生命周期、停止、暂停和单步语义。
-- 将 root.after 定时器替换为 QTimer 或线程安全的 Qt 信号调度。
-- 移除 main.py 中独立创建 Tk 根窗口的完成提示，改为由 PySide6 主窗口接收完成信号后显示 QMessageBox。
-- 检查停止脚本、关闭窗口和后台线程退出顺序，防止进程残留或窗口关闭后仍回调 UI。
+附录：复用梳理结果
+
+A、gui.py 状态变量分类
+- 数据状态：current_mode、mode_tasks、mode_group_metadata、deleted_preset_names、blueprint_layouts、blueprint_graphs、group_names、group_colors、group_order、group_parents、group_children、group_expanded、task_display_map。
+- 蓝图数据状态：blueprint_positions、blueprint_group_positions、blueprint_clipboard、blueprint_zoom、blueprint_grid_snap、blueprint_history、blueprint_redo_history。
+- 运行状态：stop_event、pause_event、single_step_event、worker_thread、debug_node_states、blueprint_active_task_index、blueprint_active_edge。
+- 选择状态：selected_task_index、selected_group_id、blueprint_selection、blueprint_selection_edges、blueprint_selected_edge。
+- 临时采集状态：capture_timer、waiting_for_click_capture、region_capture_timer、waiting_for_region_capture、region_capture_start、region_capture_end、region_capture_rect、region_capture_target、image_capture_task、image_capture_template_key、image_capture_template_var、image_capture_on_saved、image_capture_on_cancel。
+- 临时拖拽状态：drag_index、drag_kind、drag_target_display_index、drag_indicator、drag_autoscroll_job、drag_group_id、drag_last_display_index、blueprint_drag、blueprint_connection_drag、blueprint_pan_start、blueprint_box_start、blueprint_bend_drag。
+- PySide6 迁移处理：数据状态迁移到 TaskModel/GroupModel 或窗口控制器；运行状态迁移到执行控制器；选择和临时交互状态只保留在对应 QWidget/QGraphicsView；Tk StringVar/BooleanVar 改为 Qt 控件值或 QObject 属性。
+
+B、数据读写和持久化边界
+- 可直接复用 tasks.py 的 load_tasks、save_tasks、load_presets、save_presets、load_deleted_preset_names、load_preset_metadata、load_blueprint_layouts、save_blueprint_layouts、load_blueprint_graphs、save_blueprint_graphs。
+- 可直接复用 tasks.py 的 normalize_task_list、get_tasks_for_mode 以及任务构造函数；这些函数只处理任务字典和 JSON 数据。
+- 可直接复用 gui.py 的 save_all_presets、_collect_bound_image_names、_copy_selected_entries 的数据处理意图，但应改为独立服务函数，显式传入任务、预设、分组和选择集合，不能依赖 Tk 控件或全局 TASKS。
+- export_current_preset 和 import_preset 的 ZIP 格式、preset.json、icons/*.png、字段校验和图片恢复逻辑应保留；文件选择和提示部分改用 QFileDialog/QMessageBox。
+- save_current_tasks 当前还负责蓝图连接校验、任务/预设/布局/图数据同步保存；迁移时拆成持久化服务和 UI 提示两层，避免保存函数直接访问控件。
+
+C、可直接复用的纯业务代码
+- 任务结构：tasks.py 的 make_normal_task、make_keyboard_move_task、make_key_press_task、make_drag_task、normalize_task、normalize_task_list。
+- 节点图模型：nodes.py 的 Node、TaskNode、NodeGraph，以及 from_payload、to_payload、entry_index、resolve_id、resolve_number、outgoing_targets、reachable_indices、validate。
+- 执行逻辑：main.py 的 normalize_template_names、get_task_threshold、get_task_timeout、find_first_match、find_leftmost_match、resolve_click_position、resolve_search_rect、resolve_search_rects、match_in_expanding_rect、task_match_region、match_task_templates、execute_task 及各 execute_*_task 函数。
+- 分组和蓝图数据算法：gui.py 的 _get_group_descendants、_get_group_siblings、_attach_group_to_parent、_ensure_group_exists、_reconcile_group_hierarchy、_get_group_task_indices、_get_group_enabled_status、_cleanup_links_after_delete、_validate_blueprint_connections、_apply_blueprint_order、_push_blueprint_history、_restore_blueprint_snapshot。
+- 上述 gui.py 函数目前仍引用 self 或全局 TASKS；迁移前应优先提取为显式参数的 model/service 函数，再由 Qt 界面调用。
+
+D、必须重写的 Tkinter 代码
+- 控件创建：tk.Tk、tk.Toplevel、ttk.Frame/Label/Button/Entry/Combobox/Checkbutton/Scale/Panedwindow/Scrollbar/LabelFrame、tk.Listbox、ScrolledText、StringVar/BooleanVar/DoubleVar。
+- 弹窗和系统交互：messagebox、filedialog、colorchooser，以及预设、分组、任务设置和蓝图右键菜单窗口。
+- 事件绑定：任务列表选择/双击/回车/拖拽，蓝图画布鼠标按下/移动/释放/双击/中键平移/滚轮/右键菜单和快捷键；所有 bind、bind_all、protocol 逻辑改为 Qt event handler 或 signal/slot。
+- Canvas 绘制和命中测试：_create_selection_overlay、_update_selection_preview、refresh_blueprint、_blueprint_index_at、_blueprint_port_at、_blueprint_edge_at、_blueprint_bend_at、on_blueprint_press/motion/release；蓝图改用 QGraphicsScene/QGraphicsView/QGraphicsItem。
+- 定时器：_schedule_click_capture_poll、_schedule_region_capture_poll、_capture_detour_click_position、_drag_autoscroll，以及所有 root.after/root.after_cancel；改用 QTimer 或 Qt signal。
+- 截图和鼠标采集的业务流程可复用，但透明遮罩、鼠标事件、窗口层级和坐标转换必须用 Qt 重写。
+
+E、迁移风险记录
+- gui.py 的 worker 线程曾直接调用 Tk 控件；PySide6 中只能通过 Signal/Slot 在主线程更新控件。
+- main.py 的模板缓存、_active_pause_flag、_single_step_active 和 tasks.py 的全局 TASKS 都是可变全局状态；迁移期间禁止多个执行器共享同一运行状态。
+- 执行任务前应深拷贝完整任务树，避免嵌套 move_steps、switch_cases、连接字段与编辑模型共享。
+- `flow_next` 使用任务 ID，而部分跳转字段使用步骤编号；重排、删除和蓝图同步时必须分别维护两类引用。
+- run_task_queue 会通过 setdefault 写回任务 ID；worker 应只使用执行快照，不能直接修改 Qt 编辑模型。
+- 完成/失败提示必须由 PySide6 主线程显示；不可在执行线程创建 Tk 或 QWidget。
+- 当前已为 run_task_queue 增加 completion_callback，后续应继续确保所有完成、失败和停止路径都只返回状态或发出信号。
+
+四、第二阶段：信号、线程和任务执行（基本完成）
+- [已完成] 将新入口的按钮命令和任务列表事件改为 Qt signal/slot。
+- [已完成] 通过 TaskWorker Signal/Slot 保证新入口的控件更新只发生在 Qt 主线程。
+- [已完成] 将任务执行日志、当前步骤、步骤结果和完成/失败状态通过 Signal 发送给主窗口。
+- [已完成] 使用 QThread 承载任务 worker，明确 worker 启动、完成、停止、暂停和单步生命周期。
+- [待后续阶段] 新入口未使用 root.after；截图和蓝图阶段的轮询、自动滚动将在对应 Qt 界面迁移时使用 QTimer 实现。
+- [已完成] 为 run_task_queue 增加完成回调，PySide6 由主线程接收状态，不在执行线程创建 Tk 完成提示。
+- [已完成] 完成/失败通知由 PySide6 主线程显示 QMessageBox，并使用状态标记避免重复弹窗。
+- [已完成] 运行期间锁定模式、任务列表、编辑器和预设操作，关闭窗口时等待 worker 退出，避免并发修改和进程残留。
 
 五、第三阶段：文件、图片和区域选择
-- 使用 QFileDialog 替换文件选择、导入和导出对话框。
-- 使用 QColorDialog 替换组颜色选择器。
-- 使用 QMessageBox 替换提示、确认、错误和蓝图检查结果弹窗。
-- 使用 QImage/QPixmap 或现有图像库加载模板预览，确认图片生命周期不会导致空白或资源泄漏。
-- 重写点击点捕获：使用透明置顶 QWidget 或 QDialog 接收全局鼠标位置，再通过信号返回坐标。
-- 重写区域框选：使用透明覆盖层绘制选择矩形，支持取消、确认、屏幕边界和多显示器坐标。
-- 核对 Qt 的 devicePixelRatio、Windows 显示缩放、截图坐标、目标窗口坐标之间的换算。
-- 保持现有模板路径、PNG 文件名、绑定图片和导入预设行为不变。
+- [已完成] 使用 QFileDialog 替换预设文件导入和导出对话框。
+- [已完成] 使用 QColorDialog 替换分组颜色选择器，并将颜色保存到分组元数据。
+- [已完成] 使用 QMessageBox 替换当前 PySide6 入口的提示、确认、错误和执行结果弹窗。
+- [已完成] 使用 QPixmap 增加模板 PNG 预览，找不到图片时显示明确状态。
+- [已完成] 使用透明置顶 QWidget 覆盖层记录全局点击坐标，并支持 Esc 取消。
+- [已完成] 使用透明覆盖层框选识别区域，使用 QTimer 刷新选区绘制并写回旧矩形字段格式。
+- [部分完成] 已处理目标窗口与屏幕坐标及区域相对坐标；devicePixelRatio、Windows DPI 和多显示器场景仍需实机验证。
+- [已完成] 预设导入导出保持现有模板路径、PNG 文件名和绑定图片格式不变。
 
 六、第四阶段：蓝图编辑器
-- 使用 QGraphicsView + QGraphicsScene 重写蓝图画布，不直接照搬 Tk Canvas 绘制代码。
-- 将节点、组容器、输入/输出连接点、连线和转折点分别设计为可交互图元。
-- 实现节点点击、多选、框选、拖拽、组整体移动、折叠/展开和右键菜单。
-- 实现画布平移、缩放、滚轮操作、网格吸附、自动排列和选中项对齐。
-- 迁移普通连接、成功/失败/超时出口、迂回连接和连接点高亮逻辑。
-- 迁移 Ctrl+Z/Ctrl+Y/Ctrl+C/Ctrl+V 快捷键，并确认快捷键只作用于蓝图窗口。
-- 保持 saved_blueprint_graphs.json 和 saved_blueprint_layouts.json 的字段及坐标语义兼容。
+- [部分完成] 使用 QGraphicsView + QGraphicsScene 重写蓝图画布，未直接照搬 Tk Canvas 绘制代码。
+- [部分完成] 已实现节点图元、输入/输出端口、主线及分支连线拖拽、节点拖拽、Ctrl+滚轮缩放、自动排列和布局保存。
+- [已完成] 已实现按 group_id 显示可移动组容器、双击折叠/展开、多选删除、右键重命名和颜色编辑；多层嵌套组仍待优化。
+- [已完成] 支持网格吸附、选中项对齐、成功/失败/超时出口绘制及选中节点关联连线高亮。
+- [已完成] 支持 Ctrl+Z/Ctrl+Y 撤销/重做和 50 步编辑历史，支持 Ctrl+C/Ctrl+V 复制粘贴。
+- [已完成] 蓝图布局和主线连接读取并保存到 saved_blueprint_layouts.json/saved_blueprint_graphs.json。
 - 蓝图编辑器完成前，不切换默认启动入口，避免影响现有任务执行功能。
 
 七、兼容性和回归验证
-- 启动后检查主窗口、预设列表、任务列表、编辑表单和日志显示。
-- 验证 custom、daily、side 和用户预设的加载、保存、复制、导入和导出。
-- 验证普通、高级、条件、选择、循环、事件、延迟、按键、键盘移动、拖曳和持续点击步骤。
-- 验证暂停、继续、单步、从当前步骤执行、停止和循环执行。
-- 验证目标窗口刷新、窗口移动/缩放、模板识别、点击坐标和识别区域。
-- 验证单显示器、多显示器和 Windows 不同缩放比例下的框选与坐标转换。
-- 验证蓝图连接检查、不可达步骤检查、布局保存、撤销/重做和主界面同步刷新。
-- 运行现有测试，并补充 UI 冒烟测试和任务执行回归测试；测试中避免真实误操作目标窗口。
-- 检查关闭窗口时后台线程、定时器、覆盖层和蓝图窗口是否全部释放。
+- [已修复] 适配 PySide6 6.11 的 Qt 分组枚举，修复 Qt.ItemIsTristate 导致的新框架启动崩溃。
+- [已修复] 适配 QTreeWidgetItem.setCheckState(column, state) 的 Qt 参数要求，修复任务树初始化 TypeError。
+- [已修复] 禁止任务树将步骤拖放到另一个步骤上，避免拖放时覆盖并删除目标步骤。
+- [已修复] 任务树拖到另一个步骤时改为显式上移/下移重排，避免 QTreeWidget 默认嵌套导致步骤从任务模型中丢失。
+- [已完成] 主页面左右区域与日志改用垂直 QSplitter，日志默认高度缩小且可拖动调整，布局接近 Tkinter 版本。
+- [已修复] 右侧步骤设置区改用 QScrollArea，窗口纵向缩小时显示滚动条而不是压缩内容。
+- [已修复] 蓝图节点使用 QGraphicsRectItem.rect().height() 计算端口位置，修复打开蓝图时 height() AttributeError。
+- [已修复] 蓝图连线目标节点高度改用 QGraphicsRectItem.rect().height()，修复打开蓝图时第二处 height() AttributeError。
+- [已确认] SetProcessDpiAwarenessContext 拒绝访问属于 Windows/宿主进程 DPI 警告，Qt 仍使用默认的每显示器 DPI 感知，不阻止窗口启动。
+- [已通过] 编译 gui_pyside6.py、main.py、tasks.py、nodes.py 和 core 模块。
+- [已通过] 使用 unittest 运行现有 test_wait_result 回归测试。
+- [已通过] 使用 offscreen 模式实例化 PySide6 主窗口、任务树和蓝图窗口。
+- [已通过] 加载 saved_blueprint_graphs.json、saved_blueprint_layouts.json，并通过 NodeGraph 基础校验。
+- [待实机验证] 启动后检查主窗口、预设列表、任务列表、编辑表单和日志显示。
+- [待实机验证] 验证 custom、daily、side 和用户预设的加载、保存、复制、导入和导出。
+- [待实机验证] 验证普通、高级、条件、选择、循环、事件、延迟、按键、键盘移动、拖曳和持续点击步骤。
+- [待实机验证] 验证暂停、继续、单步、从当前步骤执行、停止和循环执行。
+- [待实机验证] 验证目标窗口刷新、窗口移动/缩放、模板识别、点击坐标和识别区域。
+- [待实机验证] 验证单显示器、多显示器和 Windows 不同缩放比例下的框选与坐标转换。
+- [待实机验证] 验证蓝图连接检查、不可达步骤检查、布局保存、撤销/重做和主界面同步刷新。
+- [待完成] 补充不触发真实误操作的 UI 冒烟测试和任务执行回归测试。
+- [待实机验证] 检查关闭窗口时后台线程、定时器、覆盖层和蓝图窗口是否全部释放。
 
 八、切换和回滚
 - 新 UI 完成基础回归后，再修改 启动脚本编辑器.vbs 指向新的 PySide6 入口。

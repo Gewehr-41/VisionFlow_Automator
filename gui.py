@@ -1,3 +1,4 @@
+# Tkinter 主界面：提供任务编辑、预设管理、蓝图操作和脚本执行控制。
 import ctypes
 import colorsys
 import glob

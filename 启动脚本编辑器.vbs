@@ -1,1 +1,1 @@
-CreateObject("WScript.Shell").Run "pythonw gui.py", 0, False
+CreateObject("WScript.Shell").Run "python C:\Users\baconing\Desktop\VisionFlow_Automator\gui.py", 0, False

@@ -1,3 +1,4 @@
+# 任务与预设数据层：定义任务结构并负责 JSON 数据的加载、迁移和保存。
 import json
 import os
 import uuid

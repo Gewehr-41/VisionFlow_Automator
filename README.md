@@ -1,3 +1,5 @@
+<!-- 项目使用说明：介绍安装、启动、任务配置和蓝图编辑流程。 -->
+
 # VisionFlow Automator
 
 ## 视觉识别自动脚本使用说明
@@ -49,23 +51,25 @@ VisionFlow Automator 通过识别屏幕或指定窗口中的 PNG 模板，自动
 在项目目录打开 PowerShell，安装依赖：
 
 ```powershell
-python -m pip install numpy opencv-python mss pyautogui pygetwindow
+python -m pip install numpy opencv-python mss pyautogui pygetwindow PySide6
 ```
 
 如果安装了多个 Python，可使用：
 
 ```powershell
-py -3 -m pip install numpy opencv-python mss pyautogui pygetwindow
+py -3 -m pip install numpy opencv-python mss pyautogui pygetwindow PySide6
 ```
+
+当前版本推荐使用 `gui_pyside6.py` 的 PySide6 主界面；`gui.py` 保留为 Tkinter 回退入口。两者共享任务、预设和蓝图数据文件。
 
 ### 2.2 启动
 
 ```powershell
 cd "C:\Users\baconing\Desktop\脚本编辑器"
-python gui.py
+python gui_pyside6.py
 ```
 
-也可以双击 `启动脚本编辑器.vbs`。该文件通过 `pythonw gui.py` 启动，通常不会显示命令行窗口。VBS 无反应时，先运行 `python gui.py` 查看错误，并确认 `pythonw` 已加入 PATH。
+也可以双击 `启动新界面.bat` 启动 PySide6 界面；该脚本会显示命令行窗口，便于查看启动错误。`启动脚本编辑器.vbs` 仍启动 Tkinter 版 `gui.py`，用于兼容旧界面。启动失败时，可运行 `python gui_pyside6.py` 查看错误。
 
 ## 3. 第一次运行
 
@@ -150,6 +154,12 @@ python gui.py
 - 可新增“事件步骤”：配置事件模板后等待该模板出现，出现即继续蓝图；等待超时可配置跳转到指定步骤。
 - 条件、选择、循环和事件步骤统一通过执行器解析下一步骤出口，同时兼容旧版迂回跳转配置。
 - 普通步骤的橙色出口表示未识别，绿色出口表示识别成功，黄色出口表示超时；等待模板消失、出现或画面变化失败时也会进入黄色超时出口。条件节点支持多个模板的 `all`、`any` 和 `not` 运算。
+
+### 4.4 界面版本
+
+- `gui_pyside6.py`：推荐的新版界面，使用 PySide6 原生控件和图形场景，提供树形任务列表、Qt 蓝图画布、线程化执行状态回传和透明屏幕采集覆盖层。
+- `gui.py`：Tkinter 兼容界面，保留旧版窗口和蓝图实现；适合需要继续使用旧启动方式的场景。
+- 两个界面不要同时编辑同一个预设，以免后打开的界面覆盖先前保存的数据。
 
 ## 5. 模板图片
 
@@ -352,7 +362,8 @@ Windows 125%、150% 等缩放可能同时改变模板尺寸和坐标。建议固
 
 ```text
 脚本编辑器/
-├─ gui.py                 图形界面入口
+├─ gui_pyside6.py         PySide6 图形界面入口（推荐）
+├─ gui.py                 Tkinter 兼容界面入口
 ├─ main.py                任务执行和识别流程
 ├─ tasks.py               默认任务与保存逻辑
 ├─ nodes.py               统一节点接口与 NodeGraph
@@ -364,7 +375,8 @@ Windows 125%、150% 等缩放可能同时改变模板尺寸和坐标。建议固
 ├─ CHANGELOG.md            更新日志
 ├─ icons/                 PNG 模板目录
 ├─ core/                  截屏、输入和模板匹配模块
-└─ 启动脚本编辑器.vbs     使用 pythonw 启动界面
+├─ 启动新界面.bat         启动 PySide6 界面
+└─ 启动脚本编辑器.vbs     启动 Tkinter 兼容界面
 ```
 
 ### 10.2 数据保存

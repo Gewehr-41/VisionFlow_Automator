@@ -1,3 +1,4 @@
+# 自动化执行引擎：负责模板识别后的步骤执行、等待、跳转和运行控制。
 import time
 import tkinter as tk
 import uuid
@@ -661,7 +662,7 @@ def execute_click_until_gone_task(task, stop_flag=None, log_callback=None):
         if timeout > 0 and time.time() - start_time > timeout:
             if task.get("continue_after_timeout", False):
                 log(f"  持续点击图片 '{template_label}' 超时，按设置继续下一步骤。", log_callback)
-                return True
+                return {"execution_state": "timeout"}
             raise RuntimeError(f"持续点击直到识别图片 '{template_label}' 超时，脚本停止。")
 
         screen_img = capture_screen()
@@ -780,8 +781,8 @@ def execute_event_task(task, stop_flag=None, log_callback=None):
     log("  事件等待超时。", log_callback)
     failure_target = task.get("event_timeout_target")
     if failure_target is not None:
-        return {"next_step": int(failure_target)}
-    return False
+        return {"next_step": int(failure_target), "execution_state": "timeout"}
+    return {"execution_state": "timeout"}
 
 
 def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True):
@@ -894,7 +895,8 @@ def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True):
             if not wait_succeeded:
                 timeout_target = task.get("wait_timeout_jump_to", task.get("timeout_jump_to"))
                 if timeout_target is not None:
-                    return {"next_step": int(timeout_target)}
+                    return {"next_step": int(timeout_target), "execution_state": "timeout"}
+                result = {"execution_state": "timeout"}
 
             after_wait = max(0.0, float(task.get("after_wait", 0.0)))
             if after_wait > 0:
@@ -936,17 +938,17 @@ def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True):
         if timeout > 0 and (time.time() - start_time) > timeout:
             log(f"  超时未检测到 '{tpl_name}'", log_callback)
             if task.get("timeout_jump_to") is not None:
-                return {"next_step": int(task["timeout_jump_to"])}
+                return {"next_step": int(task["timeout_jump_to"]), "execution_state": "timeout"}
             if optional:
                 log(f"  该步骤为可选步骤，跳过。", log_callback)
-                return False
+                return {"execution_state": "timeout"}
             raise RuntimeError(f"必需步骤 '{tpl_name}' 未在超时时间内出现，脚本停止。")
 
         if interruptible_sleep(poll_interval, stop_flag):
             return False
 
 
-def run_task_queue(tasks, loop=False, stop_flag=None, log_callback=None, execution_callback=None, execution_result_callback=None, pause_flag=None, single_step_flag=None, start_node_id=None):
+def run_task_queue(tasks, loop=False, stop_flag=None, log_callback=None, execution_callback=None, execution_result_callback=None, pause_flag=None, single_step_flag=None, start_node_id=None, completion_callback=None):
     """按顺序执行任务列表。"""
     global _active_pause_flag, _single_step_active
     _active_pause_flag = pause_flag
@@ -1026,8 +1028,9 @@ def run_task_queue(tasks, loop=False, stop_flag=None, log_callback=None, executi
                         result = node.execute({"stop_flag": stop_flag, "log_callback": log_callback})
                     if _single_step_active:
                         _single_step_active = False
+                    execution_state = result.get("execution_state") if isinstance(result, dict) else None
                     if execution_result_callback:
-                        execution_result_callback(task, "success")
+                        execution_result_callback(task, execution_state or "success")
                     if isinstance(result, dict) and ("outer_jump_to" in result or "next_step" in result or "next_node_id" in result):
                         if "next_node_id" in result:
                             target_index = task_id_to_index.get(str(result["next_node_id"]))
@@ -1050,10 +1053,14 @@ def run_task_queue(tasks, loop=False, stop_flag=None, log_callback=None, executi
                         else:
                             log(f"  主流程编号 {jump_target} 不在当前已启用任务中，跳转忽略。", log_callback)
                 except RuntimeError as e:
+                    result_state = "timeout" if "超时" in str(e) or "timeout" in str(e).lower() else "failed"
                     if execution_result_callback:
-                        execution_result_callback(task, "failed")
+                        execution_result_callback(task, result_state)
                     log(f"错误: {e}", log_callback)
-                    show_complete_message()
+                    if completion_callback:
+                        completion_callback("failed")
+                    else:
+                        show_complete_message()
                     return
                 if pause_flag is not None and single_step_flag is not None and pause_flag.is_set():
                     pause_flag.set()
@@ -1086,7 +1093,10 @@ def run_task_queue(tasks, loop=False, stop_flag=None, log_callback=None, executi
 
             log("\n任务队列执行完毕。", log_callback)
             if not loop:
-                show_complete_message()
+                if completion_callback:
+                    completion_callback("completed")
+                else:
+                    show_complete_message()
                 return
             log("任务队列将重新开始循环...", log_callback)
             if interruptible_sleep(1, stop_flag):

@@ -2120,6 +2120,7 @@ class BlueprintWindow(QMainWindow):
         self.click_until_timeout_edit.clear()
         self.click_until_continue_checkbox.setChecked(False)
         self.click_until_stop_on_change_checkbox.setChecked(False)
+        self.click_until_group.setVisible(False)
         self.wait_for_combo.setCurrentIndex(0)
         self.template_preview.setPixmap(QPixmap())
         self.template_preview.setText("")
@@ -3519,18 +3520,50 @@ class PySide6ScriptWindow(QMainWindow):
         action_layout.addWidget(self.apply_button)
         editor_layout.addWidget(self.editor_actions)
 
+        # 步骤名称与启用状态对所有步骤类型可见（与蓝图保持一致）
+        self.description_edit = QLineEdit()
+        self.enabled_checkbox = QCheckBox("启用步骤")
+        name_form = QFormLayout()
+        name_form.addRow("步骤名称:", self.description_edit)
+        name_form.addRow("启用状态:", self.enabled_checkbox)
+        editor_layout.addLayout(name_form)
+
         self.recognition_group = QWidget()
         recognition_layout = QVBoxLayout(self.recognition_group)
         recognition_layout.setContentsMargins(0, 0, 0, 0)
         editor_layout.addWidget(self.recognition_group)
 
-        self.description_edit = QLineEdit()
+        self.click_until_group = QGroupBox("持续点击设置")
+        click_until_layout = QVBoxLayout(self.click_until_group)
+        click_until_layout.setContentsMargins(0, 0, 0, 0)
+        self.click_until_template_edit = QLineEdit()
+        self.click_until_interval_edit = QLineEdit()
+        self.click_until_stop_delay_edit = QLineEdit()
+        self.click_until_timeout_edit = QLineEdit()
+        self.click_until_continue_checkbox = QCheckBox("超时后继续执行")
+        self.click_until_stop_on_change_checkbox = QCheckBox("画面变化视为成功")
+
+        def add_click_until_row(label, widget):
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.addWidget(QLabel(label), 0)
+            row.addWidget(widget, 1)
+            click_until_layout.addLayout(row)
+
+        add_click_until_row("模板名(逗号分隔):", self.click_until_template_edit)
+        add_click_until_row("点击间隔(秒):", self.click_until_interval_edit)
+        add_click_until_row("识别后停止延时(秒):", self.click_until_stop_delay_edit)
+        add_click_until_row("超时(秒):", self.click_until_timeout_edit)
+        click_until_layout.addWidget(self.click_until_continue_checkbox)
+        click_until_layout.addWidget(self.click_until_stop_on_change_checkbox)
+        self.click_until_group.setVisible(False)
+        editor_layout.addWidget(self.click_until_group)
+
         self.template_edit = QLineEdit()
         self.threshold_edit = QLineEdit()
         self.timeout_edit = QLineEdit()
         self.after_wait_edit = QLineEdit()
         self.click_checkbox = QCheckBox("执行点击")
-        self.enabled_checkbox = QCheckBox("启用步骤")
         self.match_required_checkbox = QCheckBox("必须识别到图片再点击")
         self.optional_checkbox = QCheckBox("可选步骤（跳过）")
         self.offset_x_edit = QLineEdit()
@@ -3556,7 +3589,6 @@ class PySide6ScriptWindow(QMainWindow):
             recognition_layout.addLayout(row)
 
         add_row("模板名:", self.template_edit)
-        add_row("描述:", self.description_edit)
         add_row("X偏移:", self.offset_x_edit)
         add_row("Y偏移:", self.offset_y_edit)
         add_row("点击X:", self.click_x_edit)
@@ -3611,7 +3643,6 @@ class PySide6ScriptWindow(QMainWindow):
         options_row.addWidget(self.click_checkbox)
         options_row.addWidget(self.match_required_checkbox)
         options_row.addWidget(self.optional_checkbox)
-        options_row.addWidget(self.enabled_checkbox)
         self.detour_button = QPushButton("迂回")
         self.detour_button.clicked.connect(self.open_detour_editor)
         options_row.addWidget(self.detour_button)
@@ -3994,6 +4025,7 @@ class PySide6ScriptWindow(QMainWindow):
         is_recognition = task.get("type", "normal") in ("normal", "advanced")
         self.editor_actions.setVisible(is_recognition or is_click_until)
         self.recognition_group.setVisible(is_recognition)
+        self.click_until_group.setVisible(is_click_until)
         self.special_group.setTitle("持续点击设置" if is_click_until else "类型专用字段" if is_recognition else "步骤设置")
         self.description_edit.setText(str(task.get("description", "")))
         self.enabled_checkbox.setChecked(bool(task.get("enabled", True)))
@@ -4002,6 +4034,15 @@ class PySide6ScriptWindow(QMainWindow):
             templates = ", ".join(str(item) for item in templates)
         self.template_edit.setText(str(templates))
         self._update_template_preview(templates)
+        click_until_templates = task.get("templates") or task.get("template", "")
+        if isinstance(click_until_templates, (list, tuple)):
+            click_until_templates = ", ".join(str(item) for item in click_until_templates)
+        self.click_until_template_edit.setText(str(click_until_templates))
+        self.click_until_interval_edit.setText(str(task.get("click_interval", 0.5)))
+        self.click_until_stop_delay_edit.setText(str(task.get("stop_delay", 0.0)))
+        self.click_until_timeout_edit.setText(str(task.get("timeout", 30)))
+        self.click_until_continue_checkbox.setChecked(bool(task.get("continue_after_timeout", False)))
+        self.click_until_stop_on_change_checkbox.setChecked(bool(task.get("stop_on_change", False)))
         self.threshold_edit.setText(str(task.get("threshold", config.THRESHOLD)))
         self.timeout_edit.setText(str(task.get("timeout", task.get("wait_timeout", 5))))
         self.after_wait_edit.setText(str(task.get("after_wait", 0.25)))
@@ -4088,15 +4129,14 @@ class PySide6ScriptWindow(QMainWindow):
         field_specs = {
             "normal": (),
             "advanced": (),
-            "keyboard_move": (("move_steps", "移动步骤(每行: 按键 时长秒)", "move_steps"), ("delay_before", "执行前延时", "float")),
-            "key_press": (("key", "按键", "text"), ("delay_before", "执行前延时", "float"), ("hold_time", "持续时间", "float")),
-            "drag": (("start_x", "起点 X", "float"), ("start_y", "起点 Y", "float"), ("end_x", "终点 X", "float"), ("end_y", "终点 Y", "float"), ("duration", "拖曳时间", "float")),
-            "click_until_gone": (("click_interval", "点击间隔(秒)", "float"), ("stop_delay", "识别后停止延时(秒)", "float"), ("continue_after_timeout", "超时后继续执行", "bool"), ("stop_on_change", "画面变化视为成功", "bool")),
+            "keyboard_move": (("move_steps", "移动步骤(每行: 按键 时长秒)", "move_steps"), ("delay_before", "执行前延时", "float"), ("after_wait", "执行后等待(秒)", "float")),
+            "key_press": (("key", "按键", "text"), ("delay_before", "执行前延时", "float"), ("hold_time", "持续时间", "float"), ("after_wait", "执行后等待(秒)", "float")),
+            "drag": (("start_x", "起点 X", "float"), ("start_y", "起点 Y", "float"), ("end_x", "终点 X", "float"), ("end_y", "终点 Y", "float"), ("duration", "拖曳时间", "float"), ("after_wait", "执行后等待(秒)", "float")),
             "delay": (("duration", "延迟时间", "float"),),
-            "condition": (("condition_templates", "条件模板(逗号分隔)", "templates"), ("condition_operator", "条件运算", "text"), ("condition_true_jump_to", "成立跳转步骤号", "int"), ("condition_false_jump_to", "不成立跳转步骤号", "int"), ("condition_invert", "反转结果", "bool")),
+            "condition": (("condition_templates", "条件模板(逗号分隔)", "templates"), ("condition_operator", "条件运算", "text"), ("condition_true_jump_to", "成立跳转步骤号", "int"), ("condition_false_jump_to", "不成立跳转步骤号", "int"), ("condition_invert", "反转结果", "bool"), ("threshold", "匹配阈值(0-1)", "float")),
             "switch": (("switch_value", "选择值", "text"), ("switch_cases", "分支(值:步骤号)", "cases"), ("switch_default_jump_to", "默认步骤号", "int")),
             "loop": (("loop_count", "循环次数", "int"), ("loop_target", "循环体步骤号", "int"), ("loop_exit_target", "退出步骤号", "int")),
-            "event": (("event_template", "事件模板", "text"), ("event_timeout", "等待超时(秒)", "float"), ("event_timeout_target", "超时跳转步骤号", "int")),
+            "event": (("event_template", "事件模板", "text"), ("event_timeout", "等待超时(秒)", "float"), ("event_timeout_target", "超时跳转步骤号", "int"), ("threshold", "匹配阈值(0-1)", "float")),
         }
         for key, label, kind in field_specs.get(str(task.get("type", "normal")), ()):
             if key == "condition_templates":
@@ -4123,7 +4163,7 @@ class PySide6ScriptWindow(QMainWindow):
                 editor = QLineEdit(str(task.get(key, "")))
             self.special_edits[key] = editor
             self.special_form.addRow(label + ":", editor)
-        self.special_group.setVisible(bool(self.special_edits))
+        self.special_group.setVisible(bool(self.special_edits) and str(task.get("type", "normal")) != "click_until_gone")
 
     def clear_editor(self):
         self.selected_label.setText("未选择步骤")
@@ -4133,6 +4173,12 @@ class PySide6ScriptWindow(QMainWindow):
         self.editor_actions.setVisible(False)
         for editor in (self.description_edit, self.template_edit, self.threshold_edit, self.timeout_edit, self.after_wait_edit):
             editor.clear()
+        self.click_until_template_edit.clear()
+        self.click_until_interval_edit.clear()
+        self.click_until_stop_delay_edit.clear()
+        self.click_until_timeout_edit.clear()
+        self.click_until_continue_checkbox.setChecked(False)
+        self.click_until_stop_on_change_checkbox.setChecked(False)
         self.click_checkbox.setChecked(False)
         self.match_required_checkbox.setChecked(False)
         self.enabled_checkbox.setChecked(False)
@@ -4169,6 +4215,8 @@ class PySide6ScriptWindow(QMainWindow):
         layout.addWidget(image_list, 1)
 
         current = self.template_edit.text()
+        if TASKS[self.current_task_index].get("type") == "click_until_gone":
+            current = self.click_until_template_edit.text()
         for name in [item.strip() for item in current.replace("，", ",").split(",") if item.strip()]:
             image_list.addItem(name)
 
@@ -4231,8 +4279,12 @@ class PySide6ScriptWindow(QMainWindow):
 
         def save():
             values = [image_list.item(i).text() for i in range(image_list.count())]
-            self.template_edit.setText(", ".join(values))
-            self._update_template_preview(", ".join(values))
+            template_value = ", ".join(values)
+            if TASKS[self.current_task_index].get("type") == "click_until_gone":
+                self.click_until_template_edit.setText(template_value)
+            else:
+                self.template_edit.setText(template_value)
+                self._update_template_preview(template_value)
             dialog.accept()
 
         save_btn = QPushButton("保存")
@@ -4739,50 +4791,63 @@ class PySide6ScriptWindow(QMainWindow):
         task["description"] = self.description_edit.text().strip()
         task["enabled"] = self.enabled_checkbox.isChecked()
         if task.get("type", "normal") in ("normal", "advanced", "click_until_gone"):
-            template_value = self.template_edit.text().strip() or "new_step"
-            if task.get("type") in ("advanced", "click_until_gone"):
+            if task.get("type") == "click_until_gone":
+                template_value = self.click_until_template_edit.text().strip() or "new_step"
                 templates = [item.strip() for item in template_value.replace("，", ",").split(",") if item.strip()]
                 task["templates"] = templates or ["new_step"]
                 task["template"] = task["templates"][0]
+                task["click_interval"] = self._float_value(self.click_until_interval_edit.text(), 0.5)
+                task["stop_delay"] = self._float_value(self.click_until_stop_delay_edit.text(), 0.0)
+                task["timeout"] = self._float_value(self.click_until_timeout_edit.text(), 30.0)
+                task["continue_after_timeout"] = self.click_until_continue_checkbox.isChecked()
+                task["stop_on_change"] = self.click_until_stop_on_change_checkbox.isChecked()
+                task["click"] = True
+                task["required"] = True
             else:
-                task["template"] = template_value
-            task["threshold"] = self._float_value(self.threshold_edit.text(), config.THRESHOLD)
-            task["timeout"] = self._float_value(self.timeout_edit.text(), 5.0)
-            task["after_wait"] = self._float_value(self.after_wait_edit.text(), 0.25)
-            task["click"] = self.click_checkbox.isChecked()
-            task["click_requires_match"] = self.match_required_checkbox.isChecked()
-            task["offset_x"] = self._float_value(self.offset_x_edit.text(), 0.0)
-            task["offset_y"] = self._float_value(self.offset_y_edit.text(), 0.0)
-            task["offset"] = (task["offset_x"], task["offset_y"])
-            click_x = self._int_value(self.click_x_edit.text())
-            click_y = self._int_value(self.click_y_edit.text())
-            if click_x is not None and click_y is not None:
-                task["click_x"] = click_x
-                task["click_y"] = click_y
-                task["click_position"] = (click_x, click_y)
-            else:
-                task.pop("click_x", None)
-                task.pop("click_y", None)
-                task.pop("click_position", None)
-            match_rect = self._current_match_rect()
-            if match_rect is not None:
-                task["match_rect"] = match_rect
-                task["search_rect"] = match_rect
-                task["match_rects"] = [match_rect]
-            else:
-                task.pop("match_rect", None)
-                task.pop("search_rect", None)
-                task.pop("match_rects", None)
-            self.match_rect_edit.setText(", ".join(str(value) for value in match_rect) if match_rect else "")
-            next_template = self.next_template_edit.text().strip()
-            if next_template:
-                task["next_template"] = next_template
-                task["next_templates"] = [next_template]
-            else:
-                task.pop("next_template", None)
-                task.pop("next_templates", None)
-            wait_mode = self.wait_for_combo.currentText()
-            task["wait_for"] = "next_appear" if wait_mode.startswith("2") else "change_then_appear" if wait_mode.startswith("3") else "time"
+                template_value = self.template_edit.text().strip() or "new_step"
+                if task.get("type") == "advanced":
+                    templates = [item.strip() for item in template_value.replace("，", ",").split(",") if item.strip()]
+                    task["templates"] = templates or ["new_step"]
+                    task["template"] = task["templates"][0]
+                else:
+                    task["template"] = template_value
+                task["threshold"] = self._float_value(self.threshold_edit.text(), config.THRESHOLD)
+                task["timeout"] = self._float_value(self.timeout_edit.text(), 5.0)
+                task["after_wait"] = self._float_value(self.after_wait_edit.text(), 0.25)
+                task["click"] = self.click_checkbox.isChecked()
+                task["click_requires_match"] = self.match_required_checkbox.isChecked()
+                task["offset_x"] = self._float_value(self.offset_x_edit.text(), 0.0)
+                task["offset_y"] = self._float_value(self.offset_y_edit.text(), 0.0)
+                task["offset"] = (task["offset_x"], task["offset_y"])
+                click_x = self._int_value(self.click_x_edit.text())
+                click_y = self._int_value(self.click_y_edit.text())
+                if click_x is not None and click_y is not None:
+                    task["click_x"] = click_x
+                    task["click_y"] = click_y
+                    task["click_position"] = (click_x, click_y)
+                else:
+                    task.pop("click_x", None)
+                    task.pop("click_y", None)
+                    task.pop("click_position", None)
+                match_rect = self._current_match_rect()
+                if match_rect is not None:
+                    task["match_rect"] = match_rect
+                    task["search_rect"] = match_rect
+                    task["match_rects"] = [match_rect]
+                else:
+                    task.pop("match_rect", None)
+                    task.pop("search_rect", None)
+                    task.pop("match_rects", None)
+                self.match_rect_edit.setText(", ".join(str(value) for value in match_rect) if match_rect else "")
+                next_template = self.next_template_edit.text().strip()
+                if next_template:
+                    task["next_template"] = next_template
+                    task["next_templates"] = [next_template]
+                else:
+                    task.pop("next_template", None)
+                    task.pop("next_templates", None)
+                wait_mode = self.wait_for_combo.currentText()
+                task["wait_for"] = "next_appear" if wait_mode.startswith("2") else "change_then_appear" if wait_mode.startswith("3") else "time"
         task["enabled"] = self.enabled_checkbox.isChecked()
         for key, editor in self.special_edits.items():
             if key == "move_steps":
@@ -4831,8 +4896,9 @@ class PySide6ScriptWindow(QMainWindow):
                     parsed = self._int_value(value)
                     if parsed is not None:
                         task[key] = parsed
-            elif key in {"wait_timeout", "offset_x", "offset_y", "delay_before", "hold_time", "start_x", "start_y", "end_x", "end_y", "duration", "click_interval", "stop_delay", "event_timeout"}:
-                task[key] = self._float_value(value, task.get(key, 0.0))
+            elif key in {"wait_timeout", "offset_x", "offset_y", "delay_before", "hold_time", "start_x", "start_y", "end_x", "end_y", "duration", "click_interval", "stop_delay", "event_timeout", "after_wait", "threshold"}:
+                fallback = config.THRESHOLD if key == "threshold" else task.get(key, 0.0)
+                task[key] = self._float_value(value, fallback)
             else:
                 task[key] = value
         if task.get("type") == "event" and task.get("event_template"):
@@ -5165,9 +5231,13 @@ class PySide6ScriptWindow(QMainWindow):
 
     @Slot()
     def save_current_tasks(self):
-        self.mode_tasks[self.mode_combo.currentText() or "custom"] = deepcopy(TASKS)
-        save_tasks(TASKS)
-        self.append_log("任务已保存。")
+        mode_name = self.mode_combo.currentText() or "custom"
+        self.mode_tasks[mode_name] = deepcopy(TASKS)
+        if mode_name == "custom":
+            save_tasks(TASKS)
+        else:
+            self._save_presets()
+        self.append_log(f"任务已保存到预设“{mode_name}”。")
 
     @Slot()
     def refresh_window_list(self):

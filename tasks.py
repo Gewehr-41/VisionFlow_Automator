@@ -112,13 +112,30 @@ BLUEPRINT_LAYOUT_FILE = os.path.join(os.path.dirname(__file__), "saved_blueprint
 BLUEPRINT_GRAPH_FILE = os.path.join(os.path.dirname(__file__), "saved_blueprint_graphs.json")
 
 
+def _extract_task_list(payload):
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        for key in ("custom", "tasks", "items"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return value
+        for key, value in payload.items():
+            if key in ("custom", "__deleted__", "__group_metadata__"):
+                continue
+            if isinstance(value, list):
+                return value
+    return None
+
+
 def load_tasks():
     if os.path.exists(TASKS_FILE):
         try:
             with open(TASKS_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            if isinstance(data, list) and data:
-                return normalize_task_list(data)
+            tasks = _extract_task_list(data)
+            if tasks is not None:
+                return normalize_task_list(tasks)
         except Exception:
             pass
     return deepcopy(DEFAULT_TASKS)
@@ -210,9 +227,16 @@ def load_presets():
             if isinstance(data, dict):
                 for name in DELETED_PRESET_NAMES:
                     presets.pop(str(name), None)
-                for name, preset_tasks in data.items():
-                    if name not in ("custom", "__deleted__") and isinstance(preset_tasks, list):
-                        presets[str(name)] = normalize_task_list(preset_tasks)
+                for name, preset_value in data.items():
+                    if name in ("custom", "__deleted__", "__group_metadata__"):
+                        continue
+                    if isinstance(preset_value, list):
+                        presets[str(name)] = normalize_task_list(preset_value)
+                        continue
+                    if isinstance(preset_value, dict):
+                        task_list = _extract_task_list(preset_value)
+                        if task_list is not None:
+                            presets[str(name)] = normalize_task_list(task_list)
         except Exception:
             pass
     return presets

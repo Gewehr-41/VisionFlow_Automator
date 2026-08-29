@@ -3,7 +3,7 @@
     {
       "type": "normal",
       "mode": "custom",
-      "template": "16",
+      "template": "new-template-test",
       "timeout": 20.0,
       "click": true,
       "offset": [
@@ -258,13 +258,13 @@
     {
       "type": "click_until_gone",
       "mode": "custom",
-      "template": "captured_2ae591eced",
+      "template": "captured_258080a08f",
       "description": "跳过对话",
       "click": true,
       "click_interval": 0.5,
       "stop_delay": 2.0,
-      "timeout": 5.0,
-      "continue_after_timeout": false,
+      "timeout": 2.0,
+      "continue_after_timeout": true,
       "stop_on_change": false,
       "required": true,
       "group_id": "group_37b807c3_copy",
@@ -277,8 +277,7 @@
         41
       ],
       "templates": [
-        "captured_2ae591eced",
-        "captured_c563e1ea94"
+        "captured_258080a08f"
       ],
       "id": "0aa20ac6-e299-43f3-8f39-8405faff6dec",
       "group_color": "#eab308",
@@ -312,11 +311,7 @@
         0.0,
         0.0
       ],
-      "next_template": "captured_258080a08f",
-      "next_templates": [
-        "captured_258080a08f"
-      ],
-      "wait_for": "next_appear"
+      "wait_for": "time"
     },
     {
       "type": "normal",
@@ -503,7 +498,7 @@
     {
       "type": "click_until_gone",
       "mode": "custom",
-      "template": "15",
+      "template": "captured_258080a08f",
       "description": "跳过动画",
       "click": true,
       "click_interval": 0.5,
@@ -522,7 +517,40 @@
       "continue_after_timeout": true,
       "group_color": "#eab308",
       "stop_on_change": false,
-      "id": "7ef7dbb0-1eb4-488a-8366-f225ead4c3b4"
+      "id": "7ef7dbb0-1eb4-488a-8366-f225ead4c3b4",
+      "match_rects": [
+        [
+          1146,
+          721,
+          1205,
+          772
+        ]
+      ],
+      "match_rect": [
+        1146,
+        721,
+        1205,
+        772
+      ],
+      "search_rect": [
+        1146,
+        721,
+        1205,
+        772
+      ],
+      "templates": [
+        "captured_258080a08f"
+      ],
+      "threshold": 0.8,
+      "after_wait": 0.25,
+      "click_requires_match": true,
+      "offset_x": 0.0,
+      "offset_y": 0.0,
+      "offset": [
+        0.0,
+        0.0
+      ],
+      "wait_for": "time"
     },
     {
       "type": "click_until_gone",
@@ -1596,11 +1624,11 @@
       "type": "normal",
       "mode": "custom",
       "template": "captured_d8b5ebf9eb",
-      "timeout": 5.0,
+      "timeout": 3.0,
       "click": true,
       "offset": [
-        0,
-        0
+        0.0,
+        0.0
       ],
       "after_wait": 0.25,
       "wait_for": "time",
@@ -1637,12 +1665,14 @@
         1076,
         827
       ],
-      "next_template": null,
       "click_requires_match": true,
       "optional": false,
       "flow_next": "8a7c4c3b-54c2-4399-9f78-7905e62b86cd",
       "group_color": "#f97316",
-      "timeout_jump_to": 37
+      "timeout_jump_to": 37,
+      "threshold": 0.8,
+      "offset_x": 0.0,
+      "offset_y": 0.0
     },
     {
       "type": "click_until_gone",
@@ -1860,7 +1890,8 @@
       "detour_jump_to": 6,
       "detour_success_jump_to": null,
       "id": "d4499408-4ebb-4e1f-beb9-5352a8525a1f",
-      "group_color": "#eaf1ff"
+      "group_color": "#eaf1ff",
+      "blueprint_collapsed": false
     },
     {
       "type": "normal",
@@ -3409,9 +3440,10 @@
       "names": {},
       "colors": {},
       "expanded": {
-        "group_35fda057": true,
-        "group_06fce48f": true,
-        "group_893e4ce0": true
+        "group_37b807c3_copy": false,
+        "group_896c3838_copy": false,
+        "group_c9dda062_copy": false,
+        "group_8f247b3d_copy": false
       },
       "order": [],
       "parents": {},
@@ -3431,7 +3463,7 @@
         "group_8f247b3d_copy": "#f97316"
       },
       "expanded": {
-        "group_37b807c3_copy": false,
+        "group_37b807c3_copy": true,
         "group_896c3838_copy": false,
         "group_c9dda062_copy": false,
         "group_8f247b3d_copy": true

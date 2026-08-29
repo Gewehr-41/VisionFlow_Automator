@@ -68,8 +68,7 @@
               501
             ]
           ],
-          "id": "0231d28a-2ec9-4f28-bcfe-17b192222832_copy",
-          "blueprint_collapsed": false
+          "id": "0231d28a-2ec9-4f28-bcfe-17b192222832_copy"
         }
       },
       {
@@ -284,11 +283,11 @@
         "task": {
           "type": "click_until_gone",
           "mode": "custom",
-          "template": "captured_2ae591eced",
+          "template": "captured_258080a08f",
           "description": "跳过对话",
           "click": true,
           "click_interval": 0.5,
-          "stop_delay": 2.0,
+          "stop_delay": 1.0,
           "timeout": 5.0,
           "continue_after_timeout": false,
           "stop_on_change": false,
@@ -303,8 +302,7 @@
             41
           ],
           "templates": [
-            "captured_2ae591eced",
-            "captured_c563e1ea94"
+            "captured_258080a08f"
           ],
           "id": "0aa20ac6-e299-43f3-8f39-8405faff6dec",
           "group_color": "#eab308",
@@ -338,11 +336,7 @@
             0.0,
             0.0
           ],
-          "next_template": "captured_258080a08f",
-          "next_templates": [
-            "captured_258080a08f"
-          ],
-          "wait_for": "next_appear"
+          "wait_for": "time"
         }
       },
       {
@@ -553,7 +547,7 @@
         "task": {
           "type": "click_until_gone",
           "mode": "custom",
-          "template": "15",
+          "template": "captured_258080a08f",
           "description": "跳过动画",
           "click": true,
           "click_interval": 0.5,
@@ -572,7 +566,40 @@
           "continue_after_timeout": true,
           "group_color": "#eab308",
           "stop_on_change": false,
-          "id": "7ef7dbb0-1eb4-488a-8366-f225ead4c3b4"
+          "id": "7ef7dbb0-1eb4-488a-8366-f225ead4c3b4",
+          "match_rects": [
+            [
+              1146,
+              721,
+              1205,
+              772
+            ]
+          ],
+          "match_rect": [
+            1146,
+            721,
+            1205,
+            772
+          ],
+          "search_rect": [
+            1146,
+            721,
+            1205,
+            772
+          ],
+          "templates": [
+            "captured_258080a08f"
+          ],
+          "threshold": 0.8,
+          "after_wait": 0.25,
+          "click_requires_match": true,
+          "offset_x": 0.0,
+          "offset_y": 0.0,
+          "offset": [
+            0.0,
+            0.0
+          ],
+          "wait_for": "time"
         }
       },
       {
@@ -1742,11 +1769,11 @@
           "type": "normal",
           "mode": "custom",
           "template": "captured_d8b5ebf9eb",
-          "timeout": 5.0,
+          "timeout": 3.0,
           "click": true,
           "offset": [
-            0,
-            0
+            0.0,
+            0.0
           ],
           "after_wait": 0.25,
           "wait_for": "time",
@@ -1783,12 +1810,14 @@
             1076,
             827
           ],
-          "next_template": null,
           "click_requires_match": true,
           "optional": false,
           "flow_next": "8a7c4c3b-54c2-4399-9f78-7905e62b86cd",
           "group_color": "#f97316",
-          "timeout_jump_to": 37
+          "timeout_jump_to": 37,
+          "threshold": 0.8,
+          "offset_x": 0.0,
+          "offset_y": 0.0
         }
       },
       {
@@ -1831,6 +1860,20 @@
           "id": "8a7c4c3b-54c2-4399-9f78-7905e62b86cd",
           "flow_next": null,
           "flow_next_disabled": true
+        }
+      },
+      {
+        "id": "5aee305a-590b-4709-972f-e2c7f817b23d",
+        "type": "click_until_gone",
+        "task": {
+          "id": "5aee305a-590b-4709-972f-e2c7f817b23d",
+          "type": "click_until_gone",
+          "mode": "custom",
+          "enabled": true,
+          "template": "",
+          "description": "新增click_until_gone步骤",
+          "click": true,
+          "required": true
         }
       }
     ],
@@ -1957,22 +2000,6 @@
         }
       },
       {
-        "id": "1a88ec27-9eae-41f9-9d99-05730fe467fa",
-        "type": "key_press",
-        "task": {
-          "id": "1a88ec27-9eae-41f9-9d99-05730fe467fa",
-          "type": "key_press",
-          "mode": "custom",
-          "enabled": true,
-          "template": "",
-          "description": "新增key_press步骤",
-          "click": false,
-          "required": true,
-          "group_id": "group_35fda057",
-          "group_name": "组 1"
-        }
-      },
-      {
         "id": "1aa7bf53-3638-4e07-8efa-a083fb19f889",
         "type": "drag",
         "task": {
@@ -1982,38 +2009,6 @@
           "enabled": true,
           "template": "",
           "description": "新增drag步骤",
-          "click": false,
-          "required": true,
-          "group_id": "group_35fda057",
-          "group_name": "组 1"
-        }
-      },
-      {
-        "id": "d17fb228-6f93-4f7e-a3f6-d5ebe99f76c8",
-        "type": "click_until_gone",
-        "task": {
-          "id": "d17fb228-6f93-4f7e-a3f6-d5ebe99f76c8",
-          "type": "click_until_gone",
-          "mode": "custom",
-          "enabled": true,
-          "template": "",
-          "description": "新增click_until_gone步骤",
-          "click": true,
-          "required": true,
-          "group_id": "group_35fda057",
-          "group_name": "组 1"
-        }
-      },
-      {
-        "id": "58ce3e75-735a-40cb-bbbc-94f86d08aeb9",
-        "type": "delay",
-        "task": {
-          "id": "58ce3e75-735a-40cb-bbbc-94f86d08aeb9",
-          "type": "delay",
-          "mode": "custom",
-          "enabled": true,
-          "template": "",
-          "description": "新增delay步骤",
           "click": false,
           "required": true,
           "group_id": "group_35fda057",
@@ -2224,7 +2219,8 @@
           "detour_jump_to": 6,
           "detour_success_jump_to": null,
           "id": "d4499408-4ebb-4e1f-beb9-5352a8525a1f",
-          "group_color": "#eaf1ff"
+          "group_color": "#eaf1ff",
+          "blueprint_collapsed": false
         }
       },
       {
@@ -2746,7 +2742,7 @@
         "task": {
           "type": "normal",
           "mode": "custom",
-          "template": "16",
+          "template": "new-template-test",
           "timeout": 20.0,
           "click": true,
           "offset": [
@@ -3021,13 +3017,13 @@
         "task": {
           "type": "click_until_gone",
           "mode": "custom",
-          "template": "captured_2ae591eced",
+          "template": "captured_258080a08f",
           "description": "跳过对话",
           "click": true,
           "click_interval": 0.5,
           "stop_delay": 2.0,
-          "timeout": 5.0,
-          "continue_after_timeout": false,
+          "timeout": 2.0,
+          "continue_after_timeout": true,
           "stop_on_change": false,
           "required": true,
           "group_id": "group_37b807c3_copy",
@@ -3040,8 +3036,7 @@
             41
           ],
           "templates": [
-            "captured_2ae591eced",
-            "captured_c563e1ea94"
+            "captured_258080a08f"
           ],
           "id": "0aa20ac6-e299-43f3-8f39-8405faff6dec",
           "group_color": "#eab308",
@@ -3075,11 +3070,7 @@
             0.0,
             0.0
           ],
-          "next_template": "captured_258080a08f",
-          "next_templates": [
-            "captured_258080a08f"
-          ],
-          "wait_for": "next_appear"
+          "wait_for": "time"
         }
       },
       {
@@ -3290,7 +3281,7 @@
         "task": {
           "type": "click_until_gone",
           "mode": "custom",
-          "template": "15",
+          "template": "captured_258080a08f",
           "description": "跳过动画",
           "click": true,
           "click_interval": 0.5,
@@ -3309,7 +3300,40 @@
           "continue_after_timeout": true,
           "group_color": "#eab308",
           "stop_on_change": false,
-          "id": "7ef7dbb0-1eb4-488a-8366-f225ead4c3b4"
+          "id": "7ef7dbb0-1eb4-488a-8366-f225ead4c3b4",
+          "match_rects": [
+            [
+              1146,
+              721,
+              1205,
+              772
+            ]
+          ],
+          "match_rect": [
+            1146,
+            721,
+            1205,
+            772
+          ],
+          "search_rect": [
+            1146,
+            721,
+            1205,
+            772
+          ],
+          "templates": [
+            "captured_258080a08f"
+          ],
+          "threshold": 0.8,
+          "after_wait": 0.25,
+          "click_requires_match": true,
+          "offset_x": 0.0,
+          "offset_y": 0.0,
+          "offset": [
+            0.0,
+            0.0
+          ],
+          "wait_for": "time"
         }
       },
       {
@@ -4479,11 +4503,11 @@
           "type": "normal",
           "mode": "custom",
           "template": "captured_d8b5ebf9eb",
-          "timeout": 5.0,
+          "timeout": 3.0,
           "click": true,
           "offset": [
-            0,
-            0
+            0.0,
+            0.0
           ],
           "after_wait": 0.25,
           "wait_for": "time",
@@ -4520,12 +4544,14 @@
             1076,
             827
           ],
-          "next_template": null,
           "click_requires_match": true,
           "optional": false,
           "flow_next": "8a7c4c3b-54c2-4399-9f78-7905e62b86cd",
           "group_color": "#f97316",
-          "timeout_jump_to": 37
+          "timeout_jump_to": 37,
+          "threshold": 0.8,
+          "offset_x": 0.0,
+          "offset_y": 0.0
         }
       },
       {

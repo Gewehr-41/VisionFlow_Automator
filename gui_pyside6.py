@@ -1876,21 +1876,30 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
         self.editor_layout.addWidget(self.template_preview)
 
         self.editor_actions = QWidget()
-        action_layout = QHBoxLayout(self.editor_actions)
+        action_layout = QGridLayout(self.editor_actions)
         action_layout.setContentsMargins(0, 0, 0, 0)
-        for label, handler in (
+        action_layout.setHorizontalSpacing(6)
+        action_layout.setVerticalSpacing(4)
+        for index, (label, handler) in enumerate((
             ("绑定图片", self.select_template_file),
             ("记录点击点", self.start_click_capture),
             ("框选识别区域", self.start_region_capture),
             ("清空识别区域", self.clear_match_region),
-        ):
+        )):
             button = QPushButton(label)
             button.clicked.connect(handler)
-            action_layout.addWidget(button)
+            action_layout.addWidget(button, index // 2, index % 2)
         self.apply_button = QPushButton("应用修改")
         self.apply_button.clicked.connect(self._apply_editor)
-        action_layout.addWidget(self.apply_button)
-        self.editor_layout.addWidget(self.editor_actions)
+        action_layout.addWidget(self.apply_button, 2, 0, 1, 2)
+
+        # 模板预览在左、操作按钮在右，与主窗口保持一致，避免按钮整行铺开
+        preview_row = QHBoxLayout()
+        preview_row.setContentsMargins(0, 0, 0, 0)
+        preview_row.setSpacing(8)
+        preview_row.addWidget(self.template_preview, 0, Qt.AlignTop)
+        preview_row.addWidget(self.editor_actions, 1)
+        self.editor_layout.addLayout(preview_row)
 
         name_form = QFormLayout()
         self.description_edit = QLineEdit()
@@ -3775,31 +3784,43 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         self.template_preview.setFixedSize(180, 110)
         self.template_preview.setStyleSheet("border: 1px solid #cbd5e1; background: #f8fafc;")
         self.template_preview.setVisible(False)
-        # 必须加入布局。此前漏了这一行，导致该 QLabel 没有父控件，
-        # 变成一个固定 180x110 的**独立顶层窗口**，显示时会以「弹窗」形式
-        # 飘在主窗口之外，而不是嵌在右侧编辑面板里。
-        # 蓝图窗口一直有这一行，所以那边表现正常。
-        editor_layout.addWidget(self.template_preview)
 
+        # 注意：编辑器相关的按钮此前写成 editor_layout.addWidget(self.editor_actions)，
+        # 此时 editor_actions 根本没有父控件，会变成一个独立顶层窗口（表现为弹窗）。
+        # 现在它与模板预览一起放进 preview_row，父控件关系由布局建立。
         self.editor_actions = QWidget()
-        action_layout = QHBoxLayout(self.editor_actions)
+        action_layout = QGridLayout(self.editor_actions)
         action_layout.setContentsMargins(0, 0, 0, 0)
+        action_layout.setHorizontalSpacing(6)
+        action_layout.setVerticalSpacing(4)
         bind_button = QPushButton("绑定图片")
         bind_button.clicked.connect(self.select_template_file)
-        action_layout.addWidget(bind_button)
+        action_layout.addWidget(bind_button, 0, 0)
         click_capture_button = QPushButton("记录点击点")
         click_capture_button.clicked.connect(self.start_click_capture)
-        action_layout.addWidget(click_capture_button)
+        action_layout.addWidget(click_capture_button, 0, 1)
         region_capture_button = QPushButton("框选识别区域")
         region_capture_button.clicked.connect(self.start_region_capture)
-        action_layout.addWidget(region_capture_button)
+        action_layout.addWidget(region_capture_button, 1, 0)
         clear_region_button = QPushButton("清空识别区域")
         clear_region_button.clicked.connect(self.clear_match_region)
-        action_layout.addWidget(clear_region_button)
+        action_layout.addWidget(clear_region_button, 1, 1)
         self.apply_button = QPushButton("应用修改")
         self.apply_button.clicked.connect(self.apply_selected_task)
-        action_layout.addWidget(self.apply_button)
-        editor_layout.addWidget(self.editor_actions)
+        action_layout.addWidget(self.apply_button, 2, 0, 1, 2)
+
+        # 模板预览在左、操作按钮在右，避免按钮整行铺开导致右侧留白。
+        # 放在同一行会建立父子关系，使缩略图与按钮都成为内嵌控件。
+        preview_row = QHBoxLayout()
+        preview_row.setContentsMargins(0, 0, 0, 0)
+        preview_row.setSpacing(8)
+        # 与预览图同高：预览是 180x110 的固定尺寸控件，若不加高度限制，
+        # 外部布局可能把它拉伸（图片仍按 180x110 显示，周边留白），
+        # 看起来就像缩略图只占了一小块。
+        self.template_preview.setFixedHeight(110)
+        preview_row.addWidget(self.template_preview, 0, Qt.AlignTop)
+        preview_row.addWidget(self.editor_actions, 1)
+        editor_layout.addLayout(preview_row)
 
         # 步骤名称与启用状态对所有步骤类型可见（与蓝图保持一致）
         self.description_edit = QLineEdit()

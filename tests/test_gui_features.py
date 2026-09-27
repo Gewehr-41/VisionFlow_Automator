@@ -328,6 +328,68 @@ class GuiFeatureTests(unittest.TestCase):
         self.window.load_selected_task(item, None)
         self.assertTrue(self.window.template_preview.isVisibleTo(self.window))
 
+    # ---------- 紧凑布局：缩略图在左，按钮在右 ----------
+
+    def _action_buttons(self, window):
+        from PySide6.QtWidgets import QPushButton
+        return [b.text() for b in window.editor_actions.findChildren(QPushButton)]
+
+    def test_action_buttons_present_in_main_window(self):
+        buttons = self._action_buttons(self.window)
+        for label in ("绑定图片", "记录点击点", "框选识别区域", "清空识别区域", "应用修改"):
+            self.assertIn(label, buttons)
+
+    def test_action_buttons_present_in_blueprint_window(self):
+        bp = g.BlueprintWindow([], {}, lambda *a: None, {}, self.window, {})
+        try:
+            buttons = self._action_buttons(bp)
+            for label in ("绑定图片", "记录点击点", "框选识别区域", "清空识别区域", "应用修改"):
+                self.assertIn(label, buttons)
+        finally:
+            bp.close()
+
+    def test_buttons_are_laid_out_in_a_grid(self):
+        """按钮应排成网格（两列），而非整行铺开。"""
+        from PySide6.QtWidgets import QGridLayout, QPushButton
+        layout = self.window.editor_actions.layout()
+        self.assertIsInstance(layout, QGridLayout, "操作按钮应使用网格布局以便放右侧")
+        positions = {}
+        for i in range(layout.count()):
+            item = layout.itemAt(i)
+            widget = item.widget()
+            if isinstance(widget, QPushButton):
+                row, col, _rs, _cs = layout.getItemPosition(i)
+                positions[widget.text()] = (row, col)
+        # 前四个按钮两两一行，应用修改跨两列
+        self.assertEqual(positions["绑定图片"], (0, 0))
+        self.assertEqual(positions["记录点击点"], (0, 1))
+        self.assertEqual(positions["框选识别区域"], (1, 0))
+        self.assertEqual(positions["清空识别区域"], (1, 1))
+
+    def test_apply_button_spans_both_columns(self):
+        from PySide6.QtWidgets import QGridLayout, QPushButton
+        layout = self.window.editor_actions.layout()
+        for i in range(layout.count()):
+            widget = layout.itemAt(i).widget()
+            if isinstance(widget, QPushButton) and widget.text() == "应用修改":
+                _row, _col, _rs, cs = layout.getItemPosition(i)
+                self.assertEqual(cs, 2, "「应用修改」应跨两列")
+                return
+        self.fail("未找到「应用修改」按钮")
+
+    def test_preview_and_actions_are_siblings_in_one_row(self):
+        """缩略图与按钮容器应同属一个水平行布局（左右并排）。"""
+        preview_parent = self.window.template_preview.parentWidget()
+        actions_parent = self.window.editor_actions.parentWidget()
+        self.assertIs(
+            preview_parent, actions_parent,
+            "缩略图与按钮容器应挂在同一个父控件下（同一行布局）",
+        )
+
+    def test_preview_height_matches_button_block(self):
+        """缩略图高度应与其右侧按钮块对齐（避免被拉伸后图片偏小）。"""
+        self.assertEqual(self.window.template_preview.maximumHeight(), 110)
+
 
 class PreviewSuppressionTests(unittest.TestCase):
     """构建期标志在未设置时不应误伤（蓝图窗口等其它 QWidget 子类）。"""

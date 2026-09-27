@@ -2531,220 +2531,21 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
         self.template_preview.setToolTip(f"{names_hint}  {pixmap.width()}x{pixmap.height()}")
         self.template_preview.setVisible(True)
 
-    def _capture_rect(self):
-        # 与另一侧窗口共用同一实现（此前两份完全相同）
-        return _capture_rect()
 
-    def _show_capture_overlay(self, mode):
-        self._keep_window_hidden = False
-        if self.capture_overlay is not None:
-            self.capture_overlay.close()
-        self.capture_overlay = CaptureOverlay(self._capture_rect(), mode)
-        self.capture_overlay.clicked.connect(self.finish_click_capture)
-        self.capture_overlay.region_selected.connect(self.finish_region_capture)
-        self.capture_overlay.image_selected.connect(self.finish_image_capture)
-        self.capture_overlay.cancelled.connect(self.cancel_capture)
-        self.capture_overlay.too_small.connect(self.finish_too_small)
-        self.capture_overlay.destroyed.connect(self.clear_capture_overlay)
-        self.capture_overlay.start()
-        self.hide()
-        parent = self.parent()
-        if parent is not None:
-            parent.hide()
 
-    def start_click_capture(self):
-        if self.current_index >= 0:
-            self._capture_callback = None
-            self._show_capture_overlay("click")
 
-    def start_region_capture(self):
-        if self.current_index >= 0:
-            self._capture_callback = None
-            self._capture_target = "match"
-            self._show_capture_overlay("region")
 
-    def _begin_dialog_capture(self, mode, callback):
-        self._capture_callback = callback
-        self._capture_target = "match"
-        self._show_capture_overlay(mode)
 
-    def finish_click_capture(self, x, y):
-        self.clear_capture_overlay()
-        self.activateWindow()
-        callback = getattr(self, "_capture_callback", None)
-        self._capture_callback = None
-        if callback is not None:
-            callback(("click", x, y))
-            return
-        self.click_x_edit.setText(str(x))
-        self.click_y_edit.setText(str(y))
-        if not 0 <= self.current_index < len(self.tasks):
-            return
-        task = self.tasks[self.current_index]
-        task["click_x"] = int(x)
-        task["click_y"] = int(y)
-        task["click_position"] = (int(x), int(y))
-        if task.get("type") != "click_until_gone":
-            task.pop("match_rect", None)
-            task.pop("search_rect", None)
-        self._push_history()
-        self.refresh()
-        self._select_node(self.current_index)
-        self.save_layout()
 
-    def finish_region_capture(self, left, top, right, bottom):
-        self.clear_capture_overlay()
-        self.activateWindow()
-        callback = getattr(self, "_capture_callback", None)
-        self._capture_callback = None
-        if callback is not None:
-            callback(("region", (left, top, right, bottom)))
-            return
-        if not 0 <= self.current_index < len(self.tasks):
-            return
-        task = self.tasks[self.current_index]
-        if getattr(self, "_capture_target", "match") == "next":
-            task["next_match_rect"] = (left, top, right, bottom)
-            task["next_search_rect"] = (left, top, right, bottom)
-            self._push_history()
-            self.refresh()
-            self._select_node(self.current_index)
-            self.save_layout()
-            return
-        match_rects = task.setdefault("match_rects", [])
-        if not isinstance(match_rects, list):
-            match_rects = []
-            task["match_rects"] = match_rects
-        match_rects.append((left, top, right, bottom))
-        task["match_rect"] = match_rects[0]
-        task["search_rect"] = match_rects[0]
-        self.match_rect_edit.setText(f"{left}, {top}, {right}, {bottom}")
-        self._push_history()
-        self.refresh()
-        self._select_node(self.current_index)
-        self.save_layout()
 
-    def finish_image_capture(self, left, top, right, bottom):
-        # 保持窗口隐藏直到截图完成：关闭覆盖层前断开 destroyed 联动，并置位
-        # _keep_window_hidden，防止覆盖层销毁时 clear_capture_overlay 提前 show，
-        # 导致截图截到脚本窗口。
-        overlay = self.capture_overlay
-        self.capture_overlay = None
-        self._keep_window_hidden = True
-        if overlay is not None:
-            try:
-                overlay.destroyed.disconnect(self.clear_capture_overlay)
-            except (RuntimeError, TypeError):
-                pass
-            overlay.close()
-        if right <= left or bottom <= top:
-            QMessageBox.warning(self, "框选失败", "框选区域太小，请重新拖曳选择。")
-            self._keep_window_hidden = False
-            callback = getattr(self, "_capture_callback", None)
-            self._capture_callback = None
-            if callback is not None:
-                callback(("cancelled",))
-            self.show()
-            return
-        callback = getattr(self, "_capture_callback", None)
-        self._capture_callback = None
-        QTimer.singleShot(120, lambda: self._save_captured_image(left, top, right, bottom, callback))
 
-    def _save_captured_image(self, left, top, right, bottom, callback=None):
-        icons_dir = os.path.join(os.path.dirname(__file__), "icons")
-        os.makedirs(icons_dir, exist_ok=True)
-        image_name = f"captured_{uuid.uuid4().hex[:10]}"
-        image_path = os.path.join(icons_dir, f"{image_name}.png")
-        screen = QApplication.primaryScreen()
-        # 在窗口仍隐藏时截图，完成后才恢复显示，确保截到的是目标画面而不是脚本窗口。
-        pixmap = screen.grabWindow(0, left, top, right - left, bottom - top)
-        self._keep_window_hidden = False
-        self.show()
-        parent = self.parent()
-        if parent is not None:
-            parent.show()
-        if pixmap.isNull() or not pixmap.save(image_path, "PNG"):
-            QMessageBox.warning(self, "保存失败", "无法保存框选图片。")
-            return
-        reload_templates()
-        if callback is not None:
-            callback(("image", image_name))
-            return
-        if not 0 <= self.current_index < len(self.tasks):
-            return
-        task = self.tasks[self.current_index]
-        task["next_template"] = image_name
-        task["next_templates"] = [image_name]
-        task["wait_for"] = "next_appear"
-        self.next_template_edit.setText(image_name)
-        self.wait_for_combo.setCurrentIndex(1)
-        self._push_history()
-        self.refresh()
-        self._select_node(self.current_index)
-        self.save_layout()
 
-    def cancel_capture(self):
-        self.clear_capture_overlay()
-        self.activateWindow()
-        callback = getattr(self, "_capture_callback", None)
-        self._capture_callback = None
-        if callback is not None:
-            callback(("cancelled",))
 
-    def finish_too_small(self):
-        self.clear_capture_overlay()
-        self.activateWindow()
-        callback = getattr(self, "_capture_callback", None)
-        self._capture_callback = None
-        if callback is not None:
-            callback(("cancelled",))
-        QMessageBox.warning(self, "框选失败", "框选区域太小，请重新拖曳选择。")
 
-    def clear_capture_overlay(self):
-        if self.capture_overlay is not None:
-            overlay = self.capture_overlay
-            self.capture_overlay = None
-            overlay.close()
-        # 截图流程进行中（_keep_window_hidden=True）不恢复窗口，由 _save_captured_image
-        # 在截图完成后统一显示，避免覆盖层销毁回调把脚本窗口提前显示出来。
-        if not getattr(self, "_keep_window_hidden", False):
-            self.show()
-            parent = self.parent()
-            if parent is not None:
-                parent.show()
 
-    def clear_match_region(self):
-        self.match_rect_edit.clear()
-        if not 0 <= self.current_index < len(self.tasks):
-            return
-        task = self.tasks[self.current_index]
-        for key in ("match_rects", "match_rect", "search_rect"):
-            task.pop(key, None)
-        self._push_history()
-        self.refresh()
-        self._select_node(self.current_index)
-        self.save_layout()
 
-    def select_next_template_file(self):
-        path, _ = QFileDialog.getOpenFileName(self, "选择等待出现的目标图片", config.ICON_DIR, "PNG 图片 (*.png)")
-        if path:
-            self.next_template_edit.setText(os.path.splitext(os.path.basename(path))[0])
-            self.wait_for_combo.setCurrentIndex(1)
 
-    def start_next_template_capture(self):
-        if self.current_index >= 0:
-            self._capture_callback = None
-            self._capture_target = "next_template"
-            self._show_capture_overlay("image")
 
-    def start_next_region_capture(self):
-        if self.current_index >= 0:
-            if not self.next_template_edit.text().strip():
-                QMessageBox.information(self, "提示", "请先选择下一模板图片，再框选它的出现位置。")
-                return
-            self._capture_callback = None
-            self._capture_target = "next"
-            self._show_capture_overlay("region")
 
     def select_template_file(self):
         if not 0 <= self.current_index < len(self.tasks):
@@ -4918,41 +4719,10 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         dialog.exec()
 
     @Slot()
-    def select_next_template_file(self):
-        path, _ = QFileDialog.getOpenFileName(self, "选择等待出现的目标图片", config.ICON_DIR, "PNG 图片 (*.png)")
-        if path:
-            self.next_template_edit.setText(os.path.splitext(os.path.basename(path))[0])
-            self.wait_for_combo.setCurrentText("2. 等待目标模板出现")
 
-    @Slot()
-    def start_next_template_capture(self):
-        if self.current_task_index >= 0:
-            self._capture_target = "next_template"
-            self._show_capture_overlay("image")
 
-    @Slot()
-    def start_next_region_capture(self):
-        if self.current_task_index >= 0:
-            if not self.next_template_edit.text().strip():
-                self.append_log("请先选择下一模板图片，再框选它的出现位置。")
-                return
-            self._capture_target = "next"
-            self._show_capture_overlay("region")
 
-    @Slot()
-    def clear_match_region(self):
-        self.match_rect_edit.clear()
-        for editor in (self.region_left_edit, self.region_top_edit, self.region_right_edit, self.region_bottom_edit, self.region_center_x_edit, self.region_center_y_edit):
-            editor.clear()
-        if not 0 <= self.current_task_index < len(TASKS):
-            return
-        task = TASKS[self.current_task_index]
-        for key in ("match_rects", "match_rect", "search_rect"):
-            task.pop(key, None)
-        self.save_current_tasks()
-        self.refresh_task_list()
-        self.select_task_index(self.current_task_index)
-        self.append_log("已清空当前步骤的全部识别区域")
+
 
     def _current_match_rect(self):
         values = [self._int_value(editor.text()) for editor in (self.region_left_edit, self.region_top_edit, self.region_right_edit, self.region_bottom_edit)]
@@ -4984,191 +4754,17 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         self.refresh_task_list()
         self.select_task_index(self.current_task_index)
 
-    def _capture_rect(self):
-        # 与另一侧窗口共用同一实现（此前两份完全相同）
-        return _capture_rect()
 
-    def _show_capture_overlay(self, mode):
-        self._keep_window_hidden = False
-        if self.capture_overlay is not None:
-            self.capture_overlay.close()
-        self.capture_overlay = CaptureOverlay(self._capture_rect(), mode)
-        self.capture_overlay.clicked.connect(self.finish_click_capture)
-        self.capture_overlay.region_selected.connect(self.finish_region_capture)
-        self.capture_overlay.image_selected.connect(self.finish_image_capture)
-        self.capture_overlay.cancelled.connect(self.cancel_capture)
-        self.capture_overlay.too_small.connect(self.finish_too_small)
-        self.capture_overlay.destroyed.connect(self.clear_capture_overlay)
-        self.append_log("请在覆盖层中选择位置，按 Esc 取消。")
-        self.capture_overlay.start()
-        self.hide()
 
-    @Slot()
-    def start_click_capture(self):
-        if self.current_task_index >= 0:
-            self._capture_callback = None
-            self._show_capture_overlay("click")
 
-    @Slot()
-    def start_region_capture(self):
-        if self.current_task_index >= 0:
-            self._capture_callback = None
-            self._capture_target = "match"
-            self._show_capture_overlay("region")
 
-    def _begin_dialog_capture(self, mode, callback):
-        self._capture_callback = callback
-        self._capture_target = "match"
-        self._show_capture_overlay(mode)
 
-    @Slot(int, int)
-    def finish_click_capture(self, x, y):
-        self.clear_capture_overlay()
-        self.activateWindow()
-        callback = getattr(self, "_capture_callback", None)
-        self._capture_callback = None
-        if callback is not None:
-            callback(("click", x, y))
-            return
-        self.click_x_edit.setText(str(x))
-        self.click_y_edit.setText(str(y))
-        if not 0 <= self.current_task_index < len(TASKS):
-            return
-        task = TASKS[self.current_task_index]
-        task["click_x"] = int(x)
-        task["click_y"] = int(y)
-        task["click_position"] = (int(x), int(y))
-        if task.get("type") != "click_until_gone":
-            task.pop("match_rect", None)
-            task.pop("search_rect", None)
-        self.save_current_tasks()
-        self.append_log(f"已记录备用点击坐标: ({x}, {y})")
 
-    @Slot(int, int, int, int)
-    def finish_region_capture(self, left, top, right, bottom):
-        self.clear_capture_overlay()
-        self.activateWindow()
-        callback = getattr(self, "_capture_callback", None)
-        self._capture_callback = None
-        if callback is not None:
-            callback(("region", (left, top, right, bottom)))
-            return
-        if not 0 <= self.current_task_index < len(TASKS):
-            return
-        task = TASKS[self.current_task_index]
-        if getattr(self, "_capture_target", "match") == "next":
-            task["next_match_rect"] = (left, top, right, bottom)
-            task["next_search_rect"] = (left, top, right, bottom)
-            self.save_current_tasks()
-            self.append_log(f"已记录下一模板识别区域: 左上=({left}, {top}) 右下=({right}, {bottom})")
-            return
-        match_rects = task.setdefault("match_rects", [])
-        if not isinstance(match_rects, list):
-            match_rects = []
-            task["match_rects"] = match_rects
-        match_rects.append((left, top, right, bottom))
-        task["match_rect"] = match_rects[0]
-        task["search_rect"] = match_rects[0]
-        self.match_rect_edit.setText(f"{left}, {top}, {right}, {bottom}")
-        self.region_left_edit.setText(str(left))
-        self.region_top_edit.setText(str(top))
-        self.region_right_edit.setText(str(right))
-        self.region_bottom_edit.setText(str(bottom))
-        self.region_center_x_edit.setText(str((left + right) // 2))
-        self.region_center_y_edit.setText(str((top + bottom) // 2))
-        self.save_current_tasks()
-        self.append_log(f"已追加第 {len(match_rects)} 段识别区域")
 
-    @Slot(int, int, int, int)
-    def finish_image_capture(self, left, top, right, bottom):
-        # 保持主窗口隐藏直到截图完成：关闭覆盖层前断开 destroyed 联动，并置位
-        # _keep_window_hidden，防止覆盖层销毁时 clear_capture_overlay 提前 self.show()，
-        # 导致截图截到脚本窗口。
-        overlay = self.capture_overlay
-        self.capture_overlay = None
-        self._keep_window_hidden = True
-        if overlay is not None:
-            try:
-                overlay.destroyed.disconnect(self.clear_capture_overlay)
-            except (RuntimeError, TypeError):
-                pass
-            overlay.close()
-        if right <= left or bottom <= top:
-            QMessageBox.warning(self, "框选失败", "框选区域太小，请重新拖曳选择。")
-            self._keep_window_hidden = False
-            callback = getattr(self, "_capture_callback", None)
-            self._capture_callback = None
-            if callback is not None:
-                callback(("cancelled",))
-            self.show()
-            return
-        callback = getattr(self, "_capture_callback", None)
-        self._capture_callback = None
-        QTimer.singleShot(120, lambda: self._save_captured_image(left, top, right, bottom, callback))
 
-    def _save_captured_image(self, left, top, right, bottom, callback=None):
-        icons_dir = os.path.join(os.path.dirname(__file__), "icons")
-        os.makedirs(icons_dir, exist_ok=True)
-        image_name = f"captured_{uuid.uuid4().hex[:10]}"
-        image_path = os.path.join(icons_dir, f"{image_name}.png")
-        screen = QApplication.primaryScreen()
-        # 在窗口仍隐藏时截图，完成后才恢复显示，确保截到的是目标画面而不是脚本窗口。
-        pixmap = screen.grabWindow(0, left, top, right - left, bottom - top)
-        self._keep_window_hidden = False
-        self.show()
-        self.activateWindow()
-        if pixmap.isNull() or not pixmap.save(image_path, "PNG"):
-            QMessageBox.warning(self, "保存失败", "无法保存框选图片。")
-            return
-        reload_templates()
-        if callback is not None:
-            callback(("image", image_name))
-            return
-        if not 0 <= self.current_task_index < len(TASKS):
-            return
-        task = TASKS[self.current_task_index]
-        task["next_template"] = image_name
-        task["next_templates"] = [image_name]
-        task["wait_for"] = "next_appear"
-        self.next_template_edit.setText(image_name)
-        self.wait_for_combo.setCurrentText("2. 等待目标模板出现")
-        self.save_current_tasks()
-        self.refresh_task_list()
-        self.select_task_index(self.current_task_index)
-        self.append_log(f"已将框选图片保存并绑定: {image_path}")
 
-    @Slot()
-    def cancel_capture(self):
-        self.clear_capture_overlay()
-        self.activateWindow()
-        callback = getattr(self, "_capture_callback", None)
-        self._capture_callback = None
-        if callback is not None:
-            callback(("cancelled",))
-        self.append_log("已取消屏幕采集。")
 
-    @Slot()
-    def finish_too_small(self):
-        self.clear_capture_overlay()
-        self.activateWindow()
-        callback = getattr(self, "_capture_callback", None)
-        self._capture_callback = None
-        if callback is not None:
-            callback(("cancelled",))
-        QMessageBox.warning(self, "框选失败", "框选区域太小，请重新拖曳选择。")
 
-    @Slot()
-    def clear_capture_overlay(self):
-        if self.capture_overlay is not None:
-            overlay = self.capture_overlay
-            self.capture_overlay = None
-            overlay.close()
-        # 截图流程进行中（_keep_window_hidden=True）不恢复窗口，由 _save_captured_image
-        # 在截图完成后统一显示，避免覆盖层销毁回调把脚本窗口提前显示出来。
-        if not getattr(self, "_keep_window_hidden", False):
-            self.show()
-
-    @Slot(QTreeWidgetItem, int)
     def toggle_item(self, item, _column):
         index = self._task_index_from_item(item)
         if index is None:

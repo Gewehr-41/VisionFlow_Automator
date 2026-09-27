@@ -256,5 +256,108 @@ class EditorRoundTripTests(unittest.TestCase):
         self.assertEqual(own_task.get("type"), "key_press")
 
 
+class BlueprintGraphWiringTests(unittest.TestCase):
+    """验证 open_blueprint() 真的把「补全后的任务列表」交给蓝图窗口。
+
+    这里用桩替换 `g.BlueprintWindow`，不构造真实窗口：真窗口的 closeEvent 会
+    调用 save_layout() -> save_blueprint_state()，从而写真实的
+    saved_blueprint_layouts.json / saved_blueprint_graphs.json。用桩可以彻底
+    避开这条写盘路径，测试只关心接线本身。
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._orig_presets_file = tasks.PRESETS_FILE
+        self._orig_tasks_file = tasks.TASKS_FILE
+        self._orig_save_presets = g.save_presets
+        self._orig_save_tasks = g.save_tasks
+        self._orig_save_layouts = g.save_blueprint_layouts
+        self._orig_save_graphs = g.save_blueprint_graphs
+        self._orig_blueprint_cls = g.BlueprintWindow
+        self._tasks_snapshot = copy.deepcopy(g.TASKS)
+        tasks.PRESETS_FILE = os.path.join(self._tmp.name, "saved_presets.json")
+        tasks.TASKS_FILE = os.path.join(self._tmp.name, "saved_tasks.json")
+        g.save_presets = tasks.save_presets
+        g.save_tasks = tasks.save_tasks
+        g.save_blueprint_layouts = lambda *a, **k: None
+        g.save_blueprint_graphs = lambda *a, **k: None
+        self.window = g.PySide6ScriptWindow()
+
+    def tearDown(self):
+        self.window.close()
+        g.TASKS[:] = self._tasks_snapshot
+        tasks.PRESETS_FILE = self._orig_presets_file
+        tasks.TASKS_FILE = self._orig_tasks_file
+        g.save_presets = self._orig_save_presets
+        g.save_tasks = self._orig_save_tasks
+        g.save_blueprint_layouts = self._orig_save_layouts
+        g.save_blueprint_graphs = self._orig_save_graphs
+        g.BlueprintWindow = self._orig_blueprint_cls
+        self._tmp.cleanup()
+
+    def _install_stub(self):
+        captured = {}
+
+        class StubBlueprintWindow:
+            def __init__(self, tasks_arg, layout_data, save_callback,
+                         group_metadata=None, parent=None, execution_states=None):
+                captured["tasks"] = tasks_arg
+                captured["layout"] = layout_data
+                captured["group"] = group_metadata
+
+            def show(self):
+                pass
+
+        g.BlueprintWindow = StubBlueprintWindow
+        return captured
+
+    def test_open_blueprint_fills_missing_flow_next(self):
+        self.assertTrue(len(g.TASKS) >= 2, "预设步骤不足，无法测试接线")
+        first, second = g.TASKS[0], g.TASKS[1]
+        first["type"] = "normal"
+        first["flow_next"] = str(second.get("id"))
+        payload = g.NodeGraph(g.TASKS).to_payload()
+        mode = self.window.mode_combo.currentText() or "custom"
+        self.window.blueprint_graphs[mode] = payload
+        first.pop("flow_next", None)
+
+        captured = self._install_stub()
+        self.window.open_blueprint()
+        self.window.blueprint_window = None  # 桩对象没有 close()，避免 tearDown 误用
+
+        self.assertIn("tasks", captured, "open_blueprint 应构造蓝图窗口")
+        self.assertEqual(captured["tasks"][0].get("flow_next"), str(second.get("id")))
+
+    def test_open_blueprint_does_not_overwrite_existing_flow_next(self):
+        self.assertTrue(len(g.TASKS) >= 3, "预设步骤不足，无法测试接线")
+        first, second, third = g.TASKS[0], g.TASKS[1], g.TASKS[2]
+        first["type"] = "normal"
+        first["flow_next"] = str(second.get("id"))
+        payload = g.NodeGraph(g.TASKS).to_payload()
+        mode = self.window.mode_combo.currentText() or "custom"
+        self.window.blueprint_graphs[mode] = payload
+        first["flow_next"] = str(third.get("id"))  # 用户后来改成了第三步
+
+        captured = self._install_stub()
+        self.window.open_blueprint()
+        self.window.blueprint_window = None
+
+        self.assertEqual(
+            captured["tasks"][0].get("flow_next"), str(third.get("id")),
+            "已有值不能被旧图快照覆盖",
+        )
+
+    def test_open_blueprint_without_graph_data_is_unchanged(self):
+        mode = self.window.mode_combo.currentText() or "custom"
+        self.window.blueprint_graphs.pop(mode, None)
+        before = copy.deepcopy(g.TASKS)
+
+        captured = self._install_stub()
+        self.window.open_blueprint()
+        self.window.blueprint_window = None
+
+        self.assertEqual(captured["tasks"], before)
+
+
 if __name__ == "__main__":
     unittest.main()

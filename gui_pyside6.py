@@ -68,7 +68,7 @@ from tasks import (
     save_tasks,
     TASK_PRESETS,
 )
-from nodes import NodeGraph, remap_jump_targets
+from nodes import NodeGraph, fill_missing_connections, remap_jump_targets
 from core.screen import get_window_rect
 from core.hotkey import GlobalHotkey
 from core.input import release_all_inputs
@@ -5164,8 +5164,12 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         mode = self.mode_combo.currentText() or "custom"
         layout_data = deepcopy(self.blueprint_layouts.get(mode, {}))
         group_metadata = deepcopy(self.mode_group_metadata.get(mode, {}))
+        # 图数据里是「按节点 id」记录的连接，比 1-based 序号抗重排。这里只借它
+        # 补齐任务侧**为空**的跳转字段，绝不覆盖已有值（详见 nodes.fill_missing_connections）。
+        blueprint_tasks = deepcopy(TASKS)
+        repaired = fill_missing_connections(blueprint_tasks, self.blueprint_graphs.get(mode, {}))
         self.blueprint_window = BlueprintWindow(
-            deepcopy(TASKS),
+            blueprint_tasks,
             layout_data,
             lambda tasks, data, meta=None: self.save_blueprint_state(mode, tasks, data, meta),
             group_metadata,
@@ -5173,6 +5177,8 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
             self.execution_states,
         )
         self.blueprint_window.show()
+        if repaired:
+            self.append_log(f"已用蓝图图数据补齐 {repaired} 条缺失连线。")
 
     def save_blueprint_state(self, mode, tasks, layout_data, group_metadata=None):
         self.mode_tasks[mode] = deepcopy(tasks)

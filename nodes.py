@@ -38,6 +38,28 @@ class Node:
         return ("output",)
 
 
+# ---------------------------------------------------------------------------
+# 蓝图连接（connections）的「输出端口名 → 任务字段」映射
+#
+# 图数据（saved_blueprint_graphs.json）用节点 id 记录连接，而任务字典用
+# 「flow_next = 目标 id」+「1-based 步骤序号」两种寻址。下面这份映射是
+# to_payload / from_payload / fill_missing_connections 三处共用的唯一来源，
+# 避免同一个端口在不同函数里映射到不同字段。
+# ---------------------------------------------------------------------------
+
+CONNECTION_OUTPUT_FIELDS = {
+    "output": "flow_next",
+    "true": "condition_true_jump_to",
+    "false": "condition_false_jump_to",
+    "success": "detour_success_jump_to",
+    "failure": "detour_jump_to",
+    "timeout": "timeout_jump_to",
+    "body": "loop_target",
+    "exit": "loop_exit_target",
+    "triggered": "event_trigger_target",
+}
+
+
 class TaskNode(Node):
     """把旧版任务字典适配为统一节点对象。"""
 
@@ -109,18 +131,7 @@ class NodeGraph:
                 continue
             output = connection.get("output")
             target_number = target + 1
-            field_by_output = {
-                "output": "flow_next",
-                "true": "condition_true_jump_to",
-                "false": "condition_false_jump_to",
-                "success": "detour_success_jump_to",
-                "failure": "detour_jump_to",
-                "timeout": "timeout_jump_to",
-                "body": "loop_target",
-                "exit": "loop_exit_target",
-                "triggered": "event_trigger_target",
-            }
-            field = field_by_output.get(output)
+            field = CONNECTION_OUTPUT_FIELDS.get(output)
             if field == "flow_next":
                 graph.nodes[source].task[field] = graph.nodes[target].node_id
             elif field:
@@ -221,6 +232,57 @@ def task_to_node(task, executor=None):
 
 def tasks_to_nodes(tasks, executor=None):
     return [task_to_node(deepcopy(task), executor=executor) for task in tasks]
+
+
+def fill_missing_connections(tasks, payload):
+    """用图数据里的 id 连接补齐任务中「为空」的跳转字段，返回补齐的条数。
+
+    背景
+    ----
+    `saved_blueprint_graphs.json` 里的 connections 用**节点 id** 寻址，
+    比任务字典里的 1-based 步骤序号更抗重排（插入/删除/拖动都不会让它错位）；
+    但图文件终究是历史快照，若直接以它为准去重写跳转字段，就会把用户在
+    任务侧后来的改动覆盖掉。因此这里只做「补空」，规则严格限定为：
+
+      - 只在源任务的对应字段为 `None` 或 `""` 时写入；
+      - 已有值的字段一律不动；
+      - 不删除任何字段，不触碰跳转以外的任何字段；
+      - 源/目标 id 解析不到、端口名未知、自连接一律跳过。
+
+    参数 `tasks` 是任务字典列表（就地修改），`payload` 是图数据字典。
+    """
+    connections = payload.get("connections") if isinstance(payload, dict) else None
+    if not isinstance(connections, list) or not connections:
+        return 0
+    if not isinstance(tasks, list):
+        return 0
+
+    graph = NodeGraph(tasks)  # 只借用它的 id -> 下标解析
+    repaired = 0
+    for connection in connections:
+        if not isinstance(connection, dict):
+            continue
+        field = CONNECTION_OUTPUT_FIELDS.get(connection.get("output"))
+        if field is None:
+            continue
+        source = graph.resolve_id(connection.get("source"))
+        target = graph.resolve_id(connection.get("target"))
+        if source is None or target is None or source == target:
+            continue
+        task = tasks[source]
+        if not isinstance(task, dict):
+            continue
+        if task.get(field) not in (None, ""):
+            continue  # 只补空，绝不覆盖
+        if field == "flow_next":
+            target_id = graph.nodes[target].node_id
+            if target_id is None:
+                continue
+            task[field] = target_id
+        else:
+            task[field] = target + 1
+        repaired += 1
+    return repaired
 
 
 # ---------------------------------------------------------------------------

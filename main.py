@@ -1,8 +1,8 @@
 # 自动化执行引擎：负责模板识别后的步骤执行、等待、跳转和运行控制。
+# 注意：本模块是 GUI 无关的执行引擎，不在导入期依赖任何 GUI 工具包。
+#       tkinter 只在 show_complete_message() 内部按需延迟导入，用于无 GUI 调用方的兜底提示。
 import time
-import tkinter as tk
 import uuid
-from tkinter import messagebox
 
 import numpy as np
 
@@ -211,7 +211,14 @@ def wait_for_step_result(task, template_name=None, next_template_names=None, tim
 
 
 def show_complete_message():
-    """弹出结束提示。"""
+    """兜底结束提示（仅在调用方未提供 completion_callback / message_callback 时使用）。
+
+    tkinter 在这里延迟导入，使 main.py 在导入期不依赖任何 GUI 工具包。
+    推荐 GUI 调用方显式传入回调，自行决定提示方式。
+    """
+    import tkinter as tk
+    from tkinter import messagebox
+
     root = tk.Tk()
     root.withdraw()
     messagebox.showinfo("脚本执行完成", "所有步骤已完成，脚本已停止运行。")
@@ -952,8 +959,12 @@ def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True):
             return False
 
 
-def run_task_queue(tasks, loop=False, stop_flag=None, log_callback=None, execution_callback=None, execution_result_callback=None, pause_flag=None, single_step_flag=None, start_node_id=None, completion_callback=None):
-    """按顺序执行任务列表。"""
+def run_task_queue(tasks, loop=False, stop_flag=None, log_callback=None, execution_callback=None, execution_result_callback=None, pause_flag=None, single_step_flag=None, start_node_id=None, completion_callback=None, message_callback=None):
+    """按顺序执行任务列表。
+
+    message_callback: 可选的成功提示回调（无参数）。GUI 调用方应传入它，
+                      以便用界面自己的弹窗替代 tkinter 兜底提示。
+    """
     global _active_pause_flag, _single_step_active
     _active_pause_flag = pause_flag
     _single_step_active = False
@@ -1066,6 +1077,8 @@ def run_task_queue(tasks, loop=False, stop_flag=None, log_callback=None, executi
                     log(f"错误: {e}", log_callback)
                     if completion_callback:
                         completion_callback("failed")
+                    elif message_callback:
+                        message_callback()
                     else:
                         show_complete_message()
                     return
@@ -1102,6 +1115,8 @@ def run_task_queue(tasks, loop=False, stop_flag=None, log_callback=None, executi
             if not loop:
                 if completion_callback:
                     completion_callback("completed")
+                elif message_callback:
+                    message_callback()
                 else:
                     show_complete_message()
                 return

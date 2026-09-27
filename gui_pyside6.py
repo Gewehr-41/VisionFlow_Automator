@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import threading
+import traceback
 import uuid
 import zipfile
 from copy import deepcopy
@@ -3370,7 +3371,9 @@ class TaskWorker(QObject):
                 completion_callback=self.completed.emit,
             )
         except Exception as exc:
+            # 保留完整堆栈，便于定位真实出错位置（此前只记录异常消息，排障困难）。
             self.log.emit(f"脚本异常: {exc}")
+            self.log.emit(traceback.format_exc())
             self.completed.emit("failed")
         finally:
             self.finished.emit()

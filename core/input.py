@@ -11,7 +11,6 @@ from config import CLICK_DELAY
 user32 = ctypes.windll.user32
 MOUSEEVENTF_LEFTDOWN = 0x0002
 MOUSEEVENTF_LEFTUP = 0x0004
-MOUSEEVENTF_MOVE = 0x0001
 
 # 记录脚本当前按住的键盘按键，便于紧急停止时统一释放。
 _PRESSED_KEYS = set()

@@ -71,27 +71,6 @@ def make_key_press_task(task_id, mode, description, key, *, delay_before=0.0, ho
     }
 
 
-def make_drag_task(task_id, mode, description, *, start=(0, 0), end=(100, 100), duration=0.25, after_wait=0.2, required=True):
-    return {
-        "id": task_id,
-        "mode": mode,
-        "type": "drag",
-        "enabled": True,
-        "description": description,
-        "template": "drag",
-        "start_x": start[0],
-        "start_y": start[1],
-        "end_x": end[0],
-        "end_y": end[1],
-        "duration": duration,
-        "click": False,
-        "after_wait": after_wait,
-        "wait_for": "time",
-        "wait_timeout": 1.0,
-        "required": required,
-    }
-
-
 DEFAULT_TASKS = [
     make_normal_task("daily_auto_loop", "daily", "打开自动循环界面", "auto"),
     make_keyboard_move_task(

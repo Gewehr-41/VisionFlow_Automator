@@ -7,7 +7,7 @@ import uuid
 import numpy as np
 
 import config
-from config import ICON_DIR, THRESHOLD, SHOW_PREVIEW, DEFAULT_TIMEOUT, DEFAULT_POLL_INTERVAL, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP
+from config import ICON_DIR, THRESHOLD, DEFAULT_TIMEOUT, DEFAULT_POLL_INTERVAL, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP
 from core.screen import capture_screen, to_global_position, get_window_rect
 from core.template_match import StopExecution, load_templates, match_all_templates
 from core.input import click_position, click_global_position, drag_position, key_down, key_up

@@ -68,7 +68,7 @@ from tasks import (
     save_tasks,
     TASK_PRESETS,
 )
-from nodes import NodeGraph, TaskNode, remap_jump_targets
+from nodes import NodeGraph, remap_jump_targets
 from core.screen import get_window_rect
 from core.hotkey import GlobalHotkey
 from core.input import release_all_inputs
@@ -180,10 +180,6 @@ class CaptureOverlayMixin:
         if 0 <= index < len(tasks):
             return tasks[index]
         return None
-
-    def _capture_has_valid_step(self):
-        index = self._capture_index()
-        return 0 <= index < len(self._capture_task_list())
 
     # ---------- 子类可覆盖：收尾钩子 ----------
 
@@ -1401,9 +1397,6 @@ class BlueprintWireItem(QGraphicsPathItem):
             QPointF(base.x() + perpendicular.x() * arrow_half, base.y() + perpendicular.y() * arrow_half),
             QPointF(base.x() - perpendicular.x() * arrow_half, base.y() - perpendicular.y() * arrow_half),
         ])
-
-    def bend_positions(self):
-        return [(bend.x(), bend.y()) for bend in self.bends]
 
     def boundingRect(self):
         return super().boundingRect().adjusted(-14, -14, 14, 14)
@@ -4664,31 +4657,6 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         if all(value is not None for value in values) and values[2] > values[0] and values[3] > values[1]:
             return tuple(values)
         return self._parse_rect(self.match_rect_edit.text())
-
-    @Slot()
-    def choose_group_color(self):
-        selected_group_ids = self._selected_group_ids()
-        if selected_group_ids:
-            group_id = selected_group_ids[0]
-        elif 0 <= self.current_task_index < len(TASKS):
-            group_id = str(TASKS[self.current_task_index].get("group_id") or "group_default")
-        else:
-            return
-        mode = self.mode_combo.currentText() or "custom"
-        metadata = self.mode_group_metadata.setdefault(mode, {})
-        colors = metadata.setdefault("colors", {})
-        current = QColor(colors.get(group_id, "#e0f2fe"))
-        color = QColorDialog.getColor(current, self, "选择分组颜色")
-        if not color.isValid():
-            return
-        colors[group_id] = color.name()
-        for task in TASKS:
-            if str(task.get("group_id") or "group_default") == group_id:
-                task["group_color"] = color.name()
-        self._save_presets()
-        self.refresh_task_list()
-        self.select_task_index(self.current_task_index)
-
 
     def toggle_item(self, item, _column):
         index = self._task_index_from_item(item)

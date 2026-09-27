@@ -520,6 +520,27 @@ class CaptureOverlayMixin:
         self._capture_log(f"已将框选图片保存并绑定: {image_path}")
         self._capture_after_task_changed()
 
+
+    def _update_template_preview(self, templates):
+        """在编辑面板中显示第一个绑定模板的缩略图。
+
+        两个窗口此前各有一份；实测逻辑完全一致，仅文档字符串与空行不同。
+        此前该函数是空实现（只做清空并隐藏），导致 template_preview 永不显示内容。
+        """
+        names_hint, pixmap = _first_available_template_pixmap(templates)
+        if pixmap is None:
+            self.template_preview.setPixmap(QPixmap())
+            self.template_preview.setText("无模板预览")
+            self.template_preview.setVisible(False)
+            return
+        self.template_preview.setPixmap(pixmap.scaled(
+            self.template_preview.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        ))
+        self.template_preview.setText("")
+        self.template_preview.setToolTip(f"{names_hint}  {pixmap.width()}x{pixmap.height()}")
+        self.template_preview.setVisible(True)
     def select_template_file(self):
         """绑定图片对话框：选择 / 手动框选 / 预览 / 删除候选模板。
 
@@ -2074,10 +2095,6 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
         return set()
 
 
-
-
-
-
     def _group_descendants(self, group_id):
         children = self._group_children()
         result = []
@@ -2735,9 +2752,6 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
             self._clear_editor()
 
 
-
-
-
     def _load_editor_for_task(self, task):
         self.selected_label.setText(f"第 {self.current_index + 1} 步 · 类型: {task.get('type', 'normal')}")
         is_click_until = task.get("type") == "click_until_gone"
@@ -2974,44 +2988,6 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
         self.editor_actions.setVisible(False)
         self.group_form.setVisible(False)
         self.current_group_id = None
-
-    def _update_template_preview(self, templates):
-        """在编辑面板中显示第一个绑定模板的缩略图（蓝图窗口）。
-
-        此前该函数只做「清空并隐藏」，导致 template_preview 永远不显示内容。
-        """
-        names_hint, pixmap = _first_available_template_pixmap(templates)
-        if pixmap is None:
-            self.template_preview.setPixmap(QPixmap())
-            self.template_preview.setText("无模板预览")
-            self.template_preview.setVisible(False)
-            return
-        self.template_preview.setPixmap(pixmap.scaled(
-            self.template_preview.size(),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        ))
-        self.template_preview.setText("")
-        self.template_preview.setToolTip(f"{names_hint}  {pixmap.width()}x{pixmap.height()}")
-        self.template_preview.setVisible(True)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
     def _apply_editor(self):
@@ -4534,8 +4510,6 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         self._rebuild_special_form(task)
 
 
-
-
     def _on_group_expanded_changed(self, item):
         """把组的展开/折叠状态写入分组元数据并落盘。
 
@@ -4634,32 +4608,6 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         self.group_form.setVisible(False)
         self.current_group_id = None
 
-    def _update_template_preview(self, templates):
-        """在编辑面板中显示第一个绑定模板的缩略图（主窗口）。
-
-        此前该函数只做「清空并隐藏」，导致 template_preview 永远不显示内容。
-        """
-        names_hint, pixmap = _first_available_template_pixmap(templates)
-        if pixmap is None:
-            self.template_preview.setPixmap(QPixmap())
-            self.template_preview.setText("无模板预览")
-            self.template_preview.setVisible(False)
-            return
-        self.template_preview.setPixmap(pixmap.scaled(
-            self.template_preview.size(),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        ))
-        self.template_preview.setText("")
-        self.template_preview.setToolTip(f"{names_hint}  {pixmap.width()}x{pixmap.height()}")
-        self.template_preview.setVisible(True)
-
-    @Slot()
-
-
-
-
-
 
     def _current_match_rect(self):
         values = [self._int_value(editor.text()) for editor in (self.region_left_edit, self.region_top_edit, self.region_right_edit, self.region_bottom_edit)]
@@ -4690,16 +4638,6 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         self._save_presets()
         self.refresh_task_list()
         self.select_task_index(self.current_task_index)
-
-
-
-
-
-
-
-
-
-
 
 
     def toggle_item(self, item, _column):

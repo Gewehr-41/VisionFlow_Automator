@@ -21,6 +21,7 @@ import json
 import os
 import tempfile
 import unittest
+from copy import deepcopy
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -37,15 +38,23 @@ class PresetSaveCleanupTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self._orig_presets = tasks.PRESETS_FILE
+        self._orig_tasks = tasks.TASKS_FILE
         self._orig_save_presets = g.save_presets
+        self._orig_save_tasks = g.save_tasks
         tasks.PRESETS_FILE = os.path.join(self._tmp.name, "saved_presets.json")
+        tasks.TASKS_FILE = os.path.join(self._tmp.name, "saved_tasks.json")
         g.save_presets = tasks.save_presets
+        g.save_tasks = tasks.save_tasks
+        self._tasks_snapshot = deepcopy(g.TASKS)
         self.window = g.PySide6ScriptWindow()
 
     def tearDown(self):
         self.window.close()
         tasks.PRESETS_FILE = self._orig_presets
+        tasks.TASKS_FILE = self._orig_tasks
         g.save_presets = self._orig_save_presets
+        g.save_tasks = self._orig_save_tasks
+        g.TASKS[:] = self._tasks_snapshot
         self._tmp.cleanup()
 
     # ---------- 辅助 ----------

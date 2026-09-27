@@ -1934,14 +1934,24 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
             row.addWidget(widget, 1)
             recognition_layout.addLayout(row)
 
+        def add_coordinate_row(label, x_edit, y_edit):
+            """把 X/Y 两个短输入并排放在同一行，避免每个数字独占一整行。"""
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.addWidget(QLabel(label), 0)
+            row.addWidget(QLabel("X"), 0)
+            row.addWidget(x_edit, 1)
+            row.addWidget(QLabel("Y"), 0)
+            row.addWidget(y_edit, 1)
+            recognition_layout.addLayout(row)
+
         add_row("模板名:", self.template_edit)
         add_row("匹配阈值:", self.threshold_edit)
         add_row("超时(秒):", self.timeout_edit)
         add_row("完成后等待(秒):", self.after_wait_edit)
-        add_row("X偏移:", self.offset_x_edit)
-        add_row("Y偏移:", self.offset_y_edit)
-        add_row("点击X:", self.click_x_edit)
-        add_row("点击Y:", self.click_y_edit)
+        # X/Y 成对并排（此前 4 个坐标各占一行，输入框 529px 却只填一个短数字）
+        add_coordinate_row("偏移:", self.offset_x_edit, self.offset_y_edit)
+        add_coordinate_row("点击:", self.click_x_edit, self.click_y_edit)
         add_row("识别区域(左上,右下):", self.match_rect_edit)
 
         next_row = QHBoxLayout()
@@ -3890,14 +3900,8 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
             row.addWidget(widget, 1)
             recognition_layout.addLayout(row)
 
-        add_row("模板名:", self.template_edit)
-        add_row("X偏移:", self.offset_x_edit)
-        add_row("Y偏移:", self.offset_y_edit)
-        add_row("点击X:", self.click_x_edit)
-        add_row("点击Y:", self.click_y_edit)
-        add_row("匹配阈值(0-1):", self.threshold_edit)
-
         def add_coordinate_row(label, x_edit, y_edit):
+            """把 X/Y 两个短输入并排放在同一行，避免每个数字独占一整行。"""
             row = QHBoxLayout()
             row.setContentsMargins(0, 0, 0, 0)
             row.addWidget(QLabel(label), 0)
@@ -3906,6 +3910,12 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
             row.addWidget(QLabel("Y"), 0)
             row.addWidget(y_edit, 1)
             recognition_layout.addLayout(row)
+
+        add_row("模板名:", self.template_edit)
+        # X/Y 成对并排（此前 4 个坐标各占一行，输入框 529px 却只填一个短数字）
+        add_coordinate_row("偏移:", self.offset_x_edit, self.offset_y_edit)
+        add_coordinate_row("点击:", self.click_x_edit, self.click_y_edit)
+        add_row("匹配阈值(0-1):", self.threshold_edit)
 
         add_coordinate_row("左上:", self.region_left_edit, self.region_top_edit)
         add_coordinate_row("右下:", self.region_right_edit, self.region_bottom_edit)
@@ -5137,9 +5147,7 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         self.select_task_index(self.current_task_index)
         self.append_log(f"已应用第 {self.current_task_index + 1} 步修改。")
 
-    @Slot()
-
-
+    @staticmethod
     def _float_value(value, fallback):
         # 与蓝图窗口共用同一实现（此前 _float / _float_value 两份完全相同）
         return _to_float(value, fallback)

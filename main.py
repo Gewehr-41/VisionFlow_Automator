@@ -109,12 +109,29 @@ def find_leftmost_match(results, template_names):
     return best_name, best_center, best_conf
 
 
+def templates_for_names(template_names):
+    """只取出真正需要匹配的模板，避免每轮扫描整个模板库。
+
+    templates 是全局的 {模板名: 图像} 字典。wait_until_* / click_template_name
+    这类轮询只需 1 个或几个模板，却曾把整个字典传进 match_all_templates，
+    在多尺度下每轮会做「模板总数 × 尺度数」次 matchTemplate。
+    不存在的模板名会被忽略（与逐名查找失败的语义一致）。
+    """
+    names = normalize_template_names(template_names)
+    if not names:
+        return {}
+    return {name: templates[name] for name in names if name in templates}
+
+
 def wait_until_template_disappears(template_name, timeout=DEFAULT_TIMEOUT, poll_interval=DEFAULT_POLL_INTERVAL, stop_flag=None, threshold=THRESHOLD):
     """等待模板消失。"""
+    match_templates = templates_for_names(template_name)
+    if not match_templates:
+        return True
     start = time.time()
     while True:
         screen_img = capture_screen()
-        results = match_all_templates(screen_img, templates, threshold, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP, stop_flag=stop_flag)
+        results = match_all_templates(screen_img, match_templates, threshold, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP, stop_flag=stop_flag)
         center, _ = results.get(template_name, (None, -1.0))
         if center is None:
             return True
@@ -126,10 +143,13 @@ def wait_until_template_disappears(template_name, timeout=DEFAULT_TIMEOUT, poll_
 
 def wait_until_template_appears(template_name, timeout=DEFAULT_TIMEOUT, poll_interval=DEFAULT_POLL_INTERVAL, search_rect=None, stop_flag=None, threshold=THRESHOLD):
     """等待模板出现。"""
+    match_templates = templates_for_names(template_name)
+    if not match_templates:
+        return None, None
     start = time.time()
     while True:
         screen_img = capture_screen()
-        results = match_all_templates(screen_img, templates, threshold, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP, search_rect=search_rect, stop_flag=stop_flag)
+        results = match_all_templates(screen_img, match_templates, threshold, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP, search_rect=search_rect, stop_flag=stop_flag)
         center, conf = results.get(template_name, (None, -1.0))
         if center is not None:
             return center, conf
@@ -144,11 +164,14 @@ def wait_until_any_template_appears(template_names, timeout=DEFAULT_TIMEOUT, pol
     template_names = normalize_template_names(template_names)
     if not template_names:
         return None, None, -1.0
+    match_templates = templates_for_names(template_names)
+    if not match_templates:
+        return None, None, -1.0
 
     start = time.time()
     while True:
         screen_img = capture_screen()
-        results = match_all_templates(screen_img, templates, threshold, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP, search_rect=search_rect, stop_flag=stop_flag)
+        results = match_all_templates(screen_img, match_templates, threshold, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP, search_rect=search_rect, stop_flag=stop_flag)
         name, center, conf = find_first_match(results, template_names)
         if center is not None:
             return name, center, conf
@@ -167,12 +190,20 @@ def wait_for_step_result(task, template_name=None, next_template_names=None, tim
     effective_timeout = get_task_timeout(task) if timeout is None else float(timeout)
     start_time = time.time()
     next_names = normalize_template_names(next_template_names or task.get("next_template") or task.get("next_templates"))
+    # 本函数只关心「当前模板是否消失」和「下一模板是否出现」，
+    # 因此只匹配这两个集合，而不是整个模板库。
+    needed_names = list(next_names)
+    if template_name and template_name not in needed_names:
+        needed_names.append(template_name)
+    match_templates = templates_for_names(needed_names)
+    if not match_templates:
+        return True
     baseline = capture_screen()
     screen_changed = False
 
     while True:
         current = capture_screen()
-        results = match_all_templates(current, templates, get_task_threshold(task), USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP, search_rect=task.get("next_match_rect") or task.get("next_search_rect"), stop_flag=stop_flag)
+        results = match_all_templates(current, match_templates, get_task_threshold(task), USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP, search_rect=task.get("next_match_rect") or task.get("next_search_rect"), stop_flag=stop_flag)
         diff = float(np.mean(np.abs(current.astype(np.int16) - baseline.astype(np.int16))))
         if diff > 2.0:
             screen_changed = True
@@ -463,19 +494,22 @@ def match_task_templates(task, screen_img, template_names=None, stop_flag=None):
 
 def click_template_name(template_name, offset=(0, 0), timeout=DEFAULT_TIMEOUT, fallback_position=None, log_callback=None, poll_interval=DEFAULT_POLL_INTERVAL, stop_flag=None, threshold=THRESHOLD):
     """持续扫描目标模板；记录点击点只用于点击，四元组参数才用于限制识别区域。"""
+    # 全程只关心这一个模板，按名取出即可，不必每轮扫描整个模板库。
+    match_templates = templates_for_names([template_name])
     start_time = time.time()
     while True:
         if stop_flag is not None and stop_flag.is_set():
             return False
         if timeout > 0 and (time.time() - start_time) > timeout:
             break
+        if not match_templates:
+            break
 
         screen_img = capture_screen()
         if isinstance(fallback_position, (list, tuple)) and len(fallback_position) >= 4:
-            match_templates = {template_name: templates[template_name]} if template_name in templates else {}
             results = match_in_expanding_rect(screen_img, match_templates, fallback_position, threshold, stop_flag=stop_flag)
         else:
-            results = match_all_templates(screen_img, templates, threshold, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP, stop_flag=stop_flag)
+            results = match_all_templates(screen_img, match_templates, threshold, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP, stop_flag=stop_flag)
         center, conf = results.get(template_name, (None, -1.0))
         if center is not None:
             click_target = None
@@ -741,7 +775,7 @@ def execute_condition_task(task, stop_flag=None, log_callback=None):
     if not template_names:
         raise ValueError("条件节点必须配置 condition_template。")
     screen_img = capture_screen()
-    results = match_all_templates(screen_img, templates, get_task_threshold(task), USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP, search_rect=task.get("search_rect"), stop_flag=stop_flag)
+    results = match_all_templates(screen_img, templates_for_names(template_names), get_task_threshold(task), USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP, search_rect=task.get("search_rect"), stop_flag=stop_flag)
     matches = [results.get(name, (None, -1.0))[0] is not None for name in template_names]
     operator = str(task.get("condition_operator", "any" if len(matches) > 1 else "all")).lower()
     if operator == "all":

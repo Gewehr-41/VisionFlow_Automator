@@ -131,6 +131,13 @@ def match_all_templates(screen_img, templates, threshold=THRESHOLD,
                     if max_val > best_val:
                         best_val = float(max_val)
         else:
+            # 单尺度模式：模板比截图还大时 cv2.matchTemplate 会抛异常，
+            # 这里与多尺度分支保持一致，跳过该模板而不是让整个识别崩掉。
+            template_height, template_width = match_template.shape[:2]
+            if template_height > match_screen.shape[0] or template_width > match_screen.shape[1]:
+                results[name] = (None, -1.0)
+                continue
+
             result = cv2.matchTemplate(match_screen, match_template, cv2.TM_CCOEFF_NORMED)
             ys, xs = np.where(result >= threshold)
             for y, x in zip(ys, xs):

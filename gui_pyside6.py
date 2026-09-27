@@ -84,6 +84,34 @@ def _jump_index_map(old_indices_in_new_order):
     return {old_index: new_index for new_index, old_index in enumerate(old_indices_in_new_order)}
 
 
+def _load_template_pixmap(template_name):
+    """按模板名从 icons 目录读取 PNG，找不到或读取失败时返回 None。"""
+    if not template_name:
+        return None
+    name = os.path.splitext(str(template_name).strip())[0]
+    if not name:
+        return None
+    path = os.path.join(config.ICON_DIR, f"{name}.png")
+    if not os.path.isfile(path):
+        return None
+    pixmap = QPixmap(path)
+    return pixmap if not pixmap.isNull() else None
+
+
+def _first_available_template_pixmap(templates, limit=12):
+    """从逗号分隔的模板名列表中取第一个能找到图片的，返回 (名字, pixmap)。
+
+    高级步骤可以绑定多个候选模板，显示第一个即可；但若第一个恰好缺图，
+    继续往后找比直接显示空白更有用。limit 用于避免模板名很多时逐个探盘。
+    """
+    names = [item.strip() for item in str(templates or "").replace("，", ",").split(",") if item.strip()]
+    for name in names[:limit]:
+        pixmap = _load_template_pixmap(name)
+        if pixmap is not None:
+            return name, pixmap
+    return (names[0] if names else None), None
+
+
 class CaptureOverlay(QWidget):
     clicked = Signal(int, int)
     region_selected = Signal(int, int, int, int)
@@ -2128,9 +2156,24 @@ class BlueprintWindow(QMainWindow):
         self.current_group_id = None
 
     def _update_template_preview(self, templates):
-        self.template_preview.setPixmap(QPixmap())
+        """在编辑面板中显示第一个绑定模板的缩略图（蓝图窗口）。
+
+        此前该函数只做「清空并隐藏」，导致 template_preview 永远不显示内容。
+        """
+        names_hint, pixmap = _first_available_template_pixmap(templates)
+        if pixmap is None:
+            self.template_preview.setPixmap(QPixmap())
+            self.template_preview.setText("无模板预览")
+            self.template_preview.setVisible(False)
+            return
+        self.template_preview.setPixmap(pixmap.scaled(
+            self.template_preview.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        ))
         self.template_preview.setText("")
-        self.template_preview.setVisible(False)
+        self.template_preview.setToolTip(f"{names_hint}  {pixmap.width()}x{pixmap.height()}")
+        self.template_preview.setVisible(True)
 
     def _capture_rect(self):
         if config.USE_WINDOW_MODE and config.TARGET_WINDOW_TITLE:
@@ -4055,6 +4098,9 @@ class PySide6ScriptWindow(QMainWindow):
         self.after_wait_edit.setText(str(task.get("after_wait", 0.25)))
         self.click_checkbox.setChecked(bool(task.get("click", True)))
         self.match_required_checkbox.setChecked(bool(task.get("click_requires_match", True)))
+        # 「可选步骤（跳过）」此前从不加载，导致界面显示与实际值不一致（切换步骤时残留上一步的勾选）。
+        # 回写逻辑（_apply_editor）本来就读取该控件，这里补上加载。
+        self.optional_checkbox.setChecked(bool(task.get("optional", not bool(task.get("required", True)))))
         self.offset_x_edit.setText(str(task.get("offset_x", task.get("offset", (0, 0))[0] if isinstance(task.get("offset"), (list, tuple)) else 0)))
         self.offset_y_edit.setText(str(task.get("offset_y", task.get("offset", (0, 0))[1] if isinstance(task.get("offset"), (list, tuple)) else 0)))
         click_position = task.get("click_position")
@@ -4188,6 +4234,7 @@ class PySide6ScriptWindow(QMainWindow):
         self.click_until_stop_on_change_checkbox.setChecked(False)
         self.click_checkbox.setChecked(False)
         self.match_required_checkbox.setChecked(False)
+        self.optional_checkbox.setChecked(False)
         self.enabled_checkbox.setChecked(False)
         self.offset_x_edit.clear()
         self.offset_y_edit.clear()
@@ -4204,9 +4251,24 @@ class PySide6ScriptWindow(QMainWindow):
         self.current_group_id = None
 
     def _update_template_preview(self, templates):
-        self.template_preview.setPixmap(QPixmap())
+        """在编辑面板中显示第一个绑定模板的缩略图（主窗口）。
+
+        此前该函数只做「清空并隐藏」，导致 template_preview 永远不显示内容。
+        """
+        names_hint, pixmap = _first_available_template_pixmap(templates)
+        if pixmap is None:
+            self.template_preview.setPixmap(QPixmap())
+            self.template_preview.setText("无模板预览")
+            self.template_preview.setVisible(False)
+            return
+        self.template_preview.setPixmap(pixmap.scaled(
+            self.template_preview.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        ))
         self.template_preview.setText("")
-        self.template_preview.setVisible(False)
+        self.template_preview.setToolTip(f"{names_hint}  {pixmap.width()}x{pixmap.height()}")
+        self.template_preview.setVisible(True)
 
     @Slot()
     def select_template_file(self):
@@ -5352,6 +5414,12 @@ class PySide6ScriptWindow(QMainWindow):
         self.apply_button.setEnabled(not running)
         for button in self.preset_buttons:
             button.setEnabled(not running)
+        # 任务操作按钮（全选/清空/上移/下移/新增组/新增步骤/复制/删除/打开蓝图）
+        # 此前在运行期间仍可点击，会造成界面与正在执行的内容漂移、并在运行中落盘。
+        for button in self.task_buttons:
+            button.setEnabled(not running)
+        # 目标窗口在启动时已写入 config，运行中修改不会生效，禁用以免误导。
+        self.window_combo.setEnabled(not running)
         self.start_button.setEnabled(not running)
         self.start_current_button.setEnabled(not running)
         self.stop_button.setEnabled(running)

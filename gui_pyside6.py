@@ -526,7 +526,15 @@ class CaptureOverlayMixin:
 
         两个窗口此前各有一份；实测逻辑完全一致，仅文档字符串与空行不同。
         此前该函数是空实现（只做清空并隐藏），导致 template_preview 永不显示内容。
+
+        注意：窗口构建期间不显示。refresh_task_list() 会自动选中第一个步骤并
+        触发本函数，若不设此保护，启动瞬间就会弹出第一张模板缩略图。
         """
+        if getattr(self, "_initializing", False):
+            self.template_preview.setPixmap(QPixmap())
+            self.template_preview.setText("无模板预览")
+            self.template_preview.setVisible(False)
+            return
         names_hint, pixmap = _first_available_template_pixmap(templates)
         if pixmap is None:
             self.template_preview.setPixmap(QPixmap())
@@ -3615,6 +3623,8 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         self.current_task_index = -1
         self.current_group_id = None
         self._pending_group_color = None
+        # 构建期标志：期间不显示模板预览（详见 __init__ 末尾的说明）
+        self._initializing = True
         self._task_list_commit_scheduled = False
         self.status_text = "待机"
         self.deleted_preset_names = set(DELETED_PRESET_NAMES)
@@ -3629,6 +3639,10 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         self.refresh_window_list()
         self.refresh_task_list()
         self.stop_requested.connect(self.stop_script)
+        # 构建期结束：此后才允许显示模板预览。
+        # refresh_task_list() 会自动选中第一个步骤并触发 _update_template_preview，
+        # 若不设此标志，启动瞬间编辑面板就会显示第一张模板缩略图。
+        self._initializing = False
 
     def _build_ui(self):
         root = QWidget(self)

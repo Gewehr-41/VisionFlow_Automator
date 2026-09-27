@@ -255,5 +255,47 @@ class GuiFeatureTests(unittest.TestCase):
         self.assertTrue(all(kind == "group" for kind, _ in entries))
 
 
+    # ---------- 模板预览：构建期不显示 ----------
+
+    def test_preview_is_hidden_during_window_construction(self):
+        """启动时不应自动显示模板缩略图。
+
+        refresh_task_list() 会自动选中第一个步骤并触发 _update_template_preview，
+        若不设构建期保护，启动瞬间编辑面板就会显示第一张模板缩略图。
+        """
+        self.assertFalse(
+            self.window.template_preview.isVisible(),
+            "窗口刚构建完，模板预览不应可见",
+        )
+
+    def test_initializing_flag_is_cleared_after_construction(self):
+        self.assertTrue(hasattr(self.window, "_initializing"))
+        self.assertFalse(self.window._initializing, "构建结束后应清除构建期标志")
+
+    def test_preview_displays_after_explicit_user_load(self):
+        """构建结束后，加载步骤应正常显示预览。"""
+        item = self.window._find_task_item(0)
+        self.assertIsNotNone(item, "应能找到第一个步骤的树项")
+        self.window.load_selected_task(item, None)
+        self.assertTrue(
+            self.window.template_preview.isVisible(),
+            "用户选择步骤后应显示模板预览",
+        )
+        self.assertTrue(self.window.template_preview.toolTip(), "应显示模板名与尺寸")
+
+    def test_preview_hidden_when_template_missing(self):
+        item = self.window._find_task_item(0)
+        self.window.load_selected_task(item, None)
+        self.window._update_template_preview("绝不存在的模板名")
+        self.assertFalse(self.window.template_preview.isVisible())
+
+
+class PreviewSuppressionTests(unittest.TestCase):
+    """构建期标志在未设置时不应误伤（蓝图窗口等其它 QWidget 子类）。"""
+
+    def test_missing_flag_defaults_to_showing(self):
+        self.assertFalse(getattr(g.CaptureOverlayMixin(), "_initializing", False))
+
+
 if __name__ == "__main__":
     unittest.main()

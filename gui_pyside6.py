@@ -617,6 +617,300 @@ class CaptureOverlayMixin:
         layout.addWidget(save_btn)
         dialog.exec()
 
+    def open_detour_editor(self):
+        task = self._capture_current_task()
+        if task is None:
+            return
+        if task.get("type", "normal") not in ("normal", "advanced"):
+            return
+
+        detour_steps = task.setdefault("detour_steps", [])
+        if not isinstance(detour_steps, list):
+            detour_steps = []
+            task["detour_steps"] = detour_steps
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("迂回设置")
+        dialog.resize(560, 500)
+        layout = QVBoxLayout(dialog)
+
+        enabled_checkbox = QCheckBox("启用迂回")
+        enabled_checkbox.setChecked(bool(task.get("detour_enabled", False)))
+        layout.addWidget(enabled_checkbox)
+
+        jump_options = ["不跳转"]
+        jump_option_numbers = {}
+        for task_index, main_task in enumerate(self._capture_task_list()):
+            description = main_task.get("description") or main_task.get("template") or main_task.get("type", "步骤")
+            option = f"{task_index + 1}. {description}"
+            jump_options.append(option)
+            jump_option_numbers[option] = task_index + 1
+
+        def jump_label(target_number):
+            if target_number is None:
+                return "不跳转"
+            for option, option_number in jump_option_numbers.items():
+                try:
+                    if option_number == int(target_number):
+                        return option
+                except (TypeError, ValueError):
+                    continue
+            return "不跳转"
+
+        jump_combo = QComboBox()
+        jump_combo.addItems(jump_options)
+        jump_combo.setCurrentText(jump_label(task.get("detour_jump_to")))
+        success_jump_combo = QComboBox()
+        success_jump_combo.addItems(jump_options)
+        success_jump_combo.setCurrentText(jump_label(task.get("detour_success_jump_to")))
+
+        jump_row = QHBoxLayout()
+        jump_row.addWidget(QLabel("未识别时跳到:"))
+        jump_row.addWidget(jump_combo, 1)
+        layout.addLayout(jump_row)
+        success_row = QHBoxLayout()
+        success_row.addWidget(QLabel("识别成功后跳到:"))
+        success_row.addWidget(success_jump_combo, 1)
+        layout.addLayout(success_row)
+
+        step_list = QListWidget()
+        layout.addWidget(step_list, 1)
+
+        def refresh_list():
+            step_list.clear()
+            for step in detour_steps:
+                desc = step.get("description") or step.get("template") or step.get("type", "步骤")
+                step_list.addItem(f"{step.get('type', 'normal')} - {desc}")
+
+        refresh_list()
+
+        add_row = QHBoxLayout()
+        type_combo = QComboBox()
+        type_combo.addItems(["normal", "advanced", "loop", "key_press", "keyboard_move", "drag", "click_until_gone", "delay"])
+        add_row.addWidget(type_combo, 1)
+        add_button = QPushButton("新增步骤")
+        add_button.clicked.connect(lambda: (detour_steps.append({"type": type_combo.currentText() or "normal"}), refresh_list()))
+        add_row.addWidget(add_button)
+        layout.addLayout(add_row)
+
+        action_row = QHBoxLayout()
+        config_button = QPushButton("设置")
+
+        def configure_step():
+            row = step_list.currentRow()
+            if 0 <= row < len(detour_steps):
+                self._configure_detour_step(detour_steps[row], dialog)
+                refresh_list()
+
+        config_button.clicked.connect(configure_step)
+        action_row.addWidget(config_button)
+        delete_button = QPushButton("删除")
+
+        def delete_step():
+            row = step_list.currentRow()
+            if 0 <= row < len(detour_steps):
+                detour_steps.pop(row)
+                refresh_list()
+
+        delete_button.clicked.connect(delete_step)
+        action_row.addWidget(delete_button)
+        action_row.addStretch(1)
+        layout.addLayout(action_row)
+
+        def save():
+            task["detour_enabled"] = enabled_checkbox.isChecked()
+            task["detour_steps"] = detour_steps
+            task["detour_jump_to"] = jump_option_numbers.get(jump_combo.currentText())
+            task["detour_success_jump_to"] = jump_option_numbers.get(success_jump_combo.currentText())
+            self._capture_after_task_changed()
+            self._capture_log("已保存迂回设置。")
+            dialog.accept()
+
+        save_button = QPushButton("保存迂回设置")
+        save_button.clicked.connect(save)
+        layout.addWidget(save_button)
+        dialog.exec()
+
+    def _configure_detour_step(self, detour_task, parent=None):
+        dialog = QDialog(parent or self)
+        dialog.setWindowTitle("迂回步骤设置")
+        dialog.resize(460, 440)
+        layout = QVBoxLayout(dialog)
+        form = QFormLayout()
+
+        type_combo = QComboBox()
+        type_combo.addItems(["normal", "advanced", "loop", "key_press", "keyboard_move", "drag", "click_until_gone", "delay"])
+        type_combo.setCurrentText(str(detour_task.get("type", "normal")))
+        form.addRow("类型:", type_combo)
+
+        description_edit = QLineEdit(str(detour_task.get("description", "")))
+        form.addRow("描述:", description_edit)
+
+        def hide_dialogs():
+            dialog.hide()
+            if isinstance(parent, QDialog):
+                parent.hide()
+
+        def restore_dialogs():
+            if isinstance(parent, QDialog):
+                parent.show()
+                parent.raise_()
+                parent.activateWindow()
+            dialog.show()
+            dialog.raise_()
+            dialog.activateWindow()
+
+        template_edit = QLineEdit(str(detour_task.get("template", "")))
+        template_widget = QWidget()
+        template_row = QHBoxLayout(template_widget)
+        template_row.setContentsMargins(0, 0, 0, 0)
+        template_row.addWidget(template_edit, 1)
+        bind_button = QPushButton("绑定图片")
+
+        def bind_image():
+            path, _ = QFileDialog.getOpenFileName(dialog, "选择要绑定的图片", config.ICON_DIR, "PNG 图片 (*.png)")
+            if path:
+                template_edit.setText(os.path.splitext(os.path.basename(path))[0])
+
+        bind_button.clicked.connect(bind_image)
+        template_row.addWidget(bind_button)
+        capture_template_button = QPushButton("手动框选")
+
+        def capture_template():
+            hide_dialogs()
+
+            def on_captured(result):
+                restore_dialogs()
+                if result[0] == "image":
+                    template_edit.setText(result[1])
+
+            self._begin_dialog_capture("image", on_captured)
+
+        capture_template_button.clicked.connect(capture_template)
+        template_row.addWidget(capture_template_button)
+        form.addRow("模板:", template_widget)
+
+        click_x_edit = QLineEdit(str(detour_task.get("click_x", "")))
+        click_y_edit = QLineEdit(str(detour_task.get("click_y", "")))
+        click_widget = QWidget()
+        click_row = QHBoxLayout(click_widget)
+        click_row.setContentsMargins(0, 0, 0, 0)
+        click_row.addWidget(QLabel("X"))
+        click_row.addWidget(click_x_edit, 1)
+        click_row.addWidget(QLabel("Y"))
+        click_row.addWidget(click_y_edit, 1)
+        click_capture_button = QPushButton("记录点击点")
+
+        def capture_click():
+            hide_dialogs()
+
+            def on_captured(result):
+                restore_dialogs()
+                if result[0] == "click":
+                    click_x_edit.setText(str(result[1]))
+                    click_y_edit.setText(str(result[2]))
+
+            self._begin_dialog_capture("click", on_captured)
+
+        click_capture_button.clicked.connect(capture_click)
+        click_row.addWidget(click_capture_button)
+        form.addRow("点击坐标:", click_widget)
+
+        duration_edit = QLineEdit(str(detour_task.get("duration", detour_task.get("hold_time", ""))))
+        form.addRow("时长/按住(秒):", duration_edit)
+
+        key_edit = QLineEdit(str(detour_task.get("key", "")))
+        form.addRow("按键:", key_edit)
+
+        match_rect_edit = QLineEdit(str(detour_task.get("match_rect", "") or ""))
+        match_rect_widget = QWidget()
+        match_rect_row = QHBoxLayout(match_rect_widget)
+        match_rect_row.setContentsMargins(0, 0, 0, 0)
+        match_rect_row.addWidget(match_rect_edit, 1)
+        region_capture_button = QPushButton("框选识别区域")
+
+        def capture_region():
+            hide_dialogs()
+
+            def on_captured(result):
+                restore_dialogs()
+                if result[0] == "region":
+                    left, top, right, bottom = result[1]
+                    match_rect_edit.setText(f"{left}, {top}, {right}, {bottom}")
+
+            self._begin_dialog_capture("region", on_captured)
+
+        region_capture_button.clicked.connect(capture_region)
+        match_rect_row.addWidget(region_capture_button)
+        form.addRow("识别区域(左上,右下):", match_rect_widget)
+
+        move_steps_edit = QPlainTextEdit()
+        move_steps_edit.setMaximumHeight(90)
+        move_steps = detour_task.get("move_steps") or []
+        move_steps_edit.setPlainText("\n".join(f"{step.get('key', 'W')} {step.get('duration', 1.0)}" for step in move_steps if isinstance(step, dict)))
+        form.addRow("移动步骤(每行: 按键 时长):", move_steps_edit)
+
+        layout.addLayout(form)
+
+        def save():
+            detour_task["type"] = type_combo.currentText()
+            description = description_edit.text().strip()
+            if description:
+                detour_task["description"] = description
+            template = template_edit.text().strip()
+            if template:
+                detour_task["template"] = template
+            else:
+                detour_task.pop("template", None)
+            click_x = self._int(click_x_edit.text())
+            click_y = self._int(click_y_edit.text())
+            if click_x is not None and click_y is not None:
+                detour_task["click_x"] = click_x
+                detour_task["click_y"] = click_y
+                detour_task["click_position"] = (click_x, click_y)
+            else:
+                detour_task.pop("click_x", None)
+                detour_task.pop("click_y", None)
+                detour_task.pop("click_position", None)
+            duration = self._float(duration_edit.text(), 0.0)
+            if duration:
+                if detour_task.get("type") == "key_press":
+                    detour_task["hold_time"] = duration
+                else:
+                    detour_task["duration"] = duration
+            key = key_edit.text().strip()
+            if key:
+                detour_task["key"] = key
+            rect = self._parse_rect_text(match_rect_edit.text())
+            if rect is not None:
+                detour_task["match_rect"] = rect
+                detour_task["search_rect"] = rect
+                detour_task["match_rects"] = [rect]
+            else:
+                detour_task.pop("match_rect", None)
+                detour_task.pop("search_rect", None)
+                detour_task.pop("match_rects", None)
+            steps = []
+            for line in move_steps_edit.toPlainText().splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split()
+                step_key = parts[0]
+                try:
+                    step_duration = float(parts[1].rstrip("sS")) if len(parts) > 1 else 1.0
+                except ValueError:
+                    step_duration = 1.0
+                steps.append({"key": step_key, "duration": step_duration})
+            if steps:
+                detour_task["move_steps"] = steps
+            dialog.accept()
+
+        save_button = QPushButton("保存")
+        save_button.clicked.connect(save)
+        layout.addWidget(save_button)
+        dialog.exec()
+
 
 class CaptureOverlay(QWidget):
     clicked = Signal(int, int)
@@ -2718,301 +3012,7 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
 
 
 
-    def open_detour_editor(self):
-        if not 0 <= self.current_index < len(self.tasks):
-            return
-        task = self.tasks[self.current_index]
-        if task.get("type", "normal") not in ("normal", "advanced"):
-            return
 
-        detour_steps = task.setdefault("detour_steps", [])
-        if not isinstance(detour_steps, list):
-            detour_steps = []
-            task["detour_steps"] = detour_steps
-
-        dialog = QDialog(self)
-        dialog.setWindowTitle("迂回设置")
-        dialog.resize(560, 500)
-        layout = QVBoxLayout(dialog)
-
-        enabled_checkbox = QCheckBox("启用迂回")
-        enabled_checkbox.setChecked(bool(task.get("detour_enabled", False)))
-        layout.addWidget(enabled_checkbox)
-
-        jump_options = ["不跳转"]
-        jump_option_numbers = {}
-        for task_index, main_task in enumerate(self.tasks):
-            description = main_task.get("description") or main_task.get("template") or main_task.get("type", "步骤")
-            option = f"{task_index + 1}. {description}"
-            jump_options.append(option)
-            jump_option_numbers[option] = task_index + 1
-
-        def jump_label(target_number):
-            if target_number is None:
-                return "不跳转"
-            for option, option_number in jump_option_numbers.items():
-                try:
-                    if option_number == int(target_number):
-                        return option
-                except (TypeError, ValueError):
-                    continue
-            return "不跳转"
-
-        jump_combo = QComboBox()
-        jump_combo.addItems(jump_options)
-        jump_combo.setCurrentText(jump_label(task.get("detour_jump_to")))
-        success_jump_combo = QComboBox()
-        success_jump_combo.addItems(jump_options)
-        success_jump_combo.setCurrentText(jump_label(task.get("detour_success_jump_to")))
-
-        jump_row = QHBoxLayout()
-        jump_row.addWidget(QLabel("未识别时跳到:"))
-        jump_row.addWidget(jump_combo, 1)
-        layout.addLayout(jump_row)
-        success_row = QHBoxLayout()
-        success_row.addWidget(QLabel("识别成功后跳到:"))
-        success_row.addWidget(success_jump_combo, 1)
-        layout.addLayout(success_row)
-
-        step_list = QListWidget()
-        layout.addWidget(step_list, 1)
-
-        def refresh_list():
-            step_list.clear()
-            for step in detour_steps:
-                desc = step.get("description") or step.get("template") or step.get("type", "步骤")
-                step_list.addItem(f"{step.get('type', 'normal')} - {desc}")
-
-        refresh_list()
-
-        add_row = QHBoxLayout()
-        type_combo = QComboBox()
-        type_combo.addItems(["normal", "advanced", "loop", "key_press", "keyboard_move", "drag", "click_until_gone", "delay"])
-        add_row.addWidget(type_combo, 1)
-        add_button = QPushButton("新增步骤")
-        add_button.clicked.connect(lambda: (detour_steps.append({"type": type_combo.currentText() or "normal"}), refresh_list()))
-        add_row.addWidget(add_button)
-        layout.addLayout(add_row)
-
-        action_row = QHBoxLayout()
-        config_button = QPushButton("设置")
-
-        def configure_step():
-            row = step_list.currentRow()
-            if 0 <= row < len(detour_steps):
-                self._configure_detour_step(detour_steps[row], dialog)
-                refresh_list()
-
-        config_button.clicked.connect(configure_step)
-        action_row.addWidget(config_button)
-        delete_button = QPushButton("删除")
-
-        def delete_step():
-            row = step_list.currentRow()
-            if 0 <= row < len(detour_steps):
-                detour_steps.pop(row)
-                refresh_list()
-
-        delete_button.clicked.connect(delete_step)
-        action_row.addWidget(delete_button)
-        action_row.addStretch(1)
-        layout.addLayout(action_row)
-
-        def save():
-            task["detour_enabled"] = enabled_checkbox.isChecked()
-            task["detour_steps"] = detour_steps
-            task["detour_jump_to"] = jump_option_numbers.get(jump_combo.currentText())
-            task["detour_success_jump_to"] = jump_option_numbers.get(success_jump_combo.currentText())
-            self._push_history()
-            self.refresh()
-            self._select_node(self.current_index)
-            self.save_layout()
-            dialog.accept()
-
-        save_button = QPushButton("保存迂回设置")
-        save_button.clicked.connect(save)
-        layout.addWidget(save_button)
-        dialog.exec()
-
-    def _configure_detour_step(self, detour_task, parent=None):
-        dialog = QDialog(parent or self)
-        dialog.setWindowTitle("迂回步骤设置")
-        dialog.resize(460, 440)
-        layout = QVBoxLayout(dialog)
-        form = QFormLayout()
-
-        type_combo = QComboBox()
-        type_combo.addItems(["normal", "advanced", "loop", "key_press", "keyboard_move", "drag", "click_until_gone", "delay"])
-        type_combo.setCurrentText(str(detour_task.get("type", "normal")))
-        form.addRow("类型:", type_combo)
-
-        description_edit = QLineEdit(str(detour_task.get("description", "")))
-        form.addRow("描述:", description_edit)
-
-        def hide_dialogs():
-            dialog.hide()
-            if isinstance(parent, QDialog):
-                parent.hide()
-
-        def restore_dialogs():
-            if isinstance(parent, QDialog):
-                parent.show()
-                parent.raise_()
-                parent.activateWindow()
-            dialog.show()
-            dialog.raise_()
-            dialog.activateWindow()
-
-        template_edit = QLineEdit(str(detour_task.get("template", "")))
-        template_widget = QWidget()
-        template_row = QHBoxLayout(template_widget)
-        template_row.setContentsMargins(0, 0, 0, 0)
-        template_row.addWidget(template_edit, 1)
-        bind_button = QPushButton("绑定图片")
-
-        def bind_image():
-            path, _ = QFileDialog.getOpenFileName(dialog, "选择要绑定的图片", config.ICON_DIR, "PNG 图片 (*.png)")
-            if path:
-                template_edit.setText(os.path.splitext(os.path.basename(path))[0])
-
-        bind_button.clicked.connect(bind_image)
-        template_row.addWidget(bind_button)
-        capture_template_button = QPushButton("手动框选")
-
-        def capture_template():
-            hide_dialogs()
-
-            def on_captured(result):
-                restore_dialogs()
-                if result[0] == "image":
-                    template_edit.setText(result[1])
-
-            self._begin_dialog_capture("image", on_captured)
-
-        capture_template_button.clicked.connect(capture_template)
-        template_row.addWidget(capture_template_button)
-        form.addRow("模板:", template_widget)
-
-        click_x_edit = QLineEdit(str(detour_task.get("click_x", "")))
-        click_y_edit = QLineEdit(str(detour_task.get("click_y", "")))
-        click_widget = QWidget()
-        click_row = QHBoxLayout(click_widget)
-        click_row.setContentsMargins(0, 0, 0, 0)
-        click_row.addWidget(QLabel("X"))
-        click_row.addWidget(click_x_edit, 1)
-        click_row.addWidget(QLabel("Y"))
-        click_row.addWidget(click_y_edit, 1)
-        click_capture_button = QPushButton("记录点击点")
-
-        def capture_click():
-            hide_dialogs()
-
-            def on_captured(result):
-                restore_dialogs()
-                if result[0] == "click":
-                    click_x_edit.setText(str(result[1]))
-                    click_y_edit.setText(str(result[2]))
-
-            self._begin_dialog_capture("click", on_captured)
-
-        click_capture_button.clicked.connect(capture_click)
-        click_row.addWidget(click_capture_button)
-        form.addRow("点击坐标:", click_widget)
-
-        duration_edit = QLineEdit(str(detour_task.get("duration", detour_task.get("hold_time", ""))))
-        form.addRow("时长/按住(秒):", duration_edit)
-
-        key_edit = QLineEdit(str(detour_task.get("key", "")))
-        form.addRow("按键:", key_edit)
-
-        match_rect_edit = QLineEdit(str(detour_task.get("match_rect", "") or ""))
-        match_rect_widget = QWidget()
-        match_rect_row = QHBoxLayout(match_rect_widget)
-        match_rect_row.setContentsMargins(0, 0, 0, 0)
-        match_rect_row.addWidget(match_rect_edit, 1)
-        region_capture_button = QPushButton("框选识别区域")
-
-        def capture_region():
-            hide_dialogs()
-
-            def on_captured(result):
-                restore_dialogs()
-                if result[0] == "region":
-                    left, top, right, bottom = result[1]
-                    match_rect_edit.setText(f"{left}, {top}, {right}, {bottom}")
-
-            self._begin_dialog_capture("region", on_captured)
-
-        region_capture_button.clicked.connect(capture_region)
-        match_rect_row.addWidget(region_capture_button)
-        form.addRow("识别区域(左上,右下):", match_rect_widget)
-
-        move_steps_edit = QPlainTextEdit()
-        move_steps_edit.setMaximumHeight(90)
-        move_steps = detour_task.get("move_steps") or []
-        move_steps_edit.setPlainText("\n".join(f"{step.get('key', 'W')} {step.get('duration', 1.0)}" for step in move_steps if isinstance(step, dict)))
-        form.addRow("移动步骤(每行: 按键 时长):", move_steps_edit)
-
-        layout.addLayout(form)
-
-        def save():
-            detour_task["type"] = type_combo.currentText()
-            description = description_edit.text().strip()
-            if description:
-                detour_task["description"] = description
-            template = template_edit.text().strip()
-            if template:
-                detour_task["template"] = template
-            else:
-                detour_task.pop("template", None)
-            click_x = self._int(click_x_edit.text())
-            click_y = self._int(click_y_edit.text())
-            if click_x is not None and click_y is not None:
-                detour_task["click_x"] = click_x
-                detour_task["click_y"] = click_y
-                detour_task["click_position"] = (click_x, click_y)
-            else:
-                detour_task.pop("click_x", None)
-                detour_task.pop("click_y", None)
-                detour_task.pop("click_position", None)
-            duration = self._float(duration_edit.text(), 0.0)
-            if duration:
-                if detour_task.get("type") == "key_press":
-                    detour_task["hold_time"] = duration
-                else:
-                    detour_task["duration"] = duration
-            key = key_edit.text().strip()
-            if key:
-                detour_task["key"] = key
-            rect = self._parse_rect_text(match_rect_edit.text())
-            if rect is not None:
-                detour_task["match_rect"] = rect
-                detour_task["search_rect"] = rect
-                detour_task["match_rects"] = [rect]
-            else:
-                detour_task.pop("match_rect", None)
-                detour_task.pop("search_rect", None)
-                detour_task.pop("match_rects", None)
-            steps = []
-            for line in move_steps_edit.toPlainText().splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                parts = line.split()
-                step_key = parts[0]
-                try:
-                    step_duration = float(parts[1].rstrip("sS")) if len(parts) > 1 else 1.0
-                except ValueError:
-                    step_duration = 1.0
-                steps.append({"key": step_key, "duration": step_duration})
-            if steps:
-                detour_task["move_steps"] = steps
-            dialog.accept()
-
-        save_button = QPushButton("保存")
-        save_button.clicked.connect(save)
-        layout.addWidget(save_button)
-        dialog.exec()
 
     def _apply_editor(self):
         if not (0 <= self.current_index < len(self.tasks)):
@@ -5160,303 +5160,8 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         self.append_log(f"已应用第 {self.current_task_index + 1} 步修改。")
 
     @Slot()
-    def open_detour_editor(self):
-        if not 0 <= self.current_task_index < len(TASKS):
-            return
-        task = TASKS[self.current_task_index]
-        if task.get("type", "normal") not in ("normal", "advanced"):
-            return
 
-        detour_steps = task.setdefault("detour_steps", [])
-        if not isinstance(detour_steps, list):
-            detour_steps = []
-            task["detour_steps"] = detour_steps
 
-        dialog = QDialog(self)
-        dialog.setWindowTitle("迂回设置")
-        dialog.resize(560, 500)
-        layout = QVBoxLayout(dialog)
-
-        enabled_checkbox = QCheckBox("启用迂回")
-        enabled_checkbox.setChecked(bool(task.get("detour_enabled", False)))
-        layout.addWidget(enabled_checkbox)
-
-        jump_options = ["不跳转"]
-        jump_option_numbers = {}
-        for task_index, main_task in enumerate(TASKS):
-            description = main_task.get("description") or main_task.get("template") or main_task.get("type", "步骤")
-            option = f"{task_index + 1}. {description}"
-            jump_options.append(option)
-            jump_option_numbers[option] = task_index + 1
-
-        def jump_label(target_number):
-            if target_number is None:
-                return "不跳转"
-            for option, option_number in jump_option_numbers.items():
-                try:
-                    if option_number == int(target_number):
-                        return option
-                except (TypeError, ValueError):
-                    continue
-            return "不跳转"
-
-        jump_combo = QComboBox()
-        jump_combo.addItems(jump_options)
-        jump_combo.setCurrentText(jump_label(task.get("detour_jump_to")))
-        success_jump_combo = QComboBox()
-        success_jump_combo.addItems(jump_options)
-        success_jump_combo.setCurrentText(jump_label(task.get("detour_success_jump_to")))
-
-        jump_row = QHBoxLayout()
-        jump_row.addWidget(QLabel("未识别时跳到:"))
-        jump_row.addWidget(jump_combo, 1)
-        layout.addLayout(jump_row)
-        success_row = QHBoxLayout()
-        success_row.addWidget(QLabel("识别成功后跳到:"))
-        success_row.addWidget(success_jump_combo, 1)
-        layout.addLayout(success_row)
-
-        step_list = QListWidget()
-        layout.addWidget(step_list, 1)
-
-        def refresh_list():
-            step_list.clear()
-            for step in detour_steps:
-                desc = step.get("description") or step.get("template") or step.get("type", "步骤")
-                step_list.addItem(f"{step.get('type', 'normal')} - {desc}")
-
-        refresh_list()
-
-        add_row = QHBoxLayout()
-        type_combo = QComboBox()
-        type_combo.addItems(["normal", "advanced", "loop", "key_press", "keyboard_move", "drag", "click_until_gone", "delay"])
-        add_row.addWidget(type_combo, 1)
-        add_button = QPushButton("新增步骤")
-        add_button.clicked.connect(lambda: (detour_steps.append({"type": type_combo.currentText() or "normal"}), refresh_list()))
-        add_row.addWidget(add_button)
-        layout.addLayout(add_row)
-
-        action_row = QHBoxLayout()
-        config_button = QPushButton("设置")
-
-        def configure_step():
-            row = step_list.currentRow()
-            if 0 <= row < len(detour_steps):
-                self._configure_detour_step(detour_steps[row], dialog)
-                refresh_list()
-
-        config_button.clicked.connect(configure_step)
-        action_row.addWidget(config_button)
-        delete_button = QPushButton("删除")
-
-        def delete_step():
-            row = step_list.currentRow()
-            if 0 <= row < len(detour_steps):
-                detour_steps.pop(row)
-                refresh_list()
-
-        delete_button.clicked.connect(delete_step)
-        action_row.addWidget(delete_button)
-        action_row.addStretch(1)
-        layout.addLayout(action_row)
-
-        def save():
-            task["detour_enabled"] = enabled_checkbox.isChecked()
-            task["detour_steps"] = detour_steps
-            task["detour_jump_to"] = jump_option_numbers.get(jump_combo.currentText())
-            task["detour_success_jump_to"] = jump_option_numbers.get(success_jump_combo.currentText())
-            self.save_current_tasks()
-            self.refresh_task_list()
-            self.select_task_index(self.current_task_index)
-            self.append_log("已保存迂回设置。")
-            dialog.accept()
-
-        save_button = QPushButton("保存迂回设置")
-        save_button.clicked.connect(save)
-        layout.addWidget(save_button)
-        dialog.exec()
-
-    def _configure_detour_step(self, detour_task, parent=None):
-        dialog = QDialog(parent or self)
-        dialog.setWindowTitle("迂回步骤设置")
-        dialog.resize(460, 440)
-        layout = QVBoxLayout(dialog)
-        form = QFormLayout()
-
-        type_combo = QComboBox()
-        type_combo.addItems(["normal", "advanced", "loop", "key_press", "keyboard_move", "drag", "click_until_gone", "delay"])
-        type_combo.setCurrentText(str(detour_task.get("type", "normal")))
-        form.addRow("类型:", type_combo)
-
-        description_edit = QLineEdit(str(detour_task.get("description", "")))
-        form.addRow("描述:", description_edit)
-
-        def hide_dialogs():
-            dialog.hide()
-            if isinstance(parent, QDialog):
-                parent.hide()
-
-        def restore_dialogs():
-            if isinstance(parent, QDialog):
-                parent.show()
-                parent.raise_()
-                parent.activateWindow()
-            dialog.show()
-            dialog.raise_()
-            dialog.activateWindow()
-
-        template_edit = QLineEdit(str(detour_task.get("template", "")))
-        template_widget = QWidget()
-        template_row = QHBoxLayout(template_widget)
-        template_row.setContentsMargins(0, 0, 0, 0)
-        template_row.addWidget(template_edit, 1)
-        bind_button = QPushButton("绑定图片")
-
-        def bind_image():
-            path, _ = QFileDialog.getOpenFileName(dialog, "选择要绑定的图片", config.ICON_DIR, "PNG 图片 (*.png)")
-            if path:
-                template_edit.setText(os.path.splitext(os.path.basename(path))[0])
-
-        bind_button.clicked.connect(bind_image)
-        template_row.addWidget(bind_button)
-        capture_template_button = QPushButton("手动框选")
-
-        def capture_template():
-            hide_dialogs()
-
-            def on_captured(result):
-                restore_dialogs()
-                if result[0] == "image":
-                    template_edit.setText(result[1])
-
-            self._begin_dialog_capture("image", on_captured)
-
-        capture_template_button.clicked.connect(capture_template)
-        template_row.addWidget(capture_template_button)
-        form.addRow("模板:", template_widget)
-
-        click_x_edit = QLineEdit(str(detour_task.get("click_x", "")))
-        click_y_edit = QLineEdit(str(detour_task.get("click_y", "")))
-        click_widget = QWidget()
-        click_row = QHBoxLayout(click_widget)
-        click_row.setContentsMargins(0, 0, 0, 0)
-        click_row.addWidget(QLabel("X"))
-        click_row.addWidget(click_x_edit, 1)
-        click_row.addWidget(QLabel("Y"))
-        click_row.addWidget(click_y_edit, 1)
-        click_capture_button = QPushButton("记录点击点")
-
-        def capture_click():
-            hide_dialogs()
-
-            def on_captured(result):
-                restore_dialogs()
-                if result[0] == "click":
-                    click_x_edit.setText(str(result[1]))
-                    click_y_edit.setText(str(result[2]))
-
-            self._begin_dialog_capture("click", on_captured)
-
-        click_capture_button.clicked.connect(capture_click)
-        click_row.addWidget(click_capture_button)
-        form.addRow("点击坐标:", click_widget)
-
-        duration_edit = QLineEdit(str(detour_task.get("duration", detour_task.get("hold_time", ""))))
-        form.addRow("时长/按住(秒):", duration_edit)
-
-        key_edit = QLineEdit(str(detour_task.get("key", "")))
-        form.addRow("按键:", key_edit)
-
-        match_rect_edit = QLineEdit(str(detour_task.get("match_rect", "") or ""))
-        match_rect_widget = QWidget()
-        match_rect_row = QHBoxLayout(match_rect_widget)
-        match_rect_row.setContentsMargins(0, 0, 0, 0)
-        match_rect_row.addWidget(match_rect_edit, 1)
-        region_capture_button = QPushButton("框选识别区域")
-
-        def capture_region():
-            hide_dialogs()
-
-            def on_captured(result):
-                restore_dialogs()
-                if result[0] == "region":
-                    left, top, right, bottom = result[1]
-                    match_rect_edit.setText(f"{left}, {top}, {right}, {bottom}")
-
-            self._begin_dialog_capture("region", on_captured)
-
-        region_capture_button.clicked.connect(capture_region)
-        match_rect_row.addWidget(region_capture_button)
-        form.addRow("识别区域(左上,右下):", match_rect_widget)
-
-        move_steps_edit = QPlainTextEdit()
-        move_steps_edit.setMaximumHeight(90)
-        move_steps = detour_task.get("move_steps") or []
-        move_steps_edit.setPlainText("\n".join(f"{step.get('key', 'W')} {step.get('duration', 1.0)}" for step in move_steps if isinstance(step, dict)))
-        form.addRow("移动步骤(每行: 按键 时长):", move_steps_edit)
-
-        layout.addLayout(form)
-
-        def save():
-            detour_task["type"] = type_combo.currentText()
-            description = description_edit.text().strip()
-            if description:
-                detour_task["description"] = description
-            template = template_edit.text().strip()
-            if template:
-                detour_task["template"] = template
-            else:
-                detour_task.pop("template", None)
-            click_x = self._int_value(click_x_edit.text())
-            click_y = self._int_value(click_y_edit.text())
-            if click_x is not None and click_y is not None:
-                detour_task["click_x"] = click_x
-                detour_task["click_y"] = click_y
-                detour_task["click_position"] = (click_x, click_y)
-            else:
-                detour_task.pop("click_x", None)
-                detour_task.pop("click_y", None)
-                detour_task.pop("click_position", None)
-            duration = self._float_value(duration_edit.text(), 0.0)
-            if duration:
-                if detour_task.get("type") == "key_press":
-                    detour_task["hold_time"] = duration
-                else:
-                    detour_task["duration"] = duration
-            key = key_edit.text().strip()
-            if key:
-                detour_task["key"] = key
-            rect = self._parse_rect(match_rect_edit.text())
-            if rect is not None:
-                detour_task["match_rect"] = rect
-                detour_task["search_rect"] = rect
-                detour_task["match_rects"] = [rect]
-            else:
-                detour_task.pop("match_rect", None)
-                detour_task.pop("search_rect", None)
-                detour_task.pop("match_rects", None)
-            steps = []
-            for line in move_steps_edit.toPlainText().splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                parts = line.split()
-                step_key = parts[0]
-                try:
-                    step_duration = float(parts[1].rstrip("sS")) if len(parts) > 1 else 1.0
-                except ValueError:
-                    step_duration = 1.0
-                steps.append({"key": step_key, "duration": step_duration})
-            if steps:
-                detour_task["move_steps"] = steps
-            dialog.accept()
-
-        save_button = QPushButton("保存")
-        save_button.clicked.connect(save)
-        layout.addWidget(save_button)
-        dialog.exec()
-
-    @staticmethod
     def _float_value(value, fallback):
         # 与蓝图窗口共用同一实现（此前 _float / _float_value 两份完全相同）
         return _to_float(value, fallback)

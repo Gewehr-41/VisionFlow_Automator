@@ -408,6 +408,82 @@ class CaptureMixinContractTests(unittest.TestCase):
         bp.close()
 
 
+    # ---------- 迂回编辑器（也已统一到 mixin）----------
+
+    def test_detour_editor_methods_come_from_mixin(self):
+        for name in ("open_detour_editor", "_configure_detour_step"):
+            with self.subTest(method=name):
+                self.assertIs(
+                    getattr(g.PySide6ScriptWindow, name), getattr(g.CaptureOverlayMixin, name),
+                    f"{name} 应直接复用 mixin 实现",
+                )
+                self.assertIs(
+                    getattr(g.BlueprintWindow, name), getattr(g.CaptureOverlayMixin, name),
+                    f"{name} 在蓝图窗口也应复用 mixin 实现",
+                )
+
+    def test_open_detour_editor_returns_early_without_current_task(self):
+        self.window.current_task_index = -1
+        with mock.patch.object(g.QDialog, "exec", side_effect=AssertionError("不应打开对话框")):
+            self.window.open_detour_editor()
+
+    def test_open_detour_editor_returns_early_for_unsupported_type(self):
+        self.window.current_task_index = 0
+        original = g.TASKS[0].get("type")
+        g.TASKS[0]["type"] = "key_press"     # 只有 normal / advanced 支持迂回
+        try:
+            with mock.patch.object(g.QDialog, "exec", side_effect=AssertionError("不应打开对话框")):
+                self.window.open_detour_editor()
+        finally:
+            g.TASKS[0]["type"] = original
+
+    def test_open_detour_editor_creates_detour_steps_for_normal_task(self):
+        self.window.current_task_index = 0
+        g.TASKS[0]["type"] = "normal"
+        g.TASKS[0].pop("detour_steps", None)
+        with mock.patch.object(g.QDialog, "exec", return_value=0):
+            self.window.open_detour_editor()
+        self.assertIsInstance(g.TASKS[0].get("detour_steps"), list,
+                              "normal 步骤应初始化 detour_steps")
+
+    def test_open_detour_editor_repairs_non_list_detour_steps(self):
+        self.window.current_task_index = 0
+        g.TASKS[0]["type"] = "normal"
+        g.TASKS[0]["detour_steps"] = "坏数据"
+        with mock.patch.object(g.QDialog, "exec", return_value=0):
+            self.window.open_detour_editor()
+        self.assertIsInstance(g.TASKS[0]["detour_steps"], list)
+
+    def test_configure_detour_step_builds_dialog_and_saves(self):
+        from PySide6.QtWidgets import QPushButton
+
+        step = {
+            "type": "normal",
+            "description": "子步骤",
+            "template": "auto",
+            "click_x": 11,
+            "click_y": 22,
+            "match_rect": (1, 2, 3, 4),
+        }
+
+        def fake_exec(dialog_self):
+            for button in dialog_self.findChildren(QPushButton):
+                if button.text() == "保存":
+                    button.click()
+                    break
+            return 0
+
+        with mock.patch.object(g.QDialog, "exec", fake_exec):
+            self.window._configure_detour_step(step, None)
+
+        self.assertEqual(step["type"], "normal")
+        self.assertEqual(step["description"], "子步骤")
+        self.assertEqual(step["template"], "auto")
+        self.assertEqual(step["click_x"], 11)
+        self.assertEqual(step["click_y"], 22)
+        self.assertEqual(step["match_rect"], (1, 2, 3, 4))
+
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -3878,45 +3878,14 @@
   ],
   "测试": [
     {
-      "type": "normal",
-      "mode": "custom",
-      "template": "captured_8f3d31d799",
-      "timeout": 5.0,
-      "click": true,
-      "offset": [
-        0,
-        0
-      ],
-      "after_wait": 0.25,
-      "wait_for": "time",
-      "wait_timeout": 2.5,
-      "required": true,
-      "description": "新增普通步骤",
-      "id": "b514fbd4-5acb-434d-b943-5958898b1e88",
+      "id": "1af0415f-b780-4ae9-b8d4-81e5c5545a25",
+      "type": "keyboard_move",
+      "mode": "测试",
       "enabled": true,
-      "match_rects": [
-        [
-          272,
-          275,
-          318,
-          323
-        ]
-      ],
-      "match_rect": [
-        272,
-        275,
-        318,
-        323
-      ],
-      "search_rect": [
-        272,
-        275,
-        318,
-        323
-      ],
-      "next_template": null,
-      "click_requires_match": true,
-      "optional": false
+      "template": "",
+      "description": "新增keyboard_move步骤",
+      "click": false,
+      "required": true
     }
   ],
   "__deleted__": [

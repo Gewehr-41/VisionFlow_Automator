@@ -3999,26 +3999,6 @@
         "group_default": []
       }
     },
-    "导出测试": {
-      "names": {
-        "group_default": "刷主线/活动关卡"
-      },
-      "colors": {
-        "group_default": "#eaf1ff"
-      },
-      "expanded": {
-        "group_default": true
-      },
-      "order": [
-        "group_default"
-      ],
-      "parents": {
-        "group_default": null
-      },
-      "children": {
-        "group_default": []
-      }
-    },
     "追放周回": {
       "names": {
         "group_190d8440": "首领挑战",
@@ -4067,44 +4047,6 @@
       },
       "children": {
         "group_35fda057": []
-      }
-    },
-    "2": {
-      "names": {
-        "group_37b807c3_copy": "每日任务 复制",
-        "group_896c3838_copy": "领取每日礼包 复制",
-        "group_c9dda062_copy": "领取每日礼包 复制",
-        "group_8f247b3d_copy": "领取巡录 复制"
-      },
-      "colors": {
-        "group_37b807c3_copy": "#eab308",
-        "group_896c3838_copy": "#06b6d4",
-        "group_c9dda062_copy": "#16a34a",
-        "group_8f247b3d_copy": "#f97316"
-      },
-      "expanded": {
-        "group_37b807c3_copy": true,
-        "group_896c3838_copy": false,
-        "group_c9dda062_copy": false,
-        "group_8f247b3d_copy": true
-      },
-      "order": [
-        "group_37b807c3_copy",
-        "group_896c3838_copy",
-        "group_c9dda062_copy",
-        "group_8f247b3d_copy"
-      ],
-      "parents": {
-        "group_37b807c3_copy": null,
-        "group_896c3838_copy": null,
-        "group_c9dda062_copy": null,
-        "group_8f247b3d_copy": null
-      },
-      "children": {
-        "group_37b807c3_copy": [],
-        "group_896c3838_copy": [],
-        "group_c9dda062_copy": [],
-        "group_8f247b3d_copy": []
       }
     }
   }

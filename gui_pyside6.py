@@ -203,6 +203,110 @@ class CaptureOverlayMixin:
     def _capture_clear_extra_region_widgets(self):
         """清空识别区域时一并清理的额外控件（主窗口有 6 个分段区域输入框）。"""
 
+    # ---------- 分组编辑：子类必须覆盖的数据访问 ----------
+
+    def _group_metadata_for_current_mode(self):
+        """返回当前模式下用于读写分组设置的元数据字典。
+
+        主窗口直接操作 mode_group_metadata[当前预设]；
+        蓝图窗口操作自己持有一份副本（由 save_blueprint_state 写回）。
+        """
+        return {}
+
+    def _group_default_color(self):
+        """组颜色的缺省值（两个窗口的配色不同）。"""
+        return "#e0f2fe"
+
+    def _group_color_button_text_color(self):
+        """组颜色按钮上的文字颜色（深浅配色不同）。"""
+        return "#1f2937"
+
+    def _group_color_dialog_title(self):
+        return "选择分组颜色"
+
+    # ---------- 分组编辑：子类可覆盖的收尾钩子 ----------
+
+    def _group_after_editor_applied(self, group_id, name):
+        """应用组设置后的收尾动作（保存方式与日志各自不同）。"""
+
+    def _group_hide_editor_groups(self):
+        """切到组设置面板时，需要隐藏的其它编辑分组。"""
+
+    # ---------- 分组编辑：共享实现 ----------
+
+    def _group_names(self):
+        value = self._group_metadata_for_current_mode().get("names", {})
+        return value if isinstance(value, dict) else {}
+
+    def _group_colors(self):
+        value = self._group_metadata_for_current_mode().get("colors", {})
+        return value if isinstance(value, dict) else {}
+
+    def _group_order(self):
+        value = self._group_metadata_for_current_mode().get("order", [])
+        return value if isinstance(value, list) else []
+
+    def _group_children(self):
+        value = self._group_metadata_for_current_mode().get("children", {})
+        return value if isinstance(value, dict) else {}
+
+    def _group_parents(self):
+        value = self._group_metadata_for_current_mode().get("parents", {})
+        return value if isinstance(value, dict) else {}
+
+    def _update_group_color_button(self, group_id):
+        colors = self._group_colors()
+        color = self._pending_group_color or colors.get(str(group_id), self._group_default_color())
+        self.group_color_button.setText(color)
+        self.group_color_button.setStyleSheet(
+            f"background: {color}; color: {self._group_color_button_text_color()};"
+        )
+
+    def _pick_group_color(self):
+        if self.current_group_id is None:
+            return
+        colors = self._group_colors()
+        current = QColor(
+            self._pending_group_color or colors.get(self.current_group_id, self._group_default_color())
+        )
+        color = QColorDialog.getColor(current, self, self._group_color_dialog_title())
+        if color.isValid():
+            self._pending_group_color = color.name()
+            self._update_group_color_button(self.current_group_id)
+
+    def _load_editor_for_group(self, group_id):
+        self.current_group_id = str(group_id)
+        self._capture_set_no_current_task()
+        self.selected_label.setText("组设置")
+        self.template_preview.setVisible(False)
+        self.editor_actions.setVisible(False)
+        self.recognition_group.setVisible(False)
+        self._group_hide_editor_groups()
+        self.group_form.setVisible(True)
+        self.group_name_edit.setText(self._group_names().get(str(group_id), str(group_id)))
+        self._pending_group_color = None
+        self._update_group_color_button(str(group_id))
+
+    def _capture_set_no_current_task(self):
+        """把「当前步骤」置为无效（两个窗口的属性名不同）。"""
+
+    def _apply_group_editor(self):
+        if self.current_group_id is None:
+            return
+        group_id = self.current_group_id
+        name = self.group_name_edit.text().strip() or group_id
+        metadata = self._group_metadata_for_current_mode()
+        metadata.setdefault("names", {})[group_id] = name
+        if self._pending_group_color is not None:
+            metadata.setdefault("colors", {})[group_id] = self._pending_group_color
+        for task in self._capture_task_list():
+            if str(task.get("group_id") or "group_default") == group_id:
+                task["group_name"] = name
+                if self._pending_group_color is not None:
+                    task["group_color"] = self._pending_group_color
+        self._group_after_editor_applied(group_id, name)
+        self._load_editor_for_group(group_id)
+
     # ---------- 共享实现 ----------
 
     def _capture_rect(self):
@@ -415,6 +519,103 @@ class CaptureOverlayMixin:
         self._capture_notify_next_template_widgets(image_name)
         self._capture_log(f"已将框选图片保存并绑定: {image_path}")
         self._capture_after_task_changed()
+
+    def select_template_file(self):
+        """绑定图片对话框：选择 / 手动框选 / 预览 / 删除候选模板。
+
+        两个窗口此前各有一份 90 行的实现，实测差异只有 3 处索引访问
+        （self.tasks[self.current_index] 对比 TASKS[self.current_task_index]），
+        现已统一到这里，通过 _capture_current_task() 消除差异。
+        """
+        task = self._capture_current_task()
+        if task is None:
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("绑定图片")
+        dialog.resize(420, 440)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel("绑定图片操作"))
+
+        image_list = QListWidget()
+        layout.addWidget(image_list, 1)
+
+        current = self.template_edit.text()
+        if task.get("type") == "click_until_gone":
+            current = self.click_until_template_edit.text()
+        for name in [item.strip() for item in current.replace("，", ",").split(",") if item.strip()]:
+            image_list.addItem(name)
+
+        def choose_images():
+            paths, _ = QFileDialog.getOpenFileNames(dialog, "选择要绑定的图片", config.ICON_DIR, "PNG 图片 (*.png)")
+            if not paths:
+                return
+            existing = [image_list.item(i).text() for i in range(image_list.count())]
+            for path in paths:
+                name = os.path.splitext(os.path.basename(path))[0]
+                if name not in existing:
+                    image_list.addItem(name)
+                    existing.append(name)
+
+        def capture_image():
+            dialog.hide()
+
+            def on_captured(result):
+                dialog.show()
+                dialog.raise_()
+                dialog.activateWindow()
+                if result[0] == "image":
+                    name = result[1]
+                    existing = [image_list.item(i).text() for i in range(image_list.count())]
+                    if name not in existing:
+                        image_list.addItem(name)
+
+            self._begin_dialog_capture("image", on_captured)
+
+        def preview_image():
+            row = image_list.currentRow()
+            if row < 0:
+                return
+            name = image_list.item(row).text()
+            matches = glob.glob(os.path.join(config.ICON_DIR, f"{name}.*"))
+            if matches:
+                os.startfile(matches[0])
+            else:
+                QMessageBox.information(dialog, "预览绑定图片", "当前步骤没有找到可预览的绑定图片。")
+
+        def remove_image():
+            row = image_list.currentRow()
+            if row >= 0:
+                image_list.takeItem(row)
+
+        buttons_row = QHBoxLayout()
+        choose_btn = QPushButton("选择图片")
+        choose_btn.clicked.connect(choose_images)
+        capture_btn = QPushButton("手动框选图片")
+        capture_btn.clicked.connect(capture_image)
+        preview_btn = QPushButton("预览绑定图片")
+        preview_btn.clicked.connect(preview_image)
+        remove_btn = QPushButton("删除选中图片")
+        remove_btn.clicked.connect(remove_image)
+        buttons_row.addWidget(choose_btn)
+        buttons_row.addWidget(capture_btn)
+        buttons_row.addWidget(preview_btn)
+        buttons_row.addWidget(remove_btn)
+        layout.addLayout(buttons_row)
+
+        def save():
+            values = [image_list.item(i).text() for i in range(image_list.count())]
+            template_value = ", ".join(values)
+            if task.get("type") == "click_until_gone":
+                self.click_until_template_edit.setText(template_value)
+            else:
+                self.template_edit.setText(template_value)
+                self._update_template_preview(template_value)
+            dialog.accept()
+
+        save_btn = QPushButton("保存")
+        save_btn.clicked.connect(save)
+        layout.addWidget(save_btn)
+        dialog.exec()
 
 
 class CaptureOverlay(QWidget):
@@ -1525,6 +1726,32 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
         if parent is not None:
             parent.show()
 
+    # ---------- 分组编辑钩子（组编辑的共享实现在 CaptureOverlayMixin 中）----------
+
+    def _group_metadata_for_current_mode(self):
+        return self.group_metadata
+
+    def _group_default_color(self):
+        return "#38bdf8"
+
+    def _group_color_button_text_color(self):
+        return "#ffffff"
+
+    def _group_color_dialog_title(self):
+        return "选择组颜色"
+
+    def _capture_set_no_current_task(self):
+        self.current_index = -1
+
+    def _group_hide_editor_groups(self):
+        self._clear_special_form()
+        self.click_until_group.setVisible(False)
+
+    def _group_after_editor_applied(self, group_id, name):
+        self._push_history()
+        self.refresh()
+        self.save_layout()
+
     def _restore_snapshot(self, snapshot):
         self.tasks[:] = deepcopy(snapshot["tasks"])
         self.layout_data.clear()
@@ -1552,25 +1779,10 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
             return {str(gid) for gid, value in expanded.items() if value is False}
         return set()
 
-    def _group_children(self):
-        value = self.group_metadata.get("children", {})
-        return value if isinstance(value, dict) else {}
 
-    def _group_parents(self):
-        value = self.group_metadata.get("parents", {})
-        return value if isinstance(value, dict) else {}
 
-    def _group_names(self):
-        value = self.group_metadata.get("names", {})
-        return value if isinstance(value, dict) else {}
 
-    def _group_colors(self):
-        value = self.group_metadata.get("colors", {})
-        return value if isinstance(value, dict) else {}
 
-    def _group_order(self):
-        value = self.group_metadata.get("order", [])
-        return value if isinstance(value, list) else []
 
     def _group_descendants(self, group_id):
         children = self._group_children()
@@ -2228,51 +2440,9 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
         else:
             self._clear_editor()
 
-    def _load_editor_for_group(self, group_id):
-        self.current_group_id = str(group_id)
-        self.current_index = -1
-        self.selected_label.setText("组设置")
-        self.editor_actions.setVisible(False)
-        self.template_preview.setVisible(False)
-        self.recognition_group.setVisible(False)
-        self._clear_special_form()
-        self.click_until_group.setVisible(False)
-        self.group_form.setVisible(True)
-        self.group_name_edit.setText(self._group_names().get(str(group_id), str(group_id)))
-        self._pending_group_color = None
-        self._update_group_color_button(str(group_id))
 
-    def _update_group_color_button(self, group_id):
-        color = self._pending_group_color or self._group_colors().get(str(group_id), "#38bdf8")
-        self.group_color_button.setText(color)
-        self.group_color_button.setStyleSheet(f"background: {color}; color: #ffffff;")
 
-    def _pick_group_color(self):
-        if self.current_group_id is None:
-            return
-        current = QColor(self._pending_group_color or self._group_colors().get(self.current_group_id, "#38bdf8"))
-        color = QColorDialog.getColor(current, self, "选择组颜色")
-        if color.isValid():
-            self._pending_group_color = color.name()
-            self._update_group_color_button(self.current_group_id)
 
-    def _apply_group_editor(self):
-        if self.current_group_id is None:
-            return
-        self._push_history()
-        group_id = self.current_group_id
-        name = self.group_name_edit.text().strip() or group_id
-        self.group_metadata.setdefault("names", {})[group_id] = name
-        if self._pending_group_color is not None:
-            self.group_metadata.setdefault("colors", {})[group_id] = self._pending_group_color
-        for task in self.tasks:
-            if str(task.get("group_id") or "group_default") == group_id:
-                task["group_name"] = name
-                if self._pending_group_color is not None:
-                    task["group_color"] = self._pending_group_color
-        self.refresh()
-        self.save_layout()
-        self._load_editor_for_group(group_id)
 
     def _load_editor_for_task(self, task):
         self.selected_label.setText(f"第 {self.current_index + 1} 步 · 类型: {task.get('type', 'normal')}")
@@ -2547,95 +2717,6 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
 
 
 
-    def select_template_file(self):
-        if not 0 <= self.current_index < len(self.tasks):
-            return
-        dialog = QDialog(self)
-        dialog.setWindowTitle("绑定图片")
-        dialog.resize(420, 440)
-        layout = QVBoxLayout(dialog)
-        layout.addWidget(QLabel("绑定图片操作"))
-
-        image_list = QListWidget()
-        layout.addWidget(image_list, 1)
-
-        current = self.template_edit.text()
-        if self.tasks[self.current_index].get("type") == "click_until_gone":
-            current = self.click_until_template_edit.text()
-        for name in [item.strip() for item in current.replace("，", ",").split(",") if item.strip()]:
-            image_list.addItem(name)
-
-        def choose_images():
-            paths, _ = QFileDialog.getOpenFileNames(dialog, "选择要绑定的图片", config.ICON_DIR, "PNG 图片 (*.png)")
-            if not paths:
-                return
-            existing = [image_list.item(i).text() for i in range(image_list.count())]
-            for path in paths:
-                name = os.path.splitext(os.path.basename(path))[0]
-                if name not in existing:
-                    image_list.addItem(name)
-                    existing.append(name)
-
-        def capture_image():
-            dialog.hide()
-
-            def on_captured(result):
-                dialog.show()
-                dialog.raise_()
-                dialog.activateWindow()
-                if result[0] == "image":
-                    name = result[1]
-                    existing = [image_list.item(i).text() for i in range(image_list.count())]
-                    if name not in existing:
-                        image_list.addItem(name)
-
-            self._begin_dialog_capture("image", on_captured)
-
-        def preview_image():
-            row = image_list.currentRow()
-            if row < 0:
-                return
-            name = image_list.item(row).text()
-            matches = glob.glob(os.path.join(config.ICON_DIR, f"{name}.*"))
-            if matches:
-                os.startfile(matches[0])
-            else:
-                QMessageBox.information(dialog, "预览绑定图片", "当前步骤没有找到可预览的绑定图片。")
-
-        def remove_image():
-            row = image_list.currentRow()
-            if row >= 0:
-                image_list.takeItem(row)
-
-        buttons_row = QHBoxLayout()
-        choose_btn = QPushButton("选择图片")
-        choose_btn.clicked.connect(choose_images)
-        capture_btn = QPushButton("手动框选图片")
-        capture_btn.clicked.connect(capture_image)
-        preview_btn = QPushButton("预览绑定图片")
-        preview_btn.clicked.connect(preview_image)
-        remove_btn = QPushButton("删除选中图片")
-        remove_btn.clicked.connect(remove_image)
-        buttons_row.addWidget(choose_btn)
-        buttons_row.addWidget(capture_btn)
-        buttons_row.addWidget(preview_btn)
-        buttons_row.addWidget(remove_btn)
-        layout.addLayout(buttons_row)
-
-        def save():
-            values = [image_list.item(i).text() for i in range(image_list.count())]
-            template_value = ", ".join(values)
-            if self.tasks[self.current_index].get("type") == "click_until_gone":
-                self.click_until_template_edit.setText(template_value)
-            else:
-                self.template_edit.setText(template_value)
-                self._update_template_preview(template_value)
-            dialog.accept()
-
-        save_btn = QPushButton("保存")
-        save_btn.clicked.connect(save)
-        layout.addWidget(save_btn)
-        dialog.exec()
 
     def open_detour_editor(self):
         if not 0 <= self.current_index < len(self.tasks):
@@ -4452,63 +4533,9 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         self.region_center_y_edit.setText(str((region_values[1] + region_values[3]) // 2) if all(isinstance(value, int) for value in region_values) else "")
         self._rebuild_special_form(task)
 
-    def _load_editor_for_group(self, group_id):
-        self.current_group_id = str(group_id)
-        self.current_task_index = -1
-        self.selected_label.setText("组设置")
-        self.template_preview.setVisible(False)
-        self.editor_actions.setVisible(False)
-        self.recognition_group.setVisible(False)
-        self.special_group.setVisible(False)
-        self.group_form.setVisible(True)
-        mode = self.mode_combo.currentText() or "custom"
-        metadata = self.mode_group_metadata.setdefault(mode, {})
-        names = metadata.get("names", {}) if isinstance(metadata, dict) else {}
-        self.group_name_edit.setText(names.get(str(group_id), str(group_id)))
-        self._pending_group_color = None
-        self._update_group_color_button(str(group_id))
 
-    def _update_group_color_button(self, group_id):
-        mode = self.mode_combo.currentText() or "custom"
-        metadata = self.mode_group_metadata.setdefault(mode, {})
-        colors = metadata.get("colors", {}) if isinstance(metadata, dict) else {}
-        color = self._pending_group_color or colors.get(str(group_id), "#e0f2fe")
-        self.group_color_button.setText(color)
-        self.group_color_button.setStyleSheet(f"background: {color}; color: #1f2937;")
 
-    def _pick_group_color(self):
-        if self.current_group_id is None:
-            return
-        mode = self.mode_combo.currentText() or "custom"
-        metadata = self.mode_group_metadata.setdefault(mode, {})
-        colors = metadata.get("colors", {}) if isinstance(metadata, dict) else {}
-        current = QColor(self._pending_group_color or colors.get(self.current_group_id, "#e0f2fe"))
-        color = QColorDialog.getColor(current, self, "选择分组颜色")
-        if color.isValid():
-            self._pending_group_color = color.name()
-            self._update_group_color_button(self.current_group_id)
 
-    def _apply_group_editor(self):
-        if self.current_group_id is None:
-            return
-        group_id = self.current_group_id
-        name = self.group_name_edit.text().strip() or group_id
-        mode = self.mode_combo.currentText() or "custom"
-        metadata = self.mode_group_metadata.setdefault(mode, {})
-        metadata.setdefault("names", {})[group_id] = name
-        if self._pending_group_color is not None:
-            metadata.setdefault("colors", {})[group_id] = self._pending_group_color
-        for task in TASKS:
-            if str(task.get("group_id") or "group_default") == group_id:
-                task["group_name"] = name
-                if self._pending_group_color is not None:
-                    task["group_color"] = self._pending_group_color
-        self._save_presets()
-        self.refresh_task_list()
-        self._load_editor_for_group(group_id)
-        self.append_log(f"已应用组设置: {name}")
-
-    @Slot(QTreeWidgetItem)
     def _on_group_expanded_changed(self, item):
         """把组的展开/折叠状态写入分组元数据并落盘。
 
@@ -4628,97 +4655,7 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         self.template_preview.setVisible(True)
 
     @Slot()
-    def select_template_file(self):
-        if not 0 <= self.current_task_index < len(TASKS):
-            return
-        dialog = QDialog(self)
-        dialog.setWindowTitle("绑定图片")
-        dialog.resize(420, 440)
-        layout = QVBoxLayout(dialog)
-        layout.addWidget(QLabel("绑定图片操作"))
 
-        image_list = QListWidget()
-        layout.addWidget(image_list, 1)
-
-        current = self.template_edit.text()
-        if TASKS[self.current_task_index].get("type") == "click_until_gone":
-            current = self.click_until_template_edit.text()
-        for name in [item.strip() for item in current.replace("，", ",").split(",") if item.strip()]:
-            image_list.addItem(name)
-
-        def choose_images():
-            paths, _ = QFileDialog.getOpenFileNames(dialog, "选择要绑定的图片", config.ICON_DIR, "PNG 图片 (*.png)")
-            if not paths:
-                return
-            existing = [image_list.item(i).text() for i in range(image_list.count())]
-            for path in paths:
-                name = os.path.splitext(os.path.basename(path))[0]
-                if name not in existing:
-                    image_list.addItem(name)
-                    existing.append(name)
-
-        def capture_image():
-            dialog.hide()
-
-            def on_captured(result):
-                dialog.show()
-                dialog.raise_()
-                dialog.activateWindow()
-                if result[0] == "image":
-                    name = result[1]
-                    existing = [image_list.item(i).text() for i in range(image_list.count())]
-                    if name not in existing:
-                        image_list.addItem(name)
-
-            self._begin_dialog_capture("image", on_captured)
-
-        def preview_image():
-            row = image_list.currentRow()
-            if row < 0:
-                return
-            name = image_list.item(row).text()
-            matches = glob.glob(os.path.join(config.ICON_DIR, f"{name}.*"))
-            if matches:
-                os.startfile(matches[0])
-            else:
-                QMessageBox.information(dialog, "预览绑定图片", "当前步骤没有找到可预览的绑定图片。")
-
-        def remove_image():
-            row = image_list.currentRow()
-            if row >= 0:
-                image_list.takeItem(row)
-
-        buttons_row = QHBoxLayout()
-        choose_btn = QPushButton("选择图片")
-        choose_btn.clicked.connect(choose_images)
-        capture_btn = QPushButton("手动框选图片")
-        capture_btn.clicked.connect(capture_image)
-        preview_btn = QPushButton("预览绑定图片")
-        preview_btn.clicked.connect(preview_image)
-        remove_btn = QPushButton("删除选中图片")
-        remove_btn.clicked.connect(remove_image)
-        buttons_row.addWidget(choose_btn)
-        buttons_row.addWidget(capture_btn)
-        buttons_row.addWidget(preview_btn)
-        buttons_row.addWidget(remove_btn)
-        layout.addLayout(buttons_row)
-
-        def save():
-            values = [image_list.item(i).text() for i in range(image_list.count())]
-            template_value = ", ".join(values)
-            if TASKS[self.current_task_index].get("type") == "click_until_gone":
-                self.click_until_template_edit.setText(template_value)
-            else:
-                self.template_edit.setText(template_value)
-                self._update_template_preview(template_value)
-            dialog.accept()
-
-        save_btn = QPushButton("保存")
-        save_btn.clicked.connect(save)
-        layout.addWidget(save_btn)
-        dialog.exec()
-
-    @Slot()
 
 
 
@@ -4933,6 +4870,30 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
             self.region_center_x_edit, self.region_center_y_edit,
         ):
             editor.clear()
+
+    # ---------- 分组编辑钩子（组编辑的共享实现在 CaptureOverlayMixin 中）----------
+
+    def _group_metadata_for_current_mode(self):
+        mode = self.mode_combo.currentText() or "custom"
+        return self.mode_group_metadata.setdefault(mode, {})
+
+    def _group_default_color(self):
+        return "#e0f2fe"
+
+    def _group_color_button_text_color(self):
+        return "#1f2937"
+
+    def _capture_set_no_current_task(self):
+        self.current_task_index = -1
+
+    def _group_hide_editor_groups(self):
+        self.special_group.setVisible(False)
+        self.click_until_group.setVisible(False)
+
+    def _group_after_editor_applied(self, group_id, name):
+        self._save_presets()
+        self.refresh_task_list()
+        self.append_log(f"已应用组设置: {name}")
 
     @Slot()
     def clear_tasks(self):

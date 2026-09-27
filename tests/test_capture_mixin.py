@@ -189,6 +189,61 @@ class CaptureMixinContractTests(unittest.TestCase):
         self.assertIsInstance(task["match_rects"], list)
         self.assertEqual(task["match_rects"], [(5, 6, 7, 8)])
 
+    # ---------- 绑定图片对话框（select_template_file）----------
+    #
+    # 该方法此前在两个窗口各有一份 90 行实现，实测差异只有 3 处索引访问。
+    # 现已统一到 mixin，这里锁定：取自 mixin、无当前步骤时直接返回、
+    # 能正确构造对话框并把候选模板写入编辑控件。
+
+    def test_select_template_file_comes_from_mixin(self):
+        for cls in (type(self.window), g.BlueprintWindow):
+            with self.subTest(cls=cls.__name__):
+                self.assertIs(
+                    getattr(cls, "select_template_file"),
+                    getattr(g.CaptureOverlayMixin, "select_template_file"),
+                )
+
+    def test_select_template_file_returns_early_without_current_task(self):
+        self.window.current_task_index = -1
+        with mock.patch.object(g.QDialog, "exec", side_effect=AssertionError("不应打开对话框")):
+            self.window.select_template_file()   # 不应抛异常，也不应打开对话框
+
+    def test_select_template_file_seeds_list_from_template_edit(self):
+        self.window.current_task_index = 0
+        self.window.template_edit.setText("auto, start_loop")
+        captured = {}
+
+        def fake_exec(dialog_self):
+            # 对话框已构建完成，取出其中的 QListWidget 检查初始项
+            from PySide6.QtWidgets import QListWidget
+            widget = dialog_self.findChild(QListWidget)
+            captured["items"] = [widget.item(i).text() for i in range(widget.count())]
+            return 0
+
+        with mock.patch.object(g.QDialog, "exec", fake_exec):
+            self.window.select_template_file()
+        self.assertEqual(captured.get("items"), ["auto", "start_loop"])
+
+    def test_select_template_file_save_writes_back_to_template_edit(self):
+        """点「保存」应把列表内容写回模板编辑框。"""
+        self.window.current_task_index = 0
+        self.window.template_edit.setText("alpha")
+        from PySide6.QtWidgets import QListWidget, QPushButton
+
+        def fake_exec(dialog_self):
+            widget = dialog_self.findChild(QListWidget)
+            widget.addItem("beta")
+            # 找到「保存」按钮并触发
+            for button in dialog_self.findChildren(QPushButton):
+                if button.text() == "保存":
+                    button.click()
+                    break
+            return 0
+
+        with mock.patch.object(g.QDialog, "exec", fake_exec):
+            self.window.select_template_file()
+        self.assertEqual(self.window.template_edit.text(), "alpha, beta")
+
     # ---------- 清空识别区域 ----------
 
     def test_clear_match_region_removes_all_rect_keys(self):
@@ -231,6 +286,126 @@ class CaptureMixinContractTests(unittest.TestCase):
             getattr(type(self.window), "_save_captured_image"),
             getattr(g.CaptureOverlayMixin, "_save_captured_image"),
         )
+
+
+    # ---------- 分组编辑（也已统一到 mixin）----------
+
+    def test_group_editing_methods_come_from_mixin(self):
+        for name in (
+            "_load_editor_for_group", "_apply_group_editor",
+            "_pick_group_color", "_update_group_color_button",
+            "_group_names", "_group_colors", "_group_order",
+            "_group_children", "_group_parents",
+        ):
+            with self.subTest(method=name):
+                self.assertIs(
+                    getattr(type(self.window), name), getattr(g.CaptureOverlayMixin, name),
+                    f"{name} 应直接复用 mixin 实现",
+                )
+
+    def test_group_metadata_accessor_differs_per_window(self):
+        own = copy.deepcopy(g.TASKS)
+        bp = g.BlueprintWindow(own, {}, lambda *a: None, {"names": {"g": "蓝图组"}}, self.window, {})
+        # 蓝图窗口使用自己的副本
+        self.assertIs(bp._group_metadata_for_current_mode(), bp.group_metadata)
+        self.assertEqual(bp._group_names(), {"g": "蓝图组"})
+        # 主窗口使用 mode_group_metadata[当前预设]
+        mode = self.window.mode_combo.currentText() or "custom"
+        self.assertIs(self.window._group_metadata_for_current_mode(), self.window.mode_group_metadata[mode])
+        bp.close()
+
+    def test_group_colors_and_defaults_differ_per_window(self):
+        self.assertEqual(self.window._group_default_color(), "#e0f2fe")
+        self.assertEqual(self.window._group_color_button_text_color(), "#1f2937")
+        bp = g.BlueprintWindow([], {}, lambda *a: None, {}, self.window, {})
+        self.assertEqual(bp._group_default_color(), "#38bdf8")
+        self.assertEqual(bp._group_color_button_text_color(), "#ffffff")
+        self.assertEqual(bp._group_color_dialog_title(), "选择组颜色")
+        bp.close()
+
+    def test_update_group_color_button_uses_existing_color(self):
+        mode = self.window.mode_combo.currentText() or "custom"
+        self.window.mode_group_metadata[mode] = {"colors": {"g1": "#abcdef"}}
+        self.window._pending_group_color = None
+        self.window._update_group_color_button("g1")
+        self.assertEqual(self.window.group_color_button.text(), "#abcdef")
+
+    def test_update_group_color_button_falls_back_to_default(self):
+        mode = self.window.mode_combo.currentText() or "custom"
+        self.window.mode_group_metadata[mode] = {"colors": {}}
+        self.window._pending_group_color = None
+        self.window._update_group_color_button("未记录颜色的组")
+        self.assertEqual(self.window.group_color_button.text(), "#e0f2fe")
+
+    def test_update_group_color_button_prefers_pending_color(self):
+        self.window._pending_group_color = "#111111"
+        try:
+            self.window._update_group_color_button("任意组")
+            self.assertEqual(self.window.group_color_button.text(), "#111111")
+        finally:
+            self.window._pending_group_color = None
+
+    def test_load_editor_for_group_fills_name_and_clears_current_task(self):
+        mode = self.window.mode_combo.currentText() or "custom"
+        self.window.mode_group_metadata[mode] = {"names": {"g1": "甲组"}}
+        self.window.current_task_index = 5
+        self.window._pending_group_color = "#999999"
+        self.window._load_editor_for_group("g1")
+        self.assertEqual(self.window.group_name_edit.text(), "甲组")
+        self.assertEqual(self.window.current_task_index, -1, "应清除当前步骤")
+        self.assertEqual(self.window.current_group_id, "g1")
+        self.assertIsNone(self.window._pending_group_color, "应重置待定颜色")
+
+    def test_load_editor_for_group_unknown_id_falls_back_to_id(self):
+        mode = self.window.mode_combo.currentText() or "custom"
+        self.window.mode_group_metadata[mode] = {"names": {}}
+        self.window._load_editor_for_group("未知组")
+        self.assertEqual(self.window.group_name_edit.text(), "未知组")
+
+    def test_apply_group_editor_writes_name_and_syncs_tasks(self):
+        mode = self.window.mode_combo.currentText() or "custom"
+        self.window.mode_group_metadata[mode] = {"names": {"g1": "旧名"}, "colors": {}}
+        for task in g.TASKS:
+            task["group_id"] = "g1"
+        self.window.current_group_id = "g1"
+        self.window.group_name_edit.setText("新名")
+        self.window._pending_group_color = None
+        self.window._apply_group_editor()
+        self.assertEqual(self.window._group_names().get("g1"), "新名")
+        for task in g.TASKS:
+            self.assertEqual(task.get("group_name"), "新名", "步骤上的组名应同步")
+
+    def test_apply_group_editor_writes_pending_color(self):
+        mode = self.window.mode_combo.currentText() or "custom"
+        self.window.mode_group_metadata[mode] = {"names": {"g1": "组"}, "colors": {}}
+        for task in g.TASKS:
+            task["group_id"] = "g1"
+        self.window.current_group_id = "g1"
+        self.window.group_name_edit.setText("组")
+        self.window._pending_group_color = "#00ff00"
+        self.window._apply_group_editor()
+        self.assertEqual(self.window._group_colors().get("g1"), "#00ff00")
+        for task in g.TASKS:
+            self.assertEqual(task.get("group_color"), "#00ff00")
+        self.window._pending_group_color = None
+
+    def test_apply_group_editor_without_group_is_noop(self):
+        self.window.current_group_id = None
+        self.window._apply_group_editor()   # 不应抛异常
+
+    def test_blueprint_group_metadata_is_isolated_from_main_window(self):
+        """蓝图窗口持有副本，改它不应影响主窗口的元数据。"""
+        mode = self.window.mode_combo.currentText() or "custom"
+        self.window.mode_group_metadata[mode] = {"names": {"shared": "原值"}, "colors": {}}
+        bp = g.BlueprintWindow(
+            copy.deepcopy(g.TASKS), {},
+            lambda *a: None,
+            copy.deepcopy(self.window.mode_group_metadata[mode]),
+            self.window, {},
+        )
+        bp.group_metadata.setdefault("names", {})["shared"] = "被蓝图改了"
+        self.assertEqual(self.window._group_names().get("shared"), "原值")
+        bp.close()
 
 
 if __name__ == "__main__":

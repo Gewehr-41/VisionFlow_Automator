@@ -66,6 +66,7 @@ from tasks import (
     save_blueprint_layouts,
     save_presets,
     save_tasks,
+    TASK_PRESETS,
 )
 from nodes import NodeGraph, TaskNode, remap_jump_targets
 from core.screen import get_window_rect
@@ -3804,13 +3805,36 @@ class PySide6ScriptWindow(QMainWindow):
         self.mode_combo.blockSignals(False)
 
     def _save_presets(self):
+        """写入预设文件。
+
+        重要：写入前必须剔除「已删除」的预设。
+        加载侧（tasks.load_presets）会按 __deleted__ 名单剔除预设，但保存侧此前
+        会把 mode_tasks 整个写出去——两边不对称，导致内存里残留的已删除预设
+        （例如被旧 Tkinter 界面写回的）会连同数据一起反复写进文件，形成
+        「界面上看不见、文件里删不掉」的僵尸预设；一旦有人手工清空 __deleted__，
+        它就会带着旧数据复活。这里从写入侧关掉这条通道，文件也会随之自愈。
+        """
+        deleted_names = {str(name) for name in self.deleted_preset_names}
         payload = {
             name: deepcopy(tasks)
             for name, tasks in self.mode_tasks.items()
-            if name != "custom"
+            if name != "custom" and str(name) not in deleted_names
         }
         payload["__deleted__"] = sorted(self.deleted_preset_names)
-        payload["__group_metadata__"] = deepcopy(self.mode_group_metadata)
+        # __group_metadata__ 也要清理陈旧条目，否则导入/导出测试与删除预设会持续
+        # 留下孤儿元数据。保留规则：
+        #   - 内置预设（custom / daily / side）：始终保留。它们的步骤来自 tasks.py，
+        #     用户将来仍可能恢复使用，元数据体积极小，留着比删掉更稳妥。
+        #   - 其它预设：当前活跃的保留；已被删除的即使仍残留在 mode_tasks 里也不保留，
+        #     避免把僵尸状态一起写进文件。
+        builtin_names = set(str(name) for name in TASK_PRESETS)
+        active_names = set(str(name) for name in self.mode_tasks)
+        keep_names = builtin_names | (active_names - deleted_names)
+        payload["__group_metadata__"] = {
+            name: value
+            for name, value in deepcopy(self.mode_group_metadata).items()
+            if str(name) in keep_names
+        }
         save_presets(payload)
 
     def _refresh_mode_combo(self, selected=None):
@@ -3834,6 +3858,10 @@ class PySide6ScriptWindow(QMainWindow):
             QMessageBox.warning(self, "名称重复", "该预设已经存在。")
             return
         self.mode_tasks[name] = []
+        # 必须同时从删除名单里移除：否则该名字会同时存在于数据与 __deleted__，
+        # 既会被 _save_presets 过滤掉（新建的预设立刻消失），
+        # 又会在下次加载时被剔除。
+        self.deleted_preset_names.discard(name)
         self._save_presets()
         self._refresh_mode_combo(name)
         self.on_mode_selected(name)
@@ -3985,6 +4013,8 @@ class PySide6ScriptWindow(QMainWindow):
             return
         self.mode_tasks.pop(name, None)
         self.deleted_preset_names.add(name)
+        # 同步清掉该预设的分组元数据，否则会留下永远无人引用的孤儿条目。
+        self.mode_group_metadata.pop(name, None)
         self._save_presets()
         self._refresh_mode_combo("custom")
         self.on_mode_selected("custom")

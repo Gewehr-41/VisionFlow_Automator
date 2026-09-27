@@ -58,16 +58,23 @@ python -m pip install numpy opencv-python mss pyautogui pygetwindow PySide6
 py -3 -m pip install numpy opencv-python mss pyautogui pygetwindow PySide6
 ```
 
-当前版本推荐使用 `gui_pyside6.py` 的 PySide6 主界面；`gui.py` 保留为 Tkinter 回退入口。两者共享任务、预设和蓝图数据文件。
+当前版本使用 `gui_pyside6.py` 的 PySide6 主界面（唯一维护中的界面）。
+
+> **关于 Tkinter 版 `gui.py`**：该界面已于 2026-09-28 **退役**，移入 `legacy/gui.py`。
+> 它仍然可以运行（`启动脚本编辑器.vbs` 会指向它），但**不再维护**，且含有若干
+> **已知的数据破坏性问题**——它与新界面共享同一批 JSON 数据文件，运行并保存可能
+> 覆盖新界面的数据。日常使用请勿运行它。详见 `legacy/README.md`。
 
 ### 2.2 启动
 
 ```powershell
-cd "C:\Users\baconing\Desktop\脚本编辑器"
+cd "C:\Users\baconing\Desktop\VisionFlow_Automator"
 python gui_pyside6.py
 ```
 
-也可以双击 `启动新界面.bat` 静默启动 PySide6 界面（脚本会自隐藏命令行窗口）。`启动脚本编辑器.vbs` 仍启动 Tkinter 版 `gui.py`，用于兼容旧界面。启动失败时，可运行 `python gui_pyside6.py` 查看错误。
+也可以双击 `启动新界面.bat` 静默启动 PySide6 界面（脚本会自隐藏命令行窗口）。启动失败时，可运行 `python gui_pyside6.py` 查看错误。
+
+> `启动脚本编辑器.vbs` 仍可启动已退役的 Tkinter 旧界面（`legacy\gui.py`），但**不建议日常使用**——它与新界面共享数据文件，可能覆盖新界面的数据。详见 `legacy/README.md`。
 
 ## 3. 第一次运行
 
@@ -156,9 +163,9 @@ python gui_pyside6.py
 
 ### 4.4 界面版本
 
-- `gui_pyside6.py`：推荐的新版界面，使用 PySide6 原生控件和图形场景，提供树形任务列表、Qt 蓝图画布、线程化执行状态回传和透明屏幕采集覆盖层。
-- `gui.py`：Tkinter 兼容界面，保留旧版窗口和蓝图实现；适合需要继续使用旧启动方式的场景。
-- 两个界面不要同时编辑同一个预设，以免后打开的界面覆盖先前保存的数据。
+- `gui_pyside6.py`：**当前唯一维护中的界面**。使用 PySide6 原生控件和图形场景，提供树形任务列表（支持嵌套分组）、Qt 蓝图画布、线程化执行状态回传和透明屏幕采集覆盖层。
+- `legacy/gui.py`：**已退役**的 Tkinter 旧界面（2026-08-26 后停止维护）。仅作历史留存，含已知的数据破坏性问题，**请勿用于日常操作**。详见 `legacy/README.md`。
+- 两个界面共享任务、预设和蓝图数据文件，**不要同时使用**，否则后保存的界面会覆盖先前的数据。
 
 ## 5. 模板图片
 
@@ -360,22 +367,27 @@ Windows 125%、150% 等缩放可能同时改变模板尺寸和坐标。建议固
 ### 10.1 文件结构
 
 ```text
-脚本编辑器/
-├─ gui_pyside6.py         PySide6 图形界面入口（推荐）
-├─ gui.py                 Tkinter 兼容界面入口
+VisionFlow_Automator/
+├─ gui_pyside6.py         PySide6 图形界面入口（当前唯一维护中的界面）
 ├─ main.py                任务执行和识别流程
 ├─ tasks.py               默认任务与保存逻辑
 ├─ nodes.py               统一节点接口与 NodeGraph
 ├─ config.py              全局识别、超时和窗口配置
+├─ requirements.txt       Python 依赖清单
 ├─ saved_tasks.json       custom 自定义任务
 ├─ saved_presets.json     用户预设、删除记录和分组信息
 ├─ saved_blueprint_layouts.json  蓝图步骤布局和缩放
 ├─ saved_blueprint_graphs.json   蓝图步骤与连接关系
+├─ README.md               本说明
 ├─ CHANGELOG.md            更新日志
 ├─ icons/                 PNG 模板目录
 ├─ core/                  截屏、输入和模板匹配模块
+├─ tests/                  单元测试
+├─ legacy/                已退役的旧代码（Tkinter 界面，含独立说明）
+│   ├─ gui.py             已退役的 Tkinter 界面
+│   └─ README.md          退役说明与注意事项
 ├─ 启动新界面.bat         启动 PySide6 界面（静默）
-└─ 启动脚本编辑器.vbs     启动 Tkinter 兼容界面
+└─ 启动脚本编辑器.vbs     启动已退役的 Tkinter 旧界面（不建议日常使用）
 ```
 
 ### 10.2 数据保存

@@ -264,7 +264,7 @@ class GuiFeatureTests(unittest.TestCase):
         若不设构建期保护，启动瞬间编辑面板就会显示第一张模板缩略图。
         """
         self.assertFalse(
-            self.window.template_preview.isVisible(),
+            self.window.template_preview.isVisibleTo(self.window),
             "窗口刚构建完，模板预览不应可见",
         )
 
@@ -273,12 +273,17 @@ class GuiFeatureTests(unittest.TestCase):
         self.assertFalse(self.window._initializing, "构建结束后应清除构建期标志")
 
     def test_preview_displays_after_explicit_user_load(self):
-        """构建结束后，加载步骤应正常显示预览。"""
+        """构建结束后，加载步骤应正常显示预览。
+
+        注意用 isVisibleTo() 而不是 isVisible()：后者要求控件及其所有祖先
+        都实际显示在屏幕上，而测试里窗口并未 show()，会永远返回 False。
+        isVisibleTo(parent) 反映的是控件自身的可见意图。
+        """
         item = self.window._find_task_item(0)
         self.assertIsNotNone(item, "应能找到第一个步骤的树项")
         self.window.load_selected_task(item, None)
         self.assertTrue(
-            self.window.template_preview.isVisible(),
+            self.window.template_preview.isVisibleTo(self.window),
             "用户选择步骤后应显示模板预览",
         )
         self.assertTrue(self.window.template_preview.toolTip(), "应显示模板名与尺寸")
@@ -287,7 +292,41 @@ class GuiFeatureTests(unittest.TestCase):
         item = self.window._find_task_item(0)
         self.window.load_selected_task(item, None)
         self.window._update_template_preview("绝不存在的模板名")
-        self.assertFalse(self.window.template_preview.isVisible())
+        self.assertFalse(self.window.template_preview.isVisibleTo(self.window))
+
+
+    # ---------- 模板预览必须是「内嵌控件」，不能是独立窗口 ----------
+
+    def test_preview_widget_is_embedded_not_a_window(self):
+        """缩略图必须嵌在右侧编辑面板里，而不是浮在外面的独立窗口。
+
+        主窗口的 _build_ui 曾经漏掉 editor_layout.addWidget(template_preview)，
+        导致这个 QLabel 没有父控件，成为一个固定 180x110 的顶层窗口，
+        显示时以「弹窗」形式飘在主窗口之外。
+        """
+        preview = self.window.template_preview
+        self.assertFalse(
+            preview.isWindow(),
+            "模板预览不应是独立顶层窗口（说明它没有被加入布局）",
+        )
+        self.assertIsNotNone(
+            preview.parentWidget(),
+            "模板预览必须有父控件（说明它已被加入布局）",
+        )
+
+    def test_blueprint_preview_widget_is_also_embedded(self):
+        bp = g.BlueprintWindow([], {}, lambda *a: None, {}, self.window, {})
+        try:
+            self.assertFalse(bp.template_preview.isWindow())
+            self.assertIsNotNone(bp.template_preview.parentWidget())
+        finally:
+            bp.close()
+
+    def test_preview_still_shows_after_being_embedded(self):
+        """加入布局后，显示功能仍应正常。"""
+        item = self.window._find_task_item(0)
+        self.window.load_selected_task(item, None)
+        self.assertTrue(self.window.template_preview.isVisibleTo(self.window))
 
 
 class PreviewSuppressionTests(unittest.TestCase):

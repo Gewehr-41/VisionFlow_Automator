@@ -3775,6 +3775,11 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         self.template_preview.setFixedSize(180, 110)
         self.template_preview.setStyleSheet("border: 1px solid #cbd5e1; background: #f8fafc;")
         self.template_preview.setVisible(False)
+        # 必须加入布局。此前漏了这一行，导致该 QLabel 没有父控件，
+        # 变成一个固定 180x110 的**独立顶层窗口**，显示时会以「弹窗」形式
+        # 飘在主窗口之外，而不是嵌在右侧编辑面板里。
+        # 蓝图窗口一直有这一行，所以那边表现正常。
+        editor_layout.addWidget(self.template_preview)
 
         self.editor_actions = QWidget()
         action_layout = QHBoxLayout(self.editor_actions)

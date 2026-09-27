@@ -67,10 +67,21 @@ from tasks import (
     save_presets,
     save_tasks,
 )
-from nodes import NodeGraph, TaskNode
+from nodes import NodeGraph, TaskNode, remap_jump_targets
 from core.screen import get_window_rect
 from core.hotkey import GlobalHotkey
 from core.input import release_all_inputs
+
+
+def _jump_index_map(old_indices_in_new_order):
+    """构造 remap_jump_targets 需要的「旧下标 → 新下标」映射。
+
+    参数是「按新顺序排列的旧下标序列」：
+    - 拖动排序时传入重排后的完整序列；
+    - 删除步骤时传入保留下来的旧下标（升序），被删的下标不在序列中，
+      于是指向它们的跳转会被 remap_jump_targets 清除。
+    """
+    return {old_index: new_index for new_index, old_index in enumerate(old_indices_in_new_order)}
 
 
 class CaptureOverlay(QWidget):
@@ -1665,35 +1676,16 @@ class BlueprintWindow(QMainWindow):
             return
         self._push_history()
         removed = set(selected)
+        # 先按 id 记录旧下标，删除后 id 顺序即等于新顺序。
+        old_index_by_id = {str(t.get("id")): i for i, t in enumerate(self.tasks)}
         for index in selected:
             self.tasks.pop(index)
         for task in self.tasks:
             flow_target = task.get("flow_next")
             if flow_target is not None and not any(str(candidate.get("id")) == str(flow_target) for candidate in self.tasks):
                 task.pop("flow_next", None)
-            for field in ("condition_true_jump_to", "condition_false_jump_to", "detour_success_jump_to", "detour_jump_to", "timeout_jump_to", "event_timeout_target", "loop_target", "loop_exit_target", "event_trigger_target", "switch_default_jump_to"):
-                value = task.get(field)
-                try:
-                    target_index = int(value) - 1
-                except (TypeError, ValueError):
-                    continue
-                if target_index in removed:
-                    task.pop(field, None)
-                else:
-                    shift = sum(1 for removed_index in removed if removed_index < target_index)
-                    task[field] = target_index - shift + 1
-            cases = task.get("switch_cases")
-            if isinstance(cases, dict):
-                for case, value in list(cases.items()):
-                    try:
-                        target_index = int(value) - 1
-                    except (TypeError, ValueError):
-                        continue
-                    if target_index in removed:
-                        cases.pop(case, None)
-                    else:
-                        shift = sum(1 for removed_index in removed if removed_index < target_index)
-                        cases[case] = target_index - shift + 1
+        # 统一重编号：被删下标不在序列中，指向它们的跳转会被清除。
+        remap_jump_targets(self.tasks, _jump_index_map([old_index_by_id[str(t.get("id"))] for t in self.tasks]))
         positions = self.layout_data.setdefault("positions", {})
         self.layout_data["positions"] = {
             str(new_index): positions.get(str(old_index), (40, 40))
@@ -2909,35 +2901,15 @@ class BlueprintWindow(QMainWindow):
         if not (0 <= index < len(self.tasks)):
             return
         self._push_history()
-        removed = {index}
+        # 先按 id 记录旧下标，删除后 id 顺序即等于新顺序。
+        old_index_by_id = {str(t.get("id")): i for i, t in enumerate(self.tasks)}
         self.tasks.pop(index)
         for task in self.tasks:
             flow_target = task.get("flow_next")
             if flow_target is not None and not any(str(c.get("id")) == str(flow_target) for c in self.tasks):
                 task.pop("flow_next", None)
-            for field in ("condition_true_jump_to", "condition_false_jump_to", "detour_success_jump_to", "detour_jump_to", "timeout_jump_to", "event_timeout_target", "loop_target", "loop_exit_target", "event_trigger_target", "switch_default_jump_to"):
-                value = task.get(field)
-                try:
-                    target_index = int(value) - 1
-                except (TypeError, ValueError):
-                    continue
-                if target_index in removed:
-                    task.pop(field, None)
-                else:
-                    shift = sum(1 for r in removed if r < target_index)
-                    task[field] = target_index - shift + 1
-            cases = task.get("switch_cases")
-            if isinstance(cases, dict):
-                for case, value in list(cases.items()):
-                    try:
-                        target_index = int(value) - 1
-                    except (TypeError, ValueError):
-                        continue
-                    if target_index in removed:
-                        cases.pop(case, None)
-                    else:
-                        shift = sum(1 for r in removed if r < target_index)
-                        cases[case] = target_index - shift + 1
+        # 统一重编号：被删下标不在序列中，指向它的跳转会被清除。
+        remap_jump_targets(self.tasks, _jump_index_map([old_index_by_id[str(t.get("id"))] for t in self.tasks]))
         self.refresh()
         self.save_layout()
 
@@ -3312,25 +3284,16 @@ class BlueprintWindow(QMainWindow):
                 index = next_index
         if ordered == list(range(len(old_tasks))):
             return
-        old_number_by_id = {str(t.get("id")): i + 1 for i, t in enumerate(old_tasks) if t.get("id") is not None}
-        new_number_by_id = {
-            str(old_tasks[old_index].get("id")): new_index + 1
-            for new_index, old_index in enumerate(ordered)
-            if old_tasks[old_index].get("id") is not None
-        }
         old_positions = self.layout_data.get("positions", {})
         new_positions = {
             str(new_index): old_positions.get(str(old_index), old_positions.get(old_index, (40 + (new_index % 3) * 280, 40 + (new_index // 3) * 130)))
             for new_index, old_index in enumerate(ordered)
         }
         reordered = [old_tasks[i] for i in ordered]
-        for task in reordered:
-            for key in ("detour_jump_to", "detour_success_jump_to"):
-                old_target = task.get(key)
-                if old_target is None:
-                    continue
-                target_id = next((tid for tid, num in old_number_by_id.items() if num == int(old_target)), None)
-                task[key] = new_number_by_id.get(target_id, old_target)
+        # 使用统一的跳转重编号函数。此前这里只重映射 detour_jump_to /
+        # detour_success_jump_to 两个字段，会漏掉 timeout_jump_to 等。
+        index_map = {old_index: new_index for new_index, old_index in enumerate(ordered)}
+        remap_jump_targets(reordered, index_map)
         self.tasks[:] = reordered
         self.layout_data["positions"] = new_positions
 
@@ -4674,12 +4637,16 @@ class PySide6ScriptWindow(QMainWindow):
     def reorder_task_from_tree(self, source_index, target_index, insert_after):
         if source_index == target_index or not (0 <= source_index < len(TASKS)) or not (0 <= target_index < len(TASKS)):
             return
+        # 先按 id 记录每个步骤的旧下标——列表重排后 id 顺序即等于新顺序。
+        old_index_by_id = {str(t.get("id")): i for i, t in enumerate(TASKS)}
         task = TASKS.pop(source_index)
         if source_index < target_index:
             target_index -= 1
         insert_index = target_index + (1 if insert_after else 0)
         insert_index = max(0, min(insert_index, len(TASKS)))
         TASKS.insert(insert_index, task)
+        # 步骤下标已改变，必须同步重编号跳转目标，否则迂回/超时跳转会指向错误的步骤。
+        remap_jump_targets(TASKS, _jump_index_map([old_index_by_id[str(t.get("id"))] for t in TASKS]))
         self.current_task_index = insert_index
         self.save_current_tasks()
         self.refresh_task_list()
@@ -4689,8 +4656,11 @@ class PySide6ScriptWindow(QMainWindow):
     def move_task_to_end(self, source_index):
         if not (0 <= source_index < len(TASKS)):
             return
+        old_index_by_id = {str(t.get("id")): i for i, t in enumerate(TASKS)}
         task = TASKS.pop(source_index)
         TASKS.append(task)
+        # 同上：移动后必须重编号跳转目标。
+        remap_jump_targets(TASKS, _jump_index_map([old_index_by_id[str(t.get("id"))] for t in TASKS]))
         self.current_task_index = len(TASKS) - 1
         self.save_current_tasks()
         self.refresh_task_list()
@@ -4834,34 +4804,15 @@ class PySide6ScriptWindow(QMainWindow):
             return
         old_tasks = list(TASKS)
         removed = set(remove_indices)
+        # 先按 id 记录旧下标，删除后 id 顺序即等于新顺序。
+        old_index_by_id = {str(t.get("id")): i for i, t in enumerate(old_tasks)}
         TASKS[:] = [task for i, task in enumerate(old_tasks) if i not in removed]
         for task in TASKS:
             flow_target = task.get("flow_next")
             if flow_target is not None and not any(str(candidate.get("id")) == str(flow_target) for candidate in TASKS):
                 task.pop("flow_next", None)
-            for field in ("condition_true_jump_to", "condition_false_jump_to", "detour_success_jump_to", "detour_jump_to", "timeout_jump_to", "event_timeout_target", "loop_target", "loop_exit_target", "event_trigger_target", "switch_default_jump_to"):
-                value = task.get(field)
-                try:
-                    target_index = int(value) - 1
-                except (TypeError, ValueError):
-                    continue
-                if target_index in removed:
-                    task.pop(field, None)
-                else:
-                    shift = sum(1 for r in removed if r < target_index)
-                    task[field] = target_index - shift + 1
-            cases = task.get("switch_cases")
-            if isinstance(cases, dict):
-                for case, value in list(cases.items()):
-                    try:
-                        target_index = int(value) - 1
-                    except (TypeError, ValueError):
-                        continue
-                    if target_index in removed:
-                        cases.pop(case, None)
-                    else:
-                        shift = sum(1 for r in removed if r < target_index)
-                        cases[case] = target_index - shift + 1
+        # 统一重编号：被删下标不在序列中，指向它们的跳转会被清除。
+        remap_jump_targets(TASKS, _jump_index_map([old_index_by_id[str(t.get("id"))] for t in TASKS]))
         for gid in all_group_ids:
             metadata.get("names", {}).pop(gid, None)
             metadata.get("colors", {}).pop(gid, None)

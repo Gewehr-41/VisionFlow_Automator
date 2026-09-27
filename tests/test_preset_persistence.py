@@ -6,8 +6,16 @@ from copy import deepcopy
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from gui_pyside6 import PySide6ScriptWindow
+from PySide6.QtWidgets import QApplication
+
 import tasks
+
+# 构造 QWidget 之前必须先有 QApplication，否则 Qt 会直接以
+# "Must construct a QApplication before a QWidget" 中止进程。
+# 用模块级单例，避免每个测试各建一个 QApplication（Qt 只允许一个）。
+_APP = QApplication.instance() or QApplication([])
+
+from gui_pyside6 import PySide6ScriptWindow
 
 
 class PresetPersistenceTests(unittest.TestCase):

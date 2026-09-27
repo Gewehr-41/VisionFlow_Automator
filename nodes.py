@@ -221,3 +221,67 @@ def task_to_node(task, executor=None):
 
 def tasks_to_nodes(tasks, executor=None):
     return [task_to_node(deepcopy(task), executor=executor) for task in tasks]
+
+
+# ---------------------------------------------------------------------------
+# 步骤序号重编号（跳转目标的唯一维护点）
+#
+# 背景：分支跳转（condition / switch / loop / event 的字段，以及所有步骤共用的
+# 迂回与超时字段）都用「1-based 步骤序号」寻址。任何改变步骤下标的操作——
+# 删除、拖动排序、应用蓝图重排——都必须同步重编号这些字段，否则跳转会静默
+# 指向错误的步骤（序号仍在合法范围内，现有校验也发现不了）。
+#
+# 此前这段逻辑散落在多处且覆盖度不一致（删除 4 个字段 / 重排 2 个字段 /
+# 拖动 0 个字段）。现在统一到本函数，作为单一维护点。
+# ---------------------------------------------------------------------------
+
+# 所有以 1-based 步骤序号寻址的标量字段。
+JUMP_TARGET_FIELDS = (
+    "detour_jump_to",
+    "detour_success_jump_to",
+    "timeout_jump_to",
+    "wait_timeout_jump_to",
+    "condition_true_jump_to",
+    "condition_false_jump_to",
+    "switch_default_jump_to",
+    "loop_target",
+    "loop_exit_target",
+    "event_timeout_target",
+    "event_trigger_target",
+)
+
+
+def remap_jump_targets(tasks, index_map):
+    """按 index_map（旧下标 → 新下标）重编号所有跳转目标。
+
+    - 键是旧下标，值是它在新列表中的下标；1-based 字段存的是「下标 + 1」。
+    - index_map 中不存在的旧下标表示该步骤已被删除，指向它的跳转会被清除。
+    - 无法解析为整数的取值保持原样，不做修改。
+    """
+    for task in tasks:
+        for field in JUMP_TARGET_FIELDS:
+            raw_value = task.get(field)
+            if raw_value is None:
+                continue
+            try:
+                old_index = int(raw_value) - 1
+            except (TypeError, ValueError):
+                continue
+            new_index = index_map.get(old_index)
+            if new_index is None:
+                task.pop(field, None)
+            else:
+                task[field] = new_index + 1
+
+        cases = task.get("switch_cases")
+        if isinstance(cases, dict):
+            for case_key, raw_value in list(cases.items()):
+                try:
+                    old_index = int(raw_value) - 1
+                except (TypeError, ValueError):
+                    continue
+                new_index = index_map.get(old_index)
+                if new_index is None:
+                    cases.pop(case_key, None)
+                else:
+                    cases[case_key] = new_index + 1

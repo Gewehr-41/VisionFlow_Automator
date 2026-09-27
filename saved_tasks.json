@@ -1,0 +1,231 @@
+[
+  {
+    "id": "daily_auto_loop",
+    "mode": "daily",
+    "type": "normal",
+    "enabled": true,
+    "description": "打开自动循环界面",
+    "template": "auto",
+    "timeout": 5,
+    "click": true,
+    "offset": [
+      0,
+      0
+    ],
+    "after_wait": 0.25,
+    "wait_for": "time",
+    "wait_timeout": 2.5,
+    "required": true
+  },
+  {
+    "id": "daily_restroom_move",
+    "mode": "daily",
+    "type": "keyboard_move",
+    "enabled": true,
+    "description": "进入3D休息室并移动到指定位置",
+    "template": "rest_room_entry",
+    "click": false,
+    "after_wait": 1.0,
+    "wait_for": "time",
+    "wait_timeout": 8,
+    "required": true,
+    "move_steps": [
+      {
+        "key": "W",
+        "duration": 1.2
+      },
+      {
+        "key": "A",
+        "duration": 0.8
+      },
+      {
+        "key": "D",
+        "duration": 0.8
+      },
+      {
+        "key": "S",
+        "duration": 0.6
+      }
+    ],
+    "timeout": 8
+  },
+  {
+    "id": "daily_press_e",
+    "mode": "daily",
+    "type": "key_press",
+    "enabled": true,
+    "description": "按下 E 键执行交互",
+    "template": "E",
+    "key": "E",
+    "delay_before": 0.0,
+    "hold_time": 0.1,
+    "click": false,
+    "after_wait": 0.2,
+    "wait_for": "time",
+    "wait_timeout": 1.0,
+    "required": true,
+    "timeout": 1.0
+  },
+  {
+    "id": "daily_start_loop",
+    "mode": "daily",
+    "type": "normal",
+    "enabled": true,
+    "description": "点击循环开始并等待完成",
+    "template": "start_loop",
+    "timeout": 5,
+    "click": true,
+    "offset": [
+      0,
+      0
+    ],
+    "after_wait": 1.0,
+    "wait_for": "time",
+    "wait_timeout": 2.5,
+    "required": true
+  },
+  {
+    "id": "daily_back_to_main_menu_1",
+    "mode": "daily",
+    "type": "normal",
+    "enabled": true,
+    "description": "返回主菜单",
+    "template": "back_to_main_menu",
+    "timeout": 5,
+    "click": true,
+    "offset": [
+      0,
+      0
+    ],
+    "after_wait": 0.5,
+    "wait_for": "time",
+    "wait_timeout": 2.5,
+    "required": true
+  },
+  {
+    "id": "daily_shop",
+    "mode": "daily",
+    "type": "normal",
+    "enabled": true,
+    "description": "进入商店领取每日礼包",
+    "template": "shop_daily",
+    "timeout": 5,
+    "click": true,
+    "offset": [
+      0,
+      0
+    ],
+    "after_wait": 0.5,
+    "wait_for": "time",
+    "wait_timeout": 2.5,
+    "required": true
+  },
+  {
+    "id": "daily_back_to_main_menu_2",
+    "mode": "daily",
+    "type": "normal",
+    "enabled": true,
+    "description": "返回主菜单",
+    "template": "back_to_main_menu",
+    "timeout": 5,
+    "click": true,
+    "offset": [
+      0,
+      0
+    ],
+    "after_wait": 0.5,
+    "wait_for": "time",
+    "wait_timeout": 2.5,
+    "required": true
+  },
+  {
+    "id": "daily_guild",
+    "mode": "daily",
+    "type": "normal",
+    "enabled": true,
+    "description": "进入公会领取每日奖励",
+    "template": "guild_daily",
+    "timeout": 5,
+    "click": true,
+    "offset": [
+      0,
+      0
+    ],
+    "after_wait": 0.5,
+    "wait_for": "time",
+    "wait_timeout": 2.5,
+    "required": true
+  },
+  {
+    "id": "daily_back_to_main_menu_3",
+    "mode": "daily",
+    "type": "normal",
+    "enabled": true,
+    "description": "返回主菜单",
+    "template": "back_to_main_menu",
+    "timeout": 5,
+    "click": true,
+    "offset": [
+      0,
+      0
+    ],
+    "after_wait": 0.5,
+    "wait_for": "time",
+    "wait_timeout": 2.5,
+    "required": true
+  },
+  {
+    "id": "daily_monthly_card",
+    "mode": "daily",
+    "type": "normal",
+    "enabled": true,
+    "description": "进入月卡领取奖励",
+    "template": "monthly_card",
+    "timeout": 5,
+    "click": true,
+    "offset": [
+      0,
+      0
+    ],
+    "after_wait": 0.5,
+    "wait_for": "time",
+    "wait_timeout": 2.5,
+    "required": true
+  },
+  {
+    "id": "daily_back_to_main_menu_4",
+    "mode": "daily",
+    "type": "normal",
+    "enabled": true,
+    "description": "返回主菜单",
+    "template": "back_to_main_menu",
+    "timeout": 5,
+    "click": true,
+    "offset": [
+      0,
+      0
+    ],
+    "after_wait": 0.5,
+    "wait_for": "time",
+    "wait_timeout": 2.5,
+    "required": true
+  },
+  {
+    "id": "side_road_special",
+    "mode": "side",
+    "type": "normal",
+    "enabled": true,
+    "description": "歧路：识别并点击特殊关卡",
+    "template": "side_road",
+    "timeout": 5,
+    "click": true,
+    "offset": [
+      0,
+      0
+    ],
+    "after_wait": 0.25,
+    "wait_for": "time",
+    "wait_timeout": 2.5,
+    "required": true
+  }
+]

@@ -113,6 +113,310 @@ def _first_available_template_pixmap(templates, limit=12):
     return (names[0] if names else None), None
 
 
+def _to_float(value, fallback):
+    """把输入解析为 float，失败时返回 fallback。
+
+    主窗口与蓝图窗口此前各有一份完全相同的实现
+    （_float/_float_value），这里合并为单一版本。
+    """
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _to_int(value):
+    """把输入解析为 int（先转 float 以兼容 "3.0" 这类输入），失败时返回 None。"""
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _capture_rect():
+    """返回屏幕采集覆盖层应覆盖的矩形。
+
+    选择目标窗口时用该窗口矩形，否则用主屏几何范围。
+    主窗口与蓝图窗口此前各有一份完全相同的实现。
+    """
+    if config.USE_WINDOW_MODE and config.TARGET_WINDOW_TITLE:
+        return get_window_rect()
+    screen = QApplication.primaryScreen().geometry()
+    return {"left": screen.left(), "top": screen.top(), "width": screen.width(), "height": screen.height()}
+
+
+class CaptureOverlayMixin:
+    """屏幕采集覆盖层的共享实现。
+
+    主窗口（PySide6ScriptWindow）与蓝图窗口（BlueprintWindow）此前各有一份
+    近乎逐行相同的采集管线（覆盖层生命周期、点击/框选/截图回调、取消、
+    清空识别区域、下一模板绑定），差异仅在以下两点：
+
+      1. 当前步骤的访问路径不同
+         主窗口 -> self.current_task_index + 全局 TASKS
+         蓝图窗口 -> self.current_index + self.tasks
+      2. 修改后的收尾动作不同
+         主窗口 -> save_current_tasks() / refresh_task_list() / select_task_index()
+         蓝图窗口 -> _push_history() / refresh() / _select_node() / save_layout()
+      3. 少量额外日志与控件清空范围
+
+    因此这里用「访问器 + 收尾钩子」把它们统一，子类只需覆盖下面几个钩子。
+    """
+
+    # ---------- 子类必须覆盖：数据访问 ----------
+
+    def _capture_index(self):
+        """返回当前步骤下标（无效时为 -1）。"""
+        return getattr(self, "current_task_index", -1)
+
+    def _capture_task_list(self):
+        """返回当前步骤所在的列表。"""
+        return TASKS
+
+    def _capture_current_task(self):
+        """返回当前步骤字典；下标无效时返回 None。"""
+        index = self._capture_index()
+        tasks = self._capture_task_list()
+        if 0 <= index < len(tasks):
+            return tasks[index]
+        return None
+
+    def _capture_has_valid_step(self):
+        index = self._capture_index()
+        return 0 <= index < len(self._capture_task_list())
+
+    # ---------- 子类可覆盖：收尾钩子 ----------
+
+    def _capture_after_task_changed(self):
+        """步骤数据被修改后调用（保存、刷新、选中态同步）。"""
+
+    def _capture_show_parent(self):
+        """恢复显示父窗口（仅蓝图窗口需要，主窗口无父窗口）。"""
+
+    def _capture_log(self, message):
+        """输出一条采集相关日志（默认丢弃；主窗口会覆盖为写入日志框）。"""
+
+    def _capture_notify_next_template_widgets(self, image_name):
+        """把「下一模板」同步到编辑控件（两个窗口的等待方式下拉框内容不同）。"""
+        self.next_template_edit.setText(image_name)
+
+    def _capture_clear_extra_region_widgets(self):
+        """清空识别区域时一并清理的额外控件（主窗口有 6 个分段区域输入框）。"""
+
+    # ---------- 共享实现 ----------
+
+    def _capture_rect(self):
+        return _capture_rect()
+
+    def _show_capture_overlay(self, mode):
+        self._keep_window_hidden = False
+        if self.capture_overlay is not None:
+            self.capture_overlay.close()
+        self.capture_overlay = CaptureOverlay(self._capture_rect(), mode)
+        self.capture_overlay.clicked.connect(self.finish_click_capture)
+        self.capture_overlay.region_selected.connect(self.finish_region_capture)
+        self.capture_overlay.image_selected.connect(self.finish_image_capture)
+        self.capture_overlay.cancelled.connect(self.cancel_capture)
+        self.capture_overlay.too_small.connect(self.finish_too_small)
+        self.capture_overlay.destroyed.connect(self.clear_capture_overlay)
+        self._capture_log("请在覆盖层中选择位置，按 Esc 取消。")
+        self.capture_overlay.start()
+        self.hide()
+        parent = self.parent()
+        if parent is not None:
+            parent.hide()
+
+    def start_click_capture(self):
+        if self._capture_index() >= 0:
+            self._capture_callback = None
+            self._show_capture_overlay("click")
+
+    def start_region_capture(self):
+        if self._capture_index() >= 0:
+            self._capture_callback = None
+            self._capture_target = "match"
+            self._show_capture_overlay("region")
+
+    def start_next_template_capture(self):
+        if self._capture_index() >= 0:
+            self._capture_callback = None
+            self._capture_target = "next_template"
+            self._show_capture_overlay("image")
+
+    def start_next_region_capture(self):
+        if self._capture_index() < 0:
+            return
+        if not self.next_template_edit.text().strip():
+            self._capture_log("请先选择下一模板图片，再框选它的出现位置。")
+            return
+        self._capture_callback = None
+        self._capture_target = "next"
+        self._show_capture_overlay("region")
+
+    def _begin_dialog_capture(self, mode, callback):
+        self._capture_callback = callback
+        self._capture_target = "match"
+        self._show_capture_overlay(mode)
+
+    def select_next_template_file(self):
+        path, _ = QFileDialog.getOpenFileName(self, "选择等待出现的目标图片", config.ICON_DIR, "PNG 图片 (*.png)")
+        if path:
+            self.next_template_edit.setText(os.path.splitext(os.path.basename(path))[0])
+            self._capture_set_wait_for_next()
+
+    def _capture_set_wait_for_next(self):
+        """把等待方式切到「等待目标模板出现」（两个窗口的下拉项文本不同）。"""
+        combo = self.wait_for_combo
+        for position in range(combo.count()):
+            if "等待目标模板出现" in combo.itemText(position):
+                combo.setCurrentIndex(position)
+                return
+
+    def cancel_capture(self):
+        self.clear_capture_overlay()
+        self.activateWindow()
+        callback = getattr(self, "_capture_callback", None)
+        self._capture_callback = None
+        if callback is not None:
+            callback(("cancelled",))
+        self._capture_log("已取消屏幕采集。")
+
+    def finish_too_small(self):
+        self.clear_capture_overlay()
+        self.activateWindow()
+        callback = getattr(self, "_capture_callback", None)
+        self._capture_callback = None
+        if callback is not None:
+            callback(("cancelled",))
+        QMessageBox.warning(self, "框选失败", "框选区域太小，请重新拖曳选择。")
+
+    def clear_capture_overlay(self):
+        if self.capture_overlay is not None:
+            overlay = self.capture_overlay
+            self.capture_overlay = None
+            overlay.close()
+        # 截图流程进行中（_keep_window_hidden=True）不恢复窗口，由 _save_captured_image
+        # 在截图完成后统一显示，避免覆盖层销毁回调把脚本窗口提前显示出来。
+        if not getattr(self, "_keep_window_hidden", False):
+            self.show()
+            self._capture_show_parent()
+
+    def finish_click_capture(self, x, y):
+        self.clear_capture_overlay()
+        self.activateWindow()
+        callback = getattr(self, "_capture_callback", None)
+        self._capture_callback = None
+        if callback is not None:
+            callback(("click", x, y))
+            return
+        self.click_x_edit.setText(str(x))
+        self.click_y_edit.setText(str(y))
+        task = self._capture_current_task()
+        if task is None:
+            return
+        task["click_x"] = int(x)
+        task["click_y"] = int(y)
+        task["click_position"] = (int(x), int(y))
+        if task.get("type") != "click_until_gone":
+            task.pop("match_rect", None)
+            task.pop("search_rect", None)
+        self._capture_log(f"已记录备用点击坐标: ({x}, {y})")
+        self._capture_after_task_changed()
+
+    def finish_region_capture(self, left, top, right, bottom):
+        self.clear_capture_overlay()
+        self.activateWindow()
+        callback = getattr(self, "_capture_callback", None)
+        self._capture_callback = None
+        if callback is not None:
+            callback(("region", (left, top, right, bottom)))
+            return
+        task = self._capture_current_task()
+        if task is None:
+            return
+        if getattr(self, "_capture_target", "match") == "next":
+            task["next_match_rect"] = (left, top, right, bottom)
+            task["next_search_rect"] = (left, top, right, bottom)
+            self._capture_after_task_changed()
+            return
+        match_rects = task.setdefault("match_rects", [])
+        if not isinstance(match_rects, list):
+            match_rects = []
+            task["match_rects"] = match_rects
+        match_rects.append((left, top, right, bottom))
+        task["match_rect"] = match_rects[0]
+        task["search_rect"] = match_rects[0]
+        self.match_rect_edit.setText(f"{left}, {top}, {right}, {bottom}")
+        self._capture_after_task_changed()
+
+    def clear_match_region(self):
+        self.match_rect_edit.clear()
+        self._capture_clear_extra_region_widgets()
+        task = self._capture_current_task()
+        if task is None:
+            return
+        for key in ("match_rects", "match_rect", "search_rect"):
+            task.pop(key, None)
+        self._capture_log("已清空当前步骤的全部识别区域")
+        self._capture_after_task_changed()
+
+    def finish_image_capture(self, left, top, right, bottom):
+        # 保持窗口隐藏直到截图完成：关闭覆盖层前断开 destroyed 联动，并置位
+        # _keep_window_hidden，防止覆盖层销毁时 clear_capture_overlay 提前显示窗口，
+        # 导致截图截到脚本窗口。
+        overlay = self.capture_overlay
+        self.capture_overlay = None
+        self._keep_window_hidden = True
+        if overlay is not None:
+            try:
+                overlay.destroyed.disconnect(self.clear_capture_overlay)
+            except (RuntimeError, TypeError):
+                pass
+            overlay.close()
+        if right <= left or bottom <= top:
+            QMessageBox.warning(self, "框选失败", "框选区域太小，请重新拖曳选择。")
+            self._keep_window_hidden = False
+            callback = getattr(self, "_capture_callback", None)
+            self._capture_callback = None
+            if callback is not None:
+                callback(("cancelled",))
+            self.show()
+            self._capture_show_parent()
+            return
+        callback = getattr(self, "_capture_callback", None)
+        self._capture_callback = None
+        QTimer.singleShot(120, lambda: self._save_captured_image(left, top, right, bottom, callback))
+
+    def _save_captured_image(self, left, top, right, bottom, callback=None):
+        icons_dir = os.path.join(os.path.dirname(__file__), "icons")
+        os.makedirs(icons_dir, exist_ok=True)
+        image_name = f"captured_{uuid.uuid4().hex[:10]}"
+        image_path = os.path.join(icons_dir, f"{image_name}.png")
+        screen = QApplication.primaryScreen()
+        # 在窗口仍隐藏时截图，完成后才恢复显示，确保截到的是目标画面而不是脚本窗口。
+        pixmap = screen.grabWindow(0, left, top, right - left, bottom - top)
+        self._keep_window_hidden = False
+        self.show()
+        self._capture_show_parent()
+        self.activateWindow()
+        if pixmap.isNull() or not pixmap.save(image_path, "PNG"):
+            QMessageBox.warning(self, "保存失败", "无法保存框选图片。")
+            return
+        reload_templates()
+        if callback is not None:
+            callback(("image", image_name))
+            return
+        task = self._capture_current_task()
+        if task is None:
+            return
+        task["next_template"] = image_name
+        task["next_templates"] = [image_name]
+        task["wait_for"] = "next_appear"
+        self._capture_notify_next_template_widgets(image_name)
+        self._capture_log(f"已将框选图片保存并绑定: {image_path}")
+        self._capture_after_task_changed()
+
+
 class CaptureOverlay(QWidget):
     clicked = Signal(int, int)
     region_selected = Signal(int, int, int, int)
@@ -920,7 +1224,7 @@ class BlueprintView(QGraphicsView):
         super().wheelEvent(event)
 
 
-class BlueprintWindow(QMainWindow):
+class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
     _BASIC_FIELDS = {
         "id", "type", "mode", "enabled", "template", "templates", "description",
         "threshold", "timeout", "wait_timeout", "after_wait", "click", "optional", "required",
@@ -1200,6 +1504,26 @@ class BlueprintWindow(QMainWindow):
         self.redo_history.clear()
         if len(self.history) > 50:
             self.history.pop(0)
+
+    # ---------- CaptureOverlayMixin 的钩子实现 ----------
+    # 采集管线的共享实现在 CaptureOverlayMixin 中，这里只提供蓝图窗口特有的两点差异。
+
+    def _capture_index(self):
+        return getattr(self, "current_index", -1)
+
+    def _capture_task_list(self):
+        return self.tasks
+
+    def _capture_after_task_changed(self):
+        self._push_history()
+        self.refresh()
+        self._select_node(self.current_index)
+        self.save_layout()
+
+    def _capture_show_parent(self):
+        parent = self.parent()
+        if parent is not None:
+            parent.show()
 
     def _restore_snapshot(self, snapshot):
         self.tasks[:] = deepcopy(snapshot["tasks"])
@@ -2208,10 +2532,8 @@ class BlueprintWindow(QMainWindow):
         self.template_preview.setVisible(True)
 
     def _capture_rect(self):
-        if config.USE_WINDOW_MODE and config.TARGET_WINDOW_TITLE:
-            return get_window_rect()
-        screen = QApplication.primaryScreen().geometry()
-        return {"left": screen.left(), "top": screen.top(), "width": screen.width(), "height": screen.height()}
+        # 与另一侧窗口共用同一实现（此前两份完全相同）
+        return _capture_rect()
 
     def _show_capture_overlay(self, mode):
         self._keep_window_hidden = False
@@ -2894,17 +3216,13 @@ class BlueprintWindow(QMainWindow):
 
     @staticmethod
     def _float(value, fallback):
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return fallback
+        # 与主窗口共用同一实现（此前 _float / _float_value 两份完全相同）
+        return _to_float(value, fallback)
 
     @staticmethod
     def _int(value):
-        try:
-            return int(float(value))
-        except (TypeError, ValueError):
-            return None
+        # 与主窗口共用同一实现（此前 _int / _int_value 两份完全相同）
+        return _to_int(value)
 
     @classmethod
     def _parse_rect_text(cls, value):
@@ -3417,7 +3735,7 @@ class TaskWorker(QObject):
             self.finished.emit()
 
 
-class PySide6ScriptWindow(QMainWindow):
+class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
     stop_requested = Signal()
 
     def __init__(self):
@@ -4667,10 +4985,8 @@ class PySide6ScriptWindow(QMainWindow):
         self.select_task_index(self.current_task_index)
 
     def _capture_rect(self):
-        if config.USE_WINDOW_MODE and config.TARGET_WINDOW_TITLE:
-            return get_window_rect()
-        screen = QApplication.primaryScreen().geometry()
-        return {"left": screen.left(), "top": screen.top(), "width": screen.width(), "height": screen.height()}
+        # 与另一侧窗口共用同一实现（此前两份完全相同）
+        return _capture_rect()
 
     def _show_capture_overlay(self, mode):
         self._keep_window_hidden = False
@@ -4992,6 +5308,35 @@ class PySide6ScriptWindow(QMainWindow):
         self.save_current_tasks()
         self.refresh_task_list()
         self.append_log("已启用全部步骤。")
+
+    # ---------- CaptureOverlayMixin 的钩子实现 ----------
+    # 采集管线的共享实现在 CaptureOverlayMixin 中，这里只提供主窗口特有的差异。
+
+    def _capture_index(self):
+        return self.current_task_index
+
+    def _capture_task_list(self):
+        return TASKS
+
+    def _capture_after_task_changed(self):
+        self.save_current_tasks()
+        self.refresh_task_list()
+        self.select_task_index(self.current_task_index)
+
+    def _capture_log(self, message):
+        self.append_log(message)
+
+    def _capture_notify_next_template_widgets(self, image_name):
+        self.next_template_edit.setText(image_name)
+        self._capture_set_wait_for_next()
+
+    def _capture_clear_extra_region_widgets(self):
+        for editor in (
+            self.region_left_edit, self.region_top_edit,
+            self.region_right_edit, self.region_bottom_edit,
+            self.region_center_x_edit, self.region_center_y_edit,
+        ):
+            editor.clear()
 
     @Slot()
     def clear_tasks(self):
@@ -5556,17 +5901,13 @@ class PySide6ScriptWindow(QMainWindow):
 
     @staticmethod
     def _float_value(value, fallback):
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return fallback
+        # 与蓝图窗口共用同一实现（此前 _float / _float_value 两份完全相同）
+        return _to_float(value, fallback)
 
     @staticmethod
     def _int_value(value):
-        try:
-            return int(float(value))
-        except (TypeError, ValueError):
-            return None
+        # 与蓝图窗口共用同一实现（此前 _int / _int_value 两份完全相同）
+        return _to_int(value)
 
     @classmethod
     def _parse_rect(cls, value):

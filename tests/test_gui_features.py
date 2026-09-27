@@ -1,0 +1,259 @@
+"""gui_pyside6 四项移植能力的回归测试。
+
+这四项能力原先只有 Tkinter 版 gui.py 具备，PySide6 版缺失：
+
+  1. 嵌套分组树渲染（PySide6 版把组全部平铺在顶层，忽略 parents 元数据）
+  2. 分组折叠状态持久化（PySide6 版只读 expanded，从不写入）
+  3. 蓝图缩放比例恢复（PySide6 版只写入 layout_data["zoom"]，打开时从不应用）
+  4. 跨预设复制选中项（PySide6 版实际是「整个预设另存为新名称」）
+
+测试用临时目录隔离数据文件，不触碰真实预设。
+"""
+
+import copy
+import json
+import os
+import tempfile
+import unittest
+import uuid
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PySide6.QtWidgets import QApplication
+
+import tasks
+
+_APP = QApplication.instance() or QApplication([])
+
+import gui_pyside6 as g
+
+
+class GuiFeatureTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._orig_presets = tasks.PRESETS_FILE
+        self._orig_tasks = tasks.TASKS_FILE
+        self._orig_save_presets = g.save_presets
+        self._orig_save_tasks = g.save_tasks
+        tasks.PRESETS_FILE = os.path.join(self._tmp.name, "saved_presets.json")
+        tasks.TASKS_FILE = os.path.join(self._tmp.name, "saved_tasks.json")
+        g.save_presets = tasks.save_presets
+        g.save_tasks = tasks.save_tasks
+        self.window = g.PySide6ScriptWindow()
+        self.mode = self.window.mode_combo.currentText() or "custom"
+
+    def tearDown(self):
+        self.window.close()
+        tasks.PRESETS_FILE = self._orig_presets
+        tasks.TASKS_FILE = self._orig_tasks
+        g.save_presets = self._orig_save_presets
+        g.save_tasks = self._orig_save_tasks
+        self._tmp.cleanup()
+
+    # ---------- 辅助 ----------
+
+    def _install_three_level_groups(self, collapse_child=False):
+        """建立 外(gr) -> 中(gc) -> 内(gg) 三层分组，并给每组放步骤。"""
+        self.window.mode_group_metadata[self.mode] = {
+            "names": {"gr": "外层", "gc": "中层", "gg": "内层"},
+            "colors": {"gr": "#eab308", "gc": "#06b6d4", "gg": "#16a34a"},
+            "expanded": {"gc": False} if collapse_child else {},
+            "order": ["gr", "gc", "gg"],
+            "parents": {"gr": None, "gc": "gr", "gg": "gc"},
+            "children": {"gr": ["gc"], "gc": ["gg"], "gg": []},
+        }
+        for index, task in enumerate(g.TASKS):
+            if index == 0:
+                task["group_id"] = "gg"
+            elif index == 1:
+                task["group_id"] = "gc"
+            else:
+                task["group_id"] = "gr"
+        self.window.refresh_task_list()
+
+    # ---------- 能力 1：嵌套分组树 ----------
+
+    def test_nested_groups_are_rendered_as_hierarchy(self):
+        self._install_three_level_groups()
+        top_count = self.window.task_list.topLevelItemCount()
+        self.assertEqual(top_count, 1, "三层嵌套只应有一个顶层项（根组）")
+
+        root = self.window.task_list.topLevelItem(0)
+        self.assertIn("外层", root.text(0))
+        child = root.child(0)
+        self.assertIn("中层", child.text(0))
+        grandchild = child.child(0)
+        self.assertIn("内层", grandchild.text(0))
+
+    def test_group_items_carry_group_role(self):
+        self._install_three_level_groups()
+        root = self.window.task_list.topLevelItem(0)
+        self.assertEqual(root.data(0, 256), "group", "组项应在 UserRole 标记为 group")
+
+    def test_tasks_are_placed_under_their_own_group(self):
+        self._install_three_level_groups()
+        root = self.window.task_list.topLevelItem(0)
+        child = root.child(0)
+        grandchild = child.child(0)
+        # 步骤 0 在内层组、步骤 1 在中层组、其余在外层组
+        self.assertEqual(grandchild.childCount(), 1)
+        self.assertEqual(grandchild.child(0).data(0, 256 + 1), 0)
+        self.assertEqual(child.childCount() - 1, 1, "中层组除子组外应有 1 个步骤")
+        self.assertEqual(root.childCount() - 1, len(g.TASKS) - 2)
+
+    def test_non_nested_groups_stay_flat(self):
+        """没有 parents 元数据时，各组仍应是顶层项（不破坏既有行为）。"""
+        self.window.mode_group_metadata[self.mode] = {
+            "names": {"ga": "甲", "gb": "乙"},
+            "colors": {}, "expanded": {}, "order": ["ga", "gb"],
+            "parents": {}, "children": {},
+        }
+        for index, task in enumerate(g.TASKS):
+            task["group_id"] = "ga" if index % 2 == 0 else "gb"
+        self.window.refresh_task_list()
+        self.assertEqual(self.window.task_list.topLevelItemCount(), 2)
+
+    # ---------- 能力 2：折叠状态持久化 ----------
+
+    def test_collapsing_group_writes_metadata(self):
+        self._install_three_level_groups()
+        child = self.window.task_list.topLevelItem(0).child(0)
+        child.setExpanded(False)
+        expanded = self.window.mode_group_metadata[self.mode]["expanded"]
+        self.assertIs(expanded.get("gc"), False, "折叠后应把 expanded[gc] 记为 False")
+
+    def test_expanding_group_writes_metadata(self):
+        self._install_three_level_groups(collapse_child=True)
+        child = self.window.task_list.topLevelItem(0).child(0)
+        self.assertFalse(child.isExpanded())
+        child.setExpanded(True)
+        expanded = self.window.mode_group_metadata[self.mode]["expanded"]
+        self.assertIs(expanded.get("gc"), True)
+
+    def test_collapse_state_persisted_to_disk(self):
+        self._install_three_level_groups()
+        self.window.task_list.topLevelItem(0).child(0).setExpanded(False)
+        self.window.save_current_tasks()
+        with open(tasks.PRESETS_FILE, encoding="utf-8") as handle:
+            payload = json.load(handle)
+        expanded = payload["__group_metadata__"][self.mode]["expanded"]
+        self.assertIs(expanded.get("gc"), False, "折叠状态应落盘")
+
+    def test_collapse_state_survives_rebuild(self):
+        self._install_three_level_groups()
+        self.window.task_list.topLevelItem(0).child(0).setExpanded(False)
+        self.window.refresh_task_list()
+        child = self.window.task_list.topLevelItem(0).child(0)
+        self.assertFalse(child.isExpanded(), "重建后应保持折叠")
+        root = self.window.task_list.topLevelItem(0)
+        self.assertTrue(root.isExpanded(), "根组未折叠过，应保持展开")
+
+    def test_task_item_expansion_is_ignored(self):
+        """步骤项的展开/折叠不应污染组元数据。"""
+        self._install_three_level_groups()
+        root = self.window.task_list.topLevelItem(0)
+        task_item = root.child(root.childCount() - 1)
+        self.assertNotEqual(task_item.data(0, 256), "group")
+        self.window._on_group_expanded_changed(task_item)
+        self.assertEqual(self.window.mode_group_metadata[self.mode]["expanded"], {})
+
+    # ---------- 能力 3：蓝图缩放恢复 ----------
+
+    def test_zoom_is_restored_from_layout_data(self):
+        window = g.BlueprintWindow(copy.deepcopy(g.TASKS), {"zoom": 1.8}, lambda *a: None, {}, self.window, {})
+        self.assertAlmostEqual(window.view.transform().m11(), 1.8, places=3)
+        window.close()
+
+    def test_zoom_defaults_to_one_when_absent(self):
+        window = g.BlueprintWindow(copy.deepcopy(g.TASKS), {}, lambda *a: None, {}, self.window, {})
+        self.assertAlmostEqual(window.view.transform().m11(), 1.0, places=3)
+        window.close()
+
+    def test_invalid_zoom_is_ignored(self):
+        for bad in (999, -1, 0, "abc", None):
+            with self.subTest(zoom=bad):
+                window = g.BlueprintWindow(
+                    copy.deepcopy(g.TASKS), {"zoom": bad}, lambda *a: None, {}, self.window, {}
+                )
+                self.assertAlmostEqual(window.view.transform().m11(), 1.0, places=3)
+                window.close()
+
+    def test_zoom_change_is_recorded(self):
+        window = g.BlueprintWindow(copy.deepcopy(g.TASKS), {}, lambda *a: None, {}, self.window, {})
+        # 模拟滚轮缩放：先改变画布变换，再触发记录（与 _on_zoom_changed 的调用场景一致）
+        window.view.scale(2.5, 2.5)
+        window._on_zoom_changed(window.view.transform().m11())
+        self.assertAlmostEqual(window.layout_data["zoom"], 2.5, places=3)
+
+    def test_out_of_range_zoom_is_not_recorded(self):
+        window = g.BlueprintWindow(copy.deepcopy(g.TASKS), {"zoom": 2.0}, lambda *a: None, {}, self.window, {})
+        window._on_zoom_changed(999)          # 超出允许范围，应被忽略
+        self.assertAlmostEqual(window.layout_data["zoom"], 2.0, places=3)
+        window._on_zoom_changed(0.01)         # 过小，同样忽略
+        self.assertAlmostEqual(window.layout_data["zoom"], 2.0, places=3)
+        window._on_zoom_changed("abc")        # 非数字，忽略且不抛异常
+        self.assertAlmostEqual(window.layout_data["zoom"], 2.0, places=3)
+        window.close()
+
+    # ---------- 能力 4：跨预设复制选中项 ----------
+
+    def test_copy_single_tasks(self):
+        copied = self.window._copy_selected_entries([("task", 0), ("task", 2)], [])
+        self.assertEqual(len(copied), 2)
+
+    def test_copied_tasks_get_new_ids(self):
+        original_ids = {str(task.get("id")) for task in g.TASKS}
+        copied = self.window._copy_selected_entries([("task", 0)], [])
+        self.assertNotIn(copied[0]["id"], original_ids, "副本应使用新 id")
+
+    def test_copy_group_includes_descendants(self):
+        self._install_three_level_groups()
+        copied = self.window._copy_selected_entries([("group", "gr")], [])
+        self.assertEqual(len(copied), len(g.TASKS), "选中根组应连带全部子组内的步骤")
+
+    def test_copied_group_is_renamed(self):
+        self._install_three_level_groups()
+        copied = self.window._copy_selected_entries([("group", "gr")], [])
+        group_ids = {task.get("group_id") for task in copied}
+        self.assertIn("gr_copy", group_ids, "被复制的组应改名为 <id>_copy")
+
+    def test_copied_group_name_avoids_collision(self):
+        """目标预设里已有 gr_copy 时，应继续加后缀。"""
+        self._install_three_level_groups()
+        target = [{"id": str(uuid.uuid4()), "group_id": "gr_copy"}]
+        copied = self.window._copy_selected_entries([("group", "gr")], target)
+        group_ids = {task.get("group_id") for task in copied}
+        self.assertNotIn("gr_copy", group_ids)
+        self.assertTrue(any(str(gid).startswith("gr_copy_") for gid in group_ids))
+
+    def test_internal_flow_next_is_remapped(self):
+        """副本内部保留原有先后连接关系。"""
+        first_id = g.TASKS[0].get("id")
+        g.TASKS[0]["flow_next"] = g.TASKS[1].get("id")
+        copied = self.window._copy_selected_entries([("task", 0), ("task", 1)], [])
+        self.assertEqual(copied[0]["flow_next"], copied[1]["id"])
+        g.TASKS[0].pop("flow_next", None)
+        self.assertIsNotNone(first_id)
+
+    def test_flow_next_to_outside_task_is_left_alone(self):
+        g.TASKS[0]["flow_next"] = g.TASKS[5].get("id")
+        copied = self.window._copy_selected_entries([("task", 0)], [])
+        self.assertEqual(copied[0]["flow_next"], g.TASKS[5].get("id"))
+        g.TASKS[0].pop("flow_next", None)
+
+    def test_copy_without_selection_returns_empty(self):
+        self.assertEqual(self.window._copy_selected_entries([], []), [])
+
+    def test_selected_copy_entries_reflects_selection(self):
+        window = self.window
+        window.task_list.clearSelection()
+        for index in range(window.task_list.topLevelItemCount()):
+            item = window.task_list.topLevelItem(index)
+            if item.data(0, 256) == "group":
+                item.setSelected(True)
+        entries = window._selected_copy_entries()
+        self.assertTrue(all(kind == "group" for kind, _ in entries))
+
+
+if __name__ == "__main__":
+    unittest.main()

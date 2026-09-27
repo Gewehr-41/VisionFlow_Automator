@@ -964,6 +964,11 @@ class BlueprintWindow(QMainWindow):
         self.view.group_toggle_requested.connect(self.toggle_group)
         self.view.node_toggle_requested.connect(self.toggle_collapse)
         self.view.wire_clicked.connect(self._on_wire_clicked)
+        # zoom_changed 此前从未 connect；接上它才能在滚轮缩放后立即持久化
+        self.view.zoom_changed.connect(self._on_zoom_changed)
+        # 恢复上次的缩放比例。此前 zoom 只写不读（只在 sync_positions 里写入
+        # layout_data["zoom"]，打开时从不应用），导致每次重开蓝图都回到 100%。
+        self._restore_saved_zoom()
 
         # 画布面板：工具栏 + 视图
         toolbar = QWidget()
@@ -1655,6 +1660,32 @@ class BlueprintWindow(QMainWindow):
                     item.setPos(round(item.x() / 20) * 20, round(item.y() / 20) * 20)
                 positions[str(item.index)] = (item.x(), item.y())
         self.layout_data["zoom"] = self.view.transform().m11()
+
+    def _restore_saved_zoom(self):
+        """把 layout_data["zoom"] 记录的比例应用到画布；非法值一律忽略。"""
+        try:
+            zoom = float(self.layout_data.get("zoom", 1.0))
+        except (TypeError, ValueError):
+            return
+        # 与滚轮缩放一致，限制在合理区间，避免存档里的异常值让画布不可用
+        if not 0.2 <= zoom <= 5.0 or abs(zoom - 1.0) < 1e-6:
+            return
+        self.view.scale(zoom, zoom)
+        self.view.centerOn(0, 0)
+
+    @Slot(float)
+    def _on_zoom_changed(self, zoom):
+        """滚轮缩放后立即记录比例，避免直接关窗时丢失。"""
+        try:
+            value = float(zoom)
+        except (TypeError, ValueError):
+            return
+        if not 0.2 <= value <= 5.0:
+            return
+        if self.layout_data.get("zoom") == value:
+            return
+        self.layout_data["zoom"] = value
+        self.save_layout()
 
     def set_grid_snap(self, enabled):
         self.grid_snap = enabled
@@ -3507,6 +3538,10 @@ class PySide6ScriptWindow(QMainWindow):
         self.task_list.order_changed.connect(self.persist_task_order)
         self.task_list.task_drop_requested.connect(self.reorder_task_from_tree)
         self.task_list.task_drop_to_end_requested.connect(self.move_task_to_end)
+        # 组折叠/展开状态需要持久化：此前只读取元数据里的 expanded，从不写入，
+        # 导致在界面上折叠组后重启即恢复展开（gui.py 的对应实现是完整的）。
+        self.task_list.itemExpanded.connect(self._on_group_expanded_changed)
+        self.task_list.itemCollapsed.connect(self._on_group_expanded_changed)
         self.task_buttons = []
         button_specs = [
             ("全选", self.select_all_tasks),
@@ -3826,23 +3861,118 @@ class PySide6ScriptWindow(QMainWindow):
         self._refresh_mode_combo(new_name)
         self.on_mode_selected(new_name)
 
+    def _selected_copy_entries(self):
+        """把当前多选结果整理成 [(kind, value)] 形式，kind 为 task 或 group。"""
+        entries = []
+        for index in self._selected_task_indices():
+            entries.append(("task", index))
+        for group_id in self._selected_group_ids():
+            entries.append(("group", group_id))
+        return entries
+
+    def _copy_selected_entries(self, selected_entries, target_tasks):
+        """把选中的步骤/组复制成新任务列表，供追加到目标预设。
+
+        规则（与 gui.py 的既有语义保持一致）：
+        - 选中组时连带其所有子组内的步骤；
+        - 被整体复制的组会改名为 "<原组id>_copy"，避免与目标预设里的组冲突；
+        - 每个步骤重新生成 id，并重映射副本内部的 flow_next 指向。
+        """
+        selected_task_indices = set()
+        selected_group_ids = set()
+        metadata = self.mode_group_metadata.get(self.mode_combo.currentText() or "custom", {})
+        for kind, value in selected_entries:
+            if kind == "task":
+                selected_task_indices.add(value)
+            elif kind == "group":
+                group_id = str(value)
+                selected_group_ids.add(group_id)
+                for descendant in self._group_descendants(metadata, group_id):
+                    selected_group_ids.add(str(descendant))
+
+        source_tasks = []
+        for index, task in enumerate(TASKS):
+            group_id = str(task.get("group_id") or "group_default")
+            if index in selected_task_indices or group_id in selected_group_ids:
+                source_tasks.append(task)
+        if not source_tasks:
+            return []
+
+        existing_group_ids = {
+            str(task.get("group_id"))
+            for task in target_tasks
+            if task.get("group_id") is not None
+        }
+        group_id_map = {}
+        for task in source_tasks:
+            source_group_id = str(task.get("group_id") or "group_default")
+            if source_group_id in selected_group_ids and source_group_id not in group_id_map:
+                candidate = f"{source_group_id}_copy"
+                suffix = 2
+                while candidate in existing_group_ids or candidate in group_id_map.values():
+                    candidate = f"{source_group_id}_copy_{suffix}"
+                    suffix += 1
+                group_id_map[source_group_id] = candidate
+
+        copied_tasks = []
+        copied_id_map = {}
+        for task in source_tasks:
+            copied_task = deepcopy(task)
+            source_group_id = str(task.get("group_id") or "group_default")
+            if source_group_id in group_id_map:
+                copied_task["group_id"] = group_id_map[source_group_id]
+                copied_task["group_name"] = f"{task.get('group_name', '默认分组')} 复制"
+            copied_task["id"] = str(uuid.uuid4())
+            copied_id_map[str(task.get("id"))] = copied_task["id"]
+            copied_tasks.append(copied_task)
+        # 副本内部保留原有的先后连接关系
+        for copied_task in copied_tasks:
+            flow_target = copied_task.get("flow_next")
+            if flow_target in copied_id_map:
+                copied_task["flow_next"] = copied_id_map[flow_target]
+        return copied_tasks
+
     @Slot()
     def copy_current_preset(self):
+        """把当前选中的组/步骤追加到另一个预设（与 gui.py 的既有语义一致）。
+
+        注意：本方法此前是「把整个预设另存为新名称」，与按钮文案、README
+        以及 Tkinter 版行为都不符，也没有读取选中项。现按 README 的语义重写。
+        """
+        entries = self._selected_copy_entries()
+        if not entries:
+            QMessageBox.warning(self, "无法复制", "请先在项目列表中选择要复制的组或步骤。")
+            return
+
         source_name = self.mode_combo.currentText() or "custom"
-        target_name, accepted = QInputDialog.getText(self, "复制预设", "新预设名称:")
-        target_name = target_name.strip()
-        if not accepted:
+        targets = sorted(name for name in self.mode_tasks if name != source_name)
+        if not targets:
+            QMessageBox.warning(self, "无法复制", "还没有其它预设可作为复制目标，请先新建一个预设。")
             return
-        if not target_name or target_name == "custom":
-            QMessageBox.warning(self, "名称无效", "请输入非 custom 的预设名称。")
+
+        target_name, accepted = QInputDialog.getItem(
+            self, "复制到预设", f"已选择 {len(entries)} 项，复制到:", targets, 0, False
+        )
+        if not accepted or not target_name:
             return
-        if target_name in self.mode_tasks:
-            QMessageBox.warning(self, "名称重复", "该预设已经存在。")
+        if target_name == source_name:
+            QMessageBox.warning(self, "无法复制", "不能复制到当前预设自身。")
             return
-        self.mode_tasks[target_name] = deepcopy(self.mode_tasks.get(source_name, TASKS))
+        if QMessageBox.question(self, "确认追加", f"确定把选中的组/步骤追加到预设“{target_name}”吗？") != QMessageBox.Yes:
+            return
+
+        # 先保存当前预设，确保源数据是最新的
+        self.save_current_tasks()
+        target_tasks = self.mode_tasks.setdefault(target_name, [])
+        copied = self._copy_selected_entries(entries, target_tasks)
+        if not copied:
+            QMessageBox.warning(self, "无法复制", "选中的组或步骤没有可复制的内容。")
+            return
+        target_tasks.extend(copied)
         self._save_presets()
         self._refresh_mode_combo(target_name)
         self.on_mode_selected(target_name)
+        self.append_log(f"已将 {len(copied)} 个步骤从“{source_name}”复制到预设“{target_name}”。")
 
     @Slot()
     def delete_current_preset(self):
@@ -3983,8 +4113,13 @@ class PySide6ScriptWindow(QMainWindow):
         self.task_list.clear()
         groups = {}
         group_metadata = self.mode_group_metadata.get(self.mode_combo.currentText() or "custom", {})
-        group_names = group_metadata.get("names", {}) if isinstance(group_metadata, dict) else {}
-        group_colors = group_metadata.get("colors", {}) if isinstance(group_metadata, dict) else {}
+        if not isinstance(group_metadata, dict):
+            group_metadata = {}
+        group_names = group_metadata.get("names", {}) if isinstance(group_metadata.get("names"), dict) else {}
+        group_colors = group_metadata.get("colors", {}) if isinstance(group_metadata.get("colors"), dict) else {}
+        group_expanded = group_metadata.get("expanded", {}) if isinstance(group_metadata.get("expanded"), dict) else {}
+        group_parents = group_metadata.get("parents", {}) if isinstance(group_metadata.get("parents"), dict) else {}
+        group_children = group_metadata.get("children", {}) if isinstance(group_metadata.get("children"), dict) else {}
 
         def make_group(group_id):
             group_label = group_names.get(group_id) or ("默认分组" if group_id == "group_default" else group_id)
@@ -3993,46 +4128,84 @@ class PySide6ScriptWindow(QMainWindow):
             group.setData(0, Qt.UserRole, "group")
             group.setData(0, Qt.UserRole + 1, group_id)
             group.setFlags(group.flags() | Qt.ItemFlag.ItemIsAutoTristate | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsDragEnabled)
-            self.task_list.addTopLevelItem(group)
             groups[group_id] = group
             return group
 
-        for index, task in enumerate(TASKS):
-            task.setdefault("id", str(uuid.uuid4()))
+        def ensure_group(group_id):
+            """按需创建组控件；若元数据里声明了父组，则挂到父组下面形成嵌套。"""
+            group_id = str(group_id)
+            if group_id in groups:
+                return groups[group_id]
+            group = make_group(group_id)
+            parent_id = group_parents.get(group_id)
+            parent_item = None
+            seen = set()
+            # 沿 parents 向上找第一个已存在的祖先，避免环或缺失导致的死循环
+            while parent_id is not None and str(parent_id) not in seen:
+                seen.add(str(parent_id))
+                if str(parent_id) in groups:
+                    parent_item = groups[str(parent_id)]
+                    break
+                parent_id = group_parents.get(str(parent_id))
+            if parent_item is not None:
+                parent_item.addChild(group)
+            else:
+                self.task_list.addTopLevelItem(group)
+            return group
+
+        def make_task_item(index, task):
             description = task.get("description", task.get("template", "未命名步骤"))
             task_type = task.get("type", "normal")
-            group_id = str(task.get("group_id") or "group_default")
-            if group_id not in groups:
-                make_group(group_id)
             detour_status = " · 已启用迂回" if task.get("detour_enabled") else ""
             item = QTreeWidgetItem([f"{index + 1:02d}. [{task_type}] {description}{detour_status}"])
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsDragEnabled)
             item.setData(0, Qt.UserRole, str(task.get("id", index)))
             item.setData(0, Qt.UserRole + 1, index)
             item.setCheckState(0, Qt.CheckState.Checked if task.get("enabled", True) else Qt.CheckState.Unchecked)
-            groups[group_id].addChild(item)
-            groups[group_id].setExpanded(True)
+            return item
 
-        # 显示元数据中存在但暂无步骤的组（保证“新增组”后立即可见）
-        if isinstance(group_metadata, dict):
-            group_order = group_metadata.get("order", []) if isinstance(group_metadata.get("order"), list) else []
-            for group_id in group_order:
-                gid = str(group_id)
-                if gid in groups or gid not in group_names:
-                    continue
-                make_group(gid)
+        # 先建出所有组（含仅有元数据、暂无步骤的空组）。
+        # ensure_group 会在创建时按 parents 元数据把子组挂到父组下面；
+        # 父组即使还没被创建，也会在 child 挂载时由 Qt 自动补为父项，
+        # 这里按 order/names/children 的顺序预先建好，保证层级稳定。
+        for group_id in (group_metadata.get("order") or []):
+            ensure_group(group_id)
+        for group_id in group_names:
+            ensure_group(group_id)
+        for group_id in group_children:
+            ensure_group(group_id)
 
-        # 依据子步骤启用情况回填组勾选状态
-        for group in groups.values():
-            states = [group.child(i).checkState(0) == Qt.CheckState.Checked for i in range(group.childCount())]
-            if not states:
-                group.setCheckState(0, Qt.CheckState.Checked)
-            elif all(states):
+        for index, task in enumerate(TASKS):
+            task.setdefault("id", str(uuid.uuid4()))
+            group_id = str(task.get("group_id") or "group_default")
+            ensure_group(group_id).addChild(make_task_item(index, task))
+
+        # 依据子步骤启用情况回填组勾选状态（自底向上，先算子组再算父组）
+        def refresh_group_check_state(group):
+            for child_index in range(group.childCount()):
+                child = group.child(child_index)
+                if child.data(0, Qt.UserRole) == "group":
+                    refresh_group_check_state(child)
+            states = []
+            for child_index in range(group.childCount()):
+                child = group.child(child_index)
+                if child.data(0, Qt.UserRole) == "group":
+                    states.append(child.checkState(0) != Qt.CheckState.Unchecked)
+                else:
+                    states.append(child.checkState(0) == Qt.CheckState.Checked)
+            if not states or all(states):
                 group.setCheckState(0, Qt.CheckState.Checked)
             elif any(states):
                 group.setCheckState(0, Qt.CheckState.PartiallyChecked)
             else:
                 group.setCheckState(0, Qt.CheckState.Unchecked)
+
+        for group_index in range(self.task_list.topLevelItemCount()):
+            refresh_group_check_state(self.task_list.topLevelItem(group_index))
+
+        # 恢复各组折叠状态；未记录过的组默认展开
+        for group_id, group in groups.items():
+            group.setExpanded(bool(group_expanded.get(group_id, True)))
 
         self.task_list.blockSignals(False)
         if TASKS:
@@ -4042,13 +4215,25 @@ class PySide6ScriptWindow(QMainWindow):
             self.clear_editor()
 
     def select_task_index(self, index):
-        for group_index in range(self.task_list.topLevelItemCount()):
-            group = self.task_list.topLevelItem(group_index)
-            for child_index in range(group.childCount()):
-                child = group.child(child_index)
-                if child.data(0, Qt.UserRole + 1) == index:
-                    self.task_list.setCurrentItem(child)
-                    return
+        item = self._find_task_item(index)
+        if item is not None:
+            self.task_list.setCurrentItem(item)
+
+    def _find_task_item(self, index):
+        """在（可能嵌套的）任务树中按步骤下标查找对应的树项。"""
+        def search(parent):
+            count = parent.childCount() if hasattr(parent, "childCount") else parent.topLevelItemCount()
+            for position in range(count):
+                child = parent.child(position) if hasattr(parent, "child") else parent.topLevelItem(position)
+                if child.data(0, Qt.UserRole) != "group" and child.data(0, Qt.UserRole + 1) == index:
+                    return child
+                if child.data(0, Qt.UserRole) == "group":
+                    found = search(child)
+                    if found is not None:
+                        return found
+            return None
+
+        return search(self.task_list)
 
     def _task_index_from_item(self, item):
         if item is None or item.data(0, Qt.UserRole) == "group":
@@ -4173,6 +4358,29 @@ class PySide6ScriptWindow(QMainWindow):
         self.refresh_task_list()
         self._load_editor_for_group(group_id)
         self.append_log(f"已应用组设置: {name}")
+
+    @Slot(QTreeWidgetItem)
+    def _on_group_expanded_changed(self, item):
+        """把组的展开/折叠状态写入分组元数据并落盘。
+
+        只处理组项；步骤项的展开状态无意义，直接忽略。
+        写入内容进入 __group_metadata__[预设]["expanded"]，重启后由
+        refresh_task_list 读回恢复。
+        """
+        if item is None or item.data(0, Qt.UserRole) != "group":
+            return
+        group_id = str(item.data(0, Qt.UserRole + 1))
+        mode = self.mode_combo.currentText() or "custom"
+        metadata = self.mode_group_metadata.setdefault(mode, {})
+        expanded = metadata.get("expanded")
+        if not isinstance(expanded, dict):
+            expanded = {}
+            metadata["expanded"] = expanded
+        state = bool(item.isExpanded())
+        if expanded.get(group_id) == state:
+            return
+        expanded[group_id] = state
+        self._save_presets()
 
     def _rebuild_special_form(self, task):
         while self.special_form.rowCount():

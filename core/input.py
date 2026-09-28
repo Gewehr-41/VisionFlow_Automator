@@ -1,4 +1,6 @@
+# 输入工具：通过 Win32 API 或 PyAutoGUI 模拟鼠标点击和拖曳。
 import ctypes
+import threading
 import time
 
 import pyautogui
@@ -9,7 +11,41 @@ from config import CLICK_DELAY
 user32 = ctypes.windll.user32
 MOUSEEVENTF_LEFTDOWN = 0x0002
 MOUSEEVENTF_LEFTUP = 0x0004
-MOUSEEVENTF_MOVE = 0x0001
+
+# 记录脚本当前按住的键盘按键，便于紧急停止时统一释放。
+_PRESSED_KEYS = set()
+_PRESSED_KEYS_LOCK = threading.Lock()
+
+
+def key_down(key):
+    """按住指定键并登记，用于紧急停止时释放。"""
+    pyautogui.keyDown(key)
+    with _PRESSED_KEYS_LOCK:
+        _PRESSED_KEYS.add(str(key).lower())
+
+
+def key_up(key):
+    """松开指定键并取消登记。"""
+    pyautogui.keyUp(key)
+    with _PRESSED_KEYS_LOCK:
+        _PRESSED_KEYS.discard(str(key).lower())
+
+
+def release_all_inputs():
+    """紧急停止时释放脚本当前按住的全部键盘按键和鼠标左键，避免键位卡死。"""
+    with _PRESSED_KEYS_LOCK:
+        pressed = list(_PRESSED_KEYS)
+        _PRESSED_KEYS.clear()
+    for key in pressed:
+        try:
+            pyautogui.keyUp(key)
+        except Exception:
+            pass
+    try:
+        user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+    except Exception:
+        pass
+
 
 
 def _win32_click(target_x, target_y, duration=CLICK_DELAY):

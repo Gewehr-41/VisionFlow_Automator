@@ -1,3 +1,4 @@
+# 屏幕与窗口工具：捕获目标区域并处理窗口坐标转换。
 import cv2
 import numpy as np
 import mss
@@ -59,11 +60,3 @@ def capture_screen():
     screenshot = sct.grab(monitor)
     frame = np.array(screenshot)
     return cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-
-
-def show_preview(frame):
-    """显示调试窗口。"""
-    cv2.imshow("Preview", frame)
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        return False
-    return True

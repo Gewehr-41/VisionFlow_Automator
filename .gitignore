@@ -1,0 +1,47 @@
+# Git 忽略规则 — VisionFlow Automator
+# 创建于 2026-09-28，建立版本控制时添加。
+# 目的：只跟踪「源码 + 运行时数据 + 文档」，排除可再生的环境与缓存。
+
+# ---- Python 虚拟环境（197 MB，且当前缺 PySide6，可由 requirements.txt 重建）----
+.venv/
+venv/
+env/
+
+# ---- Python 字节码缓存（可再生成）----
+__pycache__/
+*.py[cod]
+*$py.class
+
+# ---- 打包 / 分发产物 ----
+build/
+dist/
+*.egg-info/
+*.spec
+# 例外：本项目唯一的构建规格要入库（其余 .spec 是临时试验产物）
+!VisionFlow_Automator.spec
+
+# ---- 编辑器 / IDE ----
+.idea/
+*.swp
+*.swo
+*~
+
+# ---- 操作系统 ----
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# ---- 日志与临时文件 ----
+*.log
+*.tmp
+*.bak
+
+# ---- 说明 ----
+# 以下文件【故意纳入版本控制】，不要忽略：
+#   *.py                 全部源码
+#   saved_*.json         4 个运行时数据文件（任务 / 预设 / 蓝图布局 / 蓝图连接）
+#   icons/*.png          模板图片，删除了无法恢复
+#   icons/*.svg          Qt 复选框样式资源
+#   *.md                 文档
+#   *.bat / *.vbs        启动脚本
+#   tests/               测试

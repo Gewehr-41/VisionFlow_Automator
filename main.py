@@ -1,17 +1,16 @@
 # 自动化执行引擎：负责模板识别后的步骤执行、等待、跳转和运行控制。
+# 注意：本模块是 GUI 无关的执行引擎，不在导入期依赖任何 GUI 工具包。
+#       tkinter 只在 show_complete_message() 内部按需延迟导入，用于无 GUI 调用方的兜底提示。
 import time
-import tkinter as tk
 import uuid
-from tkinter import messagebox
 
 import numpy as np
-import pyautogui
 
 import config
-from config import ICON_DIR, THRESHOLD, SHOW_PREVIEW, DEFAULT_TIMEOUT, DEFAULT_POLL_INTERVAL, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP
+from config import ICON_DIR, THRESHOLD, DEFAULT_TIMEOUT, DEFAULT_POLL_INTERVAL, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP
 from core.screen import capture_screen, to_global_position, get_window_rect
-from core.template_match import load_templates, match_all_templates
-from core.input import click_position, click_global_position, drag_position
+from core.template_match import StopExecution, load_templates, match_all_templates
+from core.input import click_position, click_global_position, drag_position, key_down, key_up
 from tasks import TASKS
 from nodes import NodeGraph, TaskNode
 
@@ -110,12 +109,29 @@ def find_leftmost_match(results, template_names):
     return best_name, best_center, best_conf
 
 
+def templates_for_names(template_names):
+    """只取出真正需要匹配的模板，避免每轮扫描整个模板库。
+
+    templates 是全局的 {模板名: 图像} 字典。wait_until_* / click_template_name
+    这类轮询只需 1 个或几个模板，却曾把整个字典传进 match_all_templates，
+    在多尺度下每轮会做「模板总数 × 尺度数」次 matchTemplate。
+    不存在的模板名会被忽略（与逐名查找失败的语义一致）。
+    """
+    names = normalize_template_names(template_names)
+    if not names:
+        return {}
+    return {name: templates[name] for name in names if name in templates}
+
+
 def wait_until_template_disappears(template_name, timeout=DEFAULT_TIMEOUT, poll_interval=DEFAULT_POLL_INTERVAL, stop_flag=None, threshold=THRESHOLD):
     """等待模板消失。"""
+    match_templates = templates_for_names(template_name)
+    if not match_templates:
+        return True
     start = time.time()
     while True:
         screen_img = capture_screen()
-        results = match_all_templates(screen_img, templates, threshold, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP)
+        results = match_all_templates(screen_img, match_templates, threshold, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP, stop_flag=stop_flag)
         center, _ = results.get(template_name, (None, -1.0))
         if center is None:
             return True
@@ -127,10 +143,13 @@ def wait_until_template_disappears(template_name, timeout=DEFAULT_TIMEOUT, poll_
 
 def wait_until_template_appears(template_name, timeout=DEFAULT_TIMEOUT, poll_interval=DEFAULT_POLL_INTERVAL, search_rect=None, stop_flag=None, threshold=THRESHOLD):
     """等待模板出现。"""
+    match_templates = templates_for_names(template_name)
+    if not match_templates:
+        return None, None
     start = time.time()
     while True:
         screen_img = capture_screen()
-        results = match_all_templates(screen_img, templates, threshold, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP, search_rect=search_rect)
+        results = match_all_templates(screen_img, match_templates, threshold, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP, search_rect=search_rect, stop_flag=stop_flag)
         center, conf = results.get(template_name, (None, -1.0))
         if center is not None:
             return center, conf
@@ -145,11 +164,14 @@ def wait_until_any_template_appears(template_names, timeout=DEFAULT_TIMEOUT, pol
     template_names = normalize_template_names(template_names)
     if not template_names:
         return None, None, -1.0
+    match_templates = templates_for_names(template_names)
+    if not match_templates:
+        return None, None, -1.0
 
     start = time.time()
     while True:
         screen_img = capture_screen()
-        results = match_all_templates(screen_img, templates, threshold, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP, search_rect=search_rect)
+        results = match_all_templates(screen_img, match_templates, threshold, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP, search_rect=search_rect, stop_flag=stop_flag)
         name, center, conf = find_first_match(results, template_names)
         if center is not None:
             return name, center, conf
@@ -168,12 +190,20 @@ def wait_for_step_result(task, template_name=None, next_template_names=None, tim
     effective_timeout = get_task_timeout(task) if timeout is None else float(timeout)
     start_time = time.time()
     next_names = normalize_template_names(next_template_names or task.get("next_template") or task.get("next_templates"))
+    # 本函数只关心「当前模板是否消失」和「下一模板是否出现」，
+    # 因此只匹配这两个集合，而不是整个模板库。
+    needed_names = list(next_names)
+    if template_name and template_name not in needed_names:
+        needed_names.append(template_name)
+    match_templates = templates_for_names(needed_names)
+    if not match_templates:
+        return True
     baseline = capture_screen()
     screen_changed = False
 
     while True:
         current = capture_screen()
-        results = match_all_templates(current, templates, get_task_threshold(task), USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP, search_rect=task.get("next_match_rect") or task.get("next_search_rect"))
+        results = match_all_templates(current, match_templates, get_task_threshold(task), USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP, search_rect=task.get("next_match_rect") or task.get("next_search_rect"), stop_flag=stop_flag)
         diff = float(np.mean(np.abs(current.astype(np.int16) - baseline.astype(np.int16))))
         if diff > 2.0:
             screen_changed = True
@@ -212,7 +242,14 @@ def wait_for_step_result(task, template_name=None, next_template_names=None, tim
 
 
 def show_complete_message():
-    """弹出结束提示。"""
+    """兜底结束提示（仅在调用方未提供 completion_callback / message_callback 时使用）。
+
+    tkinter 在这里延迟导入，使 main.py 在导入期不依赖任何 GUI 工具包。
+    推荐 GUI 调用方显式传入回调，自行决定提示方式。
+    """
+    import tkinter as tk
+    from tkinter import messagebox
+
     root = tk.Tk()
     root.withdraw()
     messagebox.showinfo("脚本执行完成", "所有步骤已完成，脚本已停止运行。")
@@ -248,7 +285,7 @@ def execute_stage_farm_task(task, stop_flag=None, log_callback=None):
             return False
 
         screen_img = capture_screen()
-        results = match_task_templates(task, screen_img, stage_templates)
+        results = match_task_templates(task, screen_img, stage_templates, stop_flag=stop_flag)
         match_name, center, conf = find_first_match(results, stage_templates)
 
         if center is not None:
@@ -353,7 +390,7 @@ def resolve_search_rects(task):
     return [rect] if rect is not None else []
 
 
-def match_in_expanding_rect(screen_img, match_templates, search_rect, threshold=THRESHOLD):
+def match_in_expanding_rect(screen_img, match_templates, search_rect, threshold=THRESHOLD, stop_flag=None):
     """先匹配框选区域，未命中时以中心为基准逐次扩大到整张截图。"""
     screen_height, screen_width = screen_img.shape[:2]
     left, top, right, bottom = map(int, search_rect)
@@ -368,6 +405,8 @@ def match_in_expanding_rect(screen_img, match_templates, search_rect, threshold=
     half_height = max(0.5, (bottom - top) / 2.0)
 
     while True:
+        if stop_flag is not None and stop_flag.is_set():
+            raise StopExecution()
         current_rect = (
             max(0, int(center_x - half_width)),
             max(0, int(center_y - half_height)),
@@ -382,6 +421,7 @@ def match_in_expanding_rect(screen_img, match_templates, search_rect, threshold=
             SCALE_RANGE,
             SCALE_STEP,
             search_rect=current_rect,
+            stop_flag=stop_flag,
         )
         if any(center is not None for center, _ in results.values()):
             return results
@@ -405,7 +445,7 @@ def task_match_region(task):
     return None, None
 
 
-def match_task_templates(task, screen_img, template_names=None):
+def match_task_templates(task, screen_img, template_names=None, stop_flag=None):
     """仅在配置的识别区域内匹配，否则进行全屏匹配。"""
     names = normalize_template_names(template_names) if template_names is not None else None
     if names:
@@ -417,7 +457,8 @@ def match_task_templates(task, screen_img, template_names=None):
         return {}
 
     search_rects = resolve_search_rects(task)
-    if len(search_rects) > 1:
+    if search_rects:
+        # 逐条尝试所有已配置的区域，取每张模板的最高分
         merged_results = {}
         for search_rect in search_rects:
             results = match_all_templates(
@@ -428,14 +469,29 @@ def match_task_templates(task, screen_img, template_names=None):
                 SCALE_RANGE,
                 SCALE_STEP,
                 search_rect=search_rect,
+                stop_flag=stop_flag,
             )
             for name, result in results.items():
                 current = merged_results.get(name)
                 if current is None or result[1] > current[1]:
                     merged_results[name] = result
-        return merged_results
-    if search_rects:
-        return match_in_expanding_rect(screen_img, match_templates, search_rects[0], get_task_threshold(task))
+        # 命中判据必须是"真的有区域给出了位置"，**不能**写成 `if merged_results:`。
+        # match_all_templates 对每张模板都会返回一条记录（未命中是 (None, 最高分)），
+        # 所以 merged_results 永远非空 —— 用字典本身当判据会让下面的扩容兜底变成
+        # 死代码：只要目标不在记录的区域里就永远识别不到。这是 2026-09-28 引入并
+        # 修复的回归（见 §8.1 #68），测试之所以没抓到是因为替身未命中时返回 {}，
+        # 而真实实现返回 {name: (None, 分数)}。
+        if any(center is not None for center, _ in merged_results.values()):
+            return merged_results
+        # 所有区域都没命中 -> 统一退回"从第 1 个区域起逐次扩大到全屏"
+        #
+        # 此前只有"恰好 1 个区域"才走这条兜底，配了多个区域就不扩容 —— 于是给一个
+        # 步骤多框一段区域，反而会让原本能靠扩容补救的第一步失效，语义前后不一致。
+        # 现在两种情况共用同一条兜底：
+        #   - 1 个区域时行为与旧版完全一致（match_in_expanding_rect 本身就是
+        #     "先试该区域、未命中再以中心逐次扩大"），且命中时还少走一趟扩容循环；
+        #   - N 个区域时先逐条尝试（多区域的优势），全都没命中才扩容，代价最多一次。
+        return match_in_expanding_rect(screen_img, match_templates, search_rects[0], get_task_threshold(task), stop_flag=stop_flag)
 
     center, radius = task_match_region(task)
     return match_all_templates(
@@ -447,24 +503,28 @@ def match_task_templates(task, screen_img, template_names=None):
         SCALE_STEP,
         search_center=center,
         search_radius=radius,
+        stop_flag=stop_flag,
     )
 
 
 def click_template_name(template_name, offset=(0, 0), timeout=DEFAULT_TIMEOUT, fallback_position=None, log_callback=None, poll_interval=DEFAULT_POLL_INTERVAL, stop_flag=None, threshold=THRESHOLD):
     """持续扫描目标模板；记录点击点只用于点击，四元组参数才用于限制识别区域。"""
+    # 全程只关心这一个模板，按名取出即可，不必每轮扫描整个模板库。
+    match_templates = templates_for_names([template_name])
     start_time = time.time()
     while True:
         if stop_flag is not None and stop_flag.is_set():
             return False
         if timeout > 0 and (time.time() - start_time) > timeout:
             break
+        if not match_templates:
+            break
 
         screen_img = capture_screen()
         if isinstance(fallback_position, (list, tuple)) and len(fallback_position) >= 4:
-            match_templates = {template_name: templates[template_name]} if template_name in templates else {}
-            results = match_in_expanding_rect(screen_img, match_templates, fallback_position, threshold)
+            results = match_in_expanding_rect(screen_img, match_templates, fallback_position, threshold, stop_flag=stop_flag)
         else:
-            results = match_all_templates(screen_img, templates, threshold, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP)
+            results = match_all_templates(screen_img, match_templates, threshold, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP, stop_flag=stop_flag)
         center, conf = results.get(template_name, (None, -1.0))
         if center is not None:
             click_target = None
@@ -508,11 +568,11 @@ def execute_keyboard_move_task(task, stop_flag=None, log_callback=None):
         key = str(step.get("key", "W")).upper()
         duration = float(step.get("duration", 1.0))
         log(f"  按键: {key} 持续 {duration} 秒", log_callback)
-        pyautogui.keyDown(key)
+        key_down(key)
         if interruptible_sleep(duration, stop_flag):
-            pyautogui.keyUp(key)
+            key_up(key)
             return False
-        pyautogui.keyUp(key)
+        key_up(key)
 
     wait_for_step_result(task, template_name=task.get("template"), next_template_names=task.get("next_template"), log_callback=log_callback, stop_flag=stop_flag)
     if after_wait > 0:
@@ -541,11 +601,11 @@ def execute_key_press_task(task, stop_flag=None, log_callback=None):
             log("用户中止脚本执行。", log_callback)
             return False
 
-    pyautogui.keyDown(key)
+    key_down(key)
     if interruptible_sleep(max(0.05, hold_time), stop_flag):
-        pyautogui.keyUp(key)
+        key_up(key)
         return False
-    pyautogui.keyUp(key)
+    key_up(key)
     after_wait = max(0.0, float(task.get("after_wait", 0.2)))
     if after_wait > 0:
         log(f"  按键完成后等待 {after_wait} 秒。", log_callback)
@@ -673,7 +733,7 @@ def execute_click_until_gone_task(task, stop_flag=None, log_callback=None):
                 return continue_clicking_after_success()
             center = None
         else:
-            results = match_task_templates(task, screen_img, template_names)
+            results = match_task_templates(task, screen_img, template_names, stop_flag=stop_flag)
             matched_name, center, confidence = find_first_match(results, template_names)
         if center is not None:
             if not continue_clicking_after_success():
@@ -730,7 +790,7 @@ def execute_condition_task(task, stop_flag=None, log_callback=None):
     if not template_names:
         raise ValueError("条件节点必须配置 condition_template。")
     screen_img = capture_screen()
-    results = match_all_templates(screen_img, templates, get_task_threshold(task), USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP, search_rect=task.get("search_rect"))
+    results = match_all_templates(screen_img, templates_for_names(template_names), get_task_threshold(task), USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP, search_rect=task.get("search_rect"), stop_flag=stop_flag)
     matches = [results.get(name, (None, -1.0))[0] is not None for name in template_names]
     operator = str(task.get("condition_operator", "any" if len(matches) > 1 else "all")).lower()
     if operator == "all":
@@ -837,7 +897,7 @@ def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True):
             return False
 
         screen_img = capture_screen()
-        results = match_task_templates(task, screen_img, template_names)
+        results = match_task_templates(task, screen_img, template_names, stop_flag=stop_flag)
         if task.get("type") == "advanced":
             matched_name, center, conf = find_leftmost_match(results, template_names)
         else:
@@ -948,8 +1008,12 @@ def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True):
             return False
 
 
-def run_task_queue(tasks, loop=False, stop_flag=None, log_callback=None, execution_callback=None, execution_result_callback=None, pause_flag=None, single_step_flag=None, start_node_id=None, completion_callback=None):
-    """按顺序执行任务列表。"""
+def run_task_queue(tasks, loop=False, stop_flag=None, log_callback=None, execution_callback=None, execution_result_callback=None, pause_flag=None, single_step_flag=None, start_node_id=None, completion_callback=None, message_callback=None):
+    """按顺序执行任务列表。
+
+    message_callback: 可选的成功提示回调（无参数）。GUI 调用方应传入它，
+                      以便用界面自己的弹窗替代 tkinter 兜底提示。
+    """
     global _active_pause_flag, _single_step_active
     _active_pause_flag = pause_flag
     _single_step_active = False
@@ -1052,6 +1116,9 @@ def run_task_queue(tasks, loop=False, stop_flag=None, log_callback=None, executi
                             continue
                         else:
                             log(f"  主流程编号 {jump_target} 不在当前已启用任务中，跳转忽略。", log_callback)
+                except StopExecution:
+                    log("用户中止脚本执行。", log_callback)
+                    return
                 except RuntimeError as e:
                     result_state = "timeout" if "超时" in str(e) or "timeout" in str(e).lower() else "failed"
                     if execution_result_callback:
@@ -1059,6 +1126,8 @@ def run_task_queue(tasks, loop=False, stop_flag=None, log_callback=None, executi
                     log(f"错误: {e}", log_callback)
                     if completion_callback:
                         completion_callback("failed")
+                    elif message_callback:
+                        message_callback()
                     else:
                         show_complete_message()
                     return
@@ -1095,6 +1164,8 @@ def run_task_queue(tasks, loop=False, stop_flag=None, log_callback=None, executi
             if not loop:
                 if completion_callback:
                     completion_callback("completed")
+                elif message_callback:
+                    message_callback()
                 else:
                     show_complete_message()
                 return

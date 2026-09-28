@@ -1,21 +1,18 @@
 [
   {
-    "id": "t1",
-    "type": "click_until_gone",
+    "id": "c82a3a11-7fd1-4c3e-b615-31e0333ba634",
+    "type": "normal",
     "mode": "custom",
     "enabled": true,
-    "description": "持续点击步骤",
-    "template": "img_a",
-    "templates": [
-      "img_a",
-      "img_b"
-    ],
+    "template": "new_step, 16",
+    "description": "识别活动层",
     "click": true,
-    "click_interval": 0.5,
-    "stop_delay": 0.0,
-    "timeout": 30.0,
-    "continue_after_timeout": false,
-    "stop_on_change": false,
-    "required": true
+    "required": true,
+    "threshold": 0.8,
+    "timeout": 5.0,
+    "after_wait": 0.25,
+    "click_requires_match": true,
+    "wait_for": "time",
+    "optional": false
   }
 ]

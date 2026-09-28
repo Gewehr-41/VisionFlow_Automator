@@ -1,0 +1,44 @@
+# VisionFlow Automator — Python 依赖清单
+# 创建于 2026-09-28。
+#
+# 版本号取自【系统 Python 3.10.8】，因为启动脚本
+# （启动新界面.bat）调用的是裸 `python`，
+# 即系统 Python。这是当前唯一能启动推荐界面 gui_pyside6.py 的环境。
+#
+# 安装：
+#     python -m pip install -r requirements.txt
+#
+# 【重要】项目根目录的 .venv 是不完整的：它缺少 PySide6，无法启动 gui_pyside6.py。
+#         而且它的 opencv-python 版本与系统 Python 不同（5.0.0.93 vs 4.12.0.88）。
+#         若要启用 .venv，请先用本文件补齐依赖，否则请忽略/删除 .venv。
+
+# ---- 核心运行依赖（对应系统 Python 实测可用版本）----
+PySide6==6.11.2              # 推荐界面 gui_pyside6.py：QThread / QGraphicsScene / 采集覆盖层
+                             # gui.py（Tkinter 版）不需要它
+numpy==2.2.6                 # 图像数组运算、画面变化检测
+opencv-python==4.12.0.88     # 模板匹配 cv2.matchTemplate
+mss==10.2.0                  # 屏幕捕获
+pyautogui==0.9.54            # 鼠标/键盘模拟
+pygetwindow==0.0.9           # 窗口枚举与窗口区域定位
+
+# ---- 间接依赖（通常随 pyautogui 自动安装，显式列出以便复现环境）----
+Pillow==12.0.0
+pyscreeze==1.0.1
+pytweening==1.2.0
+pymsgbox==2.0.1
+pyperclip==1.11.0
+mouseinfo==0.1.3
+PyRect==0.2.0
+
+# ---- 无第三方依赖的能力（标准库实现，无需声明）----
+#   core/hotkey.py   全局急停热键 → ctypes 调 user32.RegisterHotKey
+#   core/input.py    鼠标点击/拖曳 → ctypes 调 user32.mouse_event / SetCursorPos
+#   tasks.py         JSON 持久化  → json
+#   预设导入导出      ZIP 打包     → zipfile
+#
+# 项目【没有】数据库，【没有】网络通信。
+#
+# ---- 关于 opencv 版本 ----
+# 系统 Python 上是 4.12.0.88（当前验证可用）。
+# .venv 里装的是 5.0.0.93，两者存在差异；5.x 是较新的大版本，
+# 升级前建议先在测试步骤上验证 cv2.matchTemplate 的行为是否一致。

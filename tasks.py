@@ -1,10 +1,18 @@
 # 任务与预设数据层：定义任务结构并负责 JSON 数据的加载、迁移和保存。
 import json
 import os
+import tempfile
 import uuid
 from copy import deepcopy
-from nodes import normalize_task
 
+from diagnostics import warn
+from nodes import normalize_task
+import paths
+
+
+# 读取失败的提示统一走 diagnostics.warn（写 stderr + 收集起来给界面日志框）。
+# 启动脚本用隐藏窗口跑 python，stderr 用户看不到，所以"打印一行"不等于"用户会知道"；
+# 真正可见的那条路径是 gui_pyside6 的 _log_pending_warnings。
 
 def make_normal_task(task_id, mode, description, template, *, timeout=5, after_wait=0.25, wait_for="time", wait_timeout=2.5, offset=(0, 0), click=True, required=True):
     return {
@@ -60,27 +68,6 @@ def make_key_press_task(task_id, mode, description, key, *, delay_before=0.0, ho
     }
 
 
-def make_drag_task(task_id, mode, description, *, start=(0, 0), end=(100, 100), duration=0.25, after_wait=0.2, required=True):
-    return {
-        "id": task_id,
-        "mode": mode,
-        "type": "drag",
-        "enabled": True,
-        "description": description,
-        "template": "drag",
-        "start_x": start[0],
-        "start_y": start[1],
-        "end_x": end[0],
-        "end_y": end[1],
-        "duration": duration,
-        "click": False,
-        "after_wait": after_wait,
-        "wait_for": "time",
-        "wait_timeout": 1.0,
-        "required": required,
-    }
-
-
 DEFAULT_TASKS = [
     make_normal_task("daily_auto_loop", "daily", "打开自动循环界面", "auto"),
     make_keyboard_move_task(
@@ -106,10 +93,33 @@ DEFAULT_TASKS = [
     make_normal_task("side_road_special", "side", "歧路：识别并点击特殊关卡", "side_road"),
 ]
 
-TASKS_FILE = os.path.join(os.path.dirname(__file__), "saved_tasks.json")
-PRESETS_FILE = os.path.join(os.path.dirname(__file__), "saved_presets.json")
-BLUEPRINT_LAYOUT_FILE = os.path.join(os.path.dirname(__file__), "saved_blueprint_layouts.json")
-BLUEPRINT_GRAPH_FILE = os.path.join(os.path.dirname(__file__), "saved_blueprint_graphs.json")
+TASKS_FILE = paths.TASKS_FILE
+PRESETS_FILE = paths.PRESETS_FILE
+BLUEPRINT_LAYOUT_FILE = paths.BLUEPRINT_LAYOUT_FILE
+BLUEPRINT_GRAPH_FILE = paths.BLUEPRINT_GRAPH_FILE
+
+
+def dump_json_atomic(path, payload):
+    """原子写入 JSON：先写同目录临时文件，再 os.replace 覆盖目标。
+
+    避免"直接覆盖写入时崩溃/断电导致 JSON 被截断"的风险。
+    临时文件与目标同目录，保证 os.replace 在同盘内是原子操作。
+    """
+    directory = os.path.dirname(path)
+    file_descriptor, temp_path = tempfile.mkstemp(dir=directory, prefix=".tmp_", suffix=".json")
+    try:
+        with os.fdopen(file_descriptor, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, path)
+    except BaseException:
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
+        raise
+    return payload
 
 
 def _extract_task_list(payload):
@@ -136,8 +146,9 @@ def load_tasks():
             tasks = _extract_task_list(data)
             if tasks is not None:
                 return normalize_task_list(tasks)
-        except Exception:
-            pass
+            warn(f"警告: {TASKS_FILE} 内容不是任务列表，将使用内置默认任务。")
+        except Exception as exc:
+            warn(f"警告: 读取 {TASKS_FILE} 失败（{exc}），将使用内置默认任务。")
     return deepcopy(DEFAULT_TASKS)
 
 
@@ -165,9 +176,7 @@ def normalize_task_list(tasks):
 
 
 def save_tasks(tasks):
-    with open(TASKS_FILE, "w", encoding="utf-8") as f:
-        json.dump(tasks, f, ensure_ascii=False, indent=2)
-    return tasks
+    return dump_json_atomic(TASKS_FILE, tasks)
 
 
 TASKS = load_tasks()
@@ -211,7 +220,10 @@ def load_deleted_preset_names():
             data = json.load(f)
         deleted_names = data.get("__deleted__", []) if isinstance(data, dict) else []
         return {str(name) for name in deleted_names} if isinstance(deleted_names, list) else set()
-    except Exception:
+    except Exception as exc:
+        # 静默返回空集合的后果不只是"少了个名单"：删除名单一旦为空，保存时
+        # __deleted__ 会被写成 []，此前删掉的预设会重新出现在界面上。
+        warn(f"警告: 读取 {PRESETS_FILE} 的删除名单失败（{exc}），已删除的预设可能会重新出现。")
         return set()
 
 
@@ -237,8 +249,8 @@ def load_presets():
                         task_list = _extract_task_list(preset_value)
                         if task_list is not None:
                             presets[str(name)] = normalize_task_list(task_list)
-        except Exception:
-            pass
+        except Exception as exc:
+            warn(f"警告: 读取 {PRESETS_FILE} 失败（{exc}），用户预设将不会加载。")
     return presets
 
 
@@ -254,7 +266,8 @@ def load_preset_metadata():
             data = json.load(f)
         metadata = data.get("__group_metadata__", {}) if isinstance(data, dict) else {}
         return metadata if isinstance(metadata, dict) else {}
-    except Exception:
+    except Exception as exc:
+        warn(f"警告: 读取 {PRESETS_FILE} 的分组元数据失败（{exc}），分组名称与颜色将回退为默认值。")
         return {}
 
 
@@ -265,14 +278,13 @@ def load_blueprint_layouts():
         with open(BLUEPRINT_LAYOUT_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         return data if isinstance(data, dict) else {}
-    except Exception:
+    except Exception as exc:
+        warn(f"警告: 读取 {BLUEPRINT_LAYOUT_FILE} 失败（{exc}），蓝图的节点位置与缩放将不会恢复。")
         return {}
 
 
 def save_blueprint_layouts(layouts):
-    with open(BLUEPRINT_LAYOUT_FILE, "w", encoding="utf-8") as f:
-        json.dump(layouts, f, ensure_ascii=False, indent=2)
-    return layouts
+    return dump_json_atomic(BLUEPRINT_LAYOUT_FILE, layouts)
 
 
 def load_blueprint_graphs():
@@ -282,23 +294,20 @@ def load_blueprint_graphs():
         with open(BLUEPRINT_GRAPH_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         return data if isinstance(data, dict) else {}
-    except Exception:
+    except Exception as exc:
+        warn(f"警告: 读取 {BLUEPRINT_GRAPH_FILE} 失败（{exc}），蓝图图数据将不会加载。")
         return {}
 
 
 def save_blueprint_graphs(graphs):
-    with open(BLUEPRINT_GRAPH_FILE, "w", encoding="utf-8") as f:
-        json.dump(graphs, f, ensure_ascii=False, indent=2)
-    return graphs
+    return dump_json_atomic(BLUEPRINT_GRAPH_FILE, graphs)
 
 
 PRESET_METADATA = load_preset_metadata()
 
 
 def save_presets(presets):
-    with open(PRESETS_FILE, "w", encoding="utf-8") as f:
-        json.dump(presets, f, ensure_ascii=False, indent=2)
-    return presets
+    return dump_json_atomic(PRESETS_FILE, presets)
 
 
 def get_tasks_for_mode(mode_name):

@@ -13,6 +13,7 @@
 import glob
 import os
 import uuid
+from functools import partial
 
 from PySide6.QtCore import QRect, QTimer, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
@@ -24,6 +25,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
     QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -40,6 +42,10 @@ import config
 from main import reload_templates
 from tasks import TASKS
 from ui_common import (
+    _add_click_until_row,
+    _add_coordinate_row,
+    _add_form_row,
+    _add_region_selector_row,
     _capture_rect,
     _first_available_template_pixmap,
     _to_float,
@@ -1051,6 +1057,209 @@ class CaptureOverlayMixin:
         save_button.clicked.connect(save)
         layout.addWidget(save_button)
         dialog.exec()
+
+    # ---------- 编辑器面板的构造（两个窗口共用） ----------
+    #
+    # 两个窗口的编辑器面板此前是两份近乎逐行相同的构造代码（蓝图 168 行里有 85 行
+    # 与主窗口逐字相同，其中一段连续 41 行）。这里收成一份。
+    #
+    # 两边**确实不同**的地方用下面 3 个钩子表达（并写明理由）：
+    #   _editor_field_labels()           两个窗口这几个标签的文字历史上不同
+    #   _editor_special_form_container() 主窗口把「类型专用字段」套了 GroupBox，蓝图没有
+    #   _editor_preview_placeholder()    模板预览的占位文字
+    # 「应用修改」按钮直接接 `self._apply_editor`：两个窗口都提供这个同名方法
+    # （主窗口的实现转调 apply_selected_task），因此不需要额外的钩子。
+    # 结构等价性由控件树指纹保证（重构前后逐行一致），不是靠"看起来一样"。
+
+    def _editor_field_labels(self):
+        return {"threshold": "匹配阈值:", "timeout": "超时(秒):", "status": "状态:"}
+
+    def _editor_special_form_container(self):
+        return None, QFormLayout()
+
+    def _editor_preview_placeholder(self):
+        return ""
+
+    def _build_shared_editor_panel(self, layout):
+        """把编辑器面板的全部控件建好并放进 layout（两个窗口共用的那一份）。"""
+        labels = self._editor_field_labels()
+
+        self.selected_label = QLabel("未选择步骤")
+        self.selected_label.setWordWrap(True)
+        layout.addWidget(self.selected_label)
+
+        self.template_preview = QLabel(self._editor_preview_placeholder())
+        self.template_preview.setAlignment(Qt.AlignCenter)
+        self.template_preview.setFixedSize(180, 110)
+        self.template_preview.setFixedHeight(110)
+        self.template_preview.setStyleSheet("border: 1px solid #cbd5e1; background: #f8fafc;")
+        self.template_preview.setVisible(False)
+
+        # 注意：编辑器相关的按钮必须与模板预览一起放进 preview_row —— 直接
+        # editor_layout.addWidget(self.editor_actions) 会让无父控件的 QWidget 变成
+        # 独立顶层窗口（表现为弹窗）。
+        self.editor_actions = QWidget()
+        action_layout = QGridLayout(self.editor_actions)
+        action_layout.setContentsMargins(0, 0, 0, 0)
+        action_layout.setHorizontalSpacing(6)
+        action_layout.setVerticalSpacing(4)
+        for index, (label, handler) in enumerate((
+            ("绑定图片", self.select_template_file),
+            ("记录点击点", self.start_click_capture),
+            ("框选识别区域", self.start_region_capture),
+            ("清空识别区域", self.clear_match_region),
+        )):
+            button = QPushButton(label)
+            button.clicked.connect(handler)
+            action_layout.addWidget(button, index // 2, index % 2)
+        self.apply_button = QPushButton("应用修改")
+        self.apply_button.clicked.connect(self._apply_editor)
+        action_layout.addWidget(self.apply_button, 2, 0, 1, 2)
+
+        # 模板预览在左、操作按钮在右，避免按钮整行铺开导致右侧留白。
+        preview_row = QHBoxLayout()
+        preview_row.setContentsMargins(0, 0, 0, 0)
+        preview_row.setSpacing(8)
+        preview_row.addWidget(self.template_preview, 0, Qt.AlignTop)
+        preview_row.addWidget(self.editor_actions, 1)
+        layout.addLayout(preview_row)
+
+        # 步骤名称与启用状态对所有步骤类型可见
+        name_form = QFormLayout()
+        self.description_edit = QLineEdit()
+        self.enabled_checkbox = QCheckBox("启用步骤")
+        name_form.addRow("步骤名称:", self.description_edit)
+        name_form.addRow(labels["status"], self.enabled_checkbox)
+        layout.addLayout(name_form)
+
+        self.recognition_group = QWidget()
+        recognition_layout = QVBoxLayout(self.recognition_group)
+        recognition_layout.setContentsMargins(0, 0, 0, 0)
+
+        # 识别区域单独成组：它对 normal/advanced 与 click_until_gone 都可见
+        # （引擎两种步骤都会用到 match_rects，见 _set_region_group_visible）。
+        self.region_group = QGroupBox("识别区域")
+        region_layout = QVBoxLayout(self.region_group)
+        region_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.click_until_group = QGroupBox("持续点击设置")
+        click_until_layout = QVBoxLayout(self.click_until_group)
+        click_until_layout.setContentsMargins(0, 0, 0, 0)
+        self.click_until_template_edit = QLineEdit()
+        self.click_until_interval_edit = QLineEdit()
+        self.click_until_stop_delay_edit = QLineEdit()
+        self.click_until_timeout_edit = QLineEdit()
+        self.click_until_continue_checkbox = QCheckBox("超时后继续执行")
+        self.click_until_stop_on_change_checkbox = QCheckBox("画面变化视为成功")
+        add_click_until_row = partial(_add_click_until_row, click_until_layout)
+        add_click_until_row("模板名(逗号分隔):", self.click_until_template_edit)
+        add_click_until_row("点击间隔(秒):", self.click_until_interval_edit)
+        add_click_until_row("识别后停止延时(秒):", self.click_until_stop_delay_edit)
+        add_click_until_row("超时(秒):", self.click_until_timeout_edit)
+        click_until_layout.addWidget(self.click_until_continue_checkbox)
+        click_until_layout.addWidget(self.click_until_stop_on_change_checkbox)
+        self.click_until_group.setVisible(False)
+
+        self.template_edit = QLineEdit()
+        self.threshold_edit = QLineEdit()
+        self.timeout_edit = QLineEdit()
+        self.after_wait_edit = QLineEdit()
+        self.click_checkbox = QCheckBox("执行点击")
+        self.match_required_checkbox = QCheckBox("必须识别到图片再点击")
+        self.optional_checkbox = QCheckBox("可选步骤（跳过）")
+        self.click_x_edit = QLineEdit()
+        self.click_y_edit = QLineEdit()
+        self.region_selector = QComboBox()
+        self.region_status_label = QLabel("未设置")
+        self.region_delete_button = QPushButton("删除本区域")
+        self.region_delete_button.clicked.connect(self.delete_current_region)
+        self.region_selector.currentIndexChanged.connect(self._on_region_selector_changed)
+        self.next_template_edit = QLineEdit()
+        self.wait_for_combo = QComboBox()
+        self.wait_for_combo.addItems(["1. 画面结果变化", "2. 等待目标模板出现", "3. 画面变化后目标结果出现"])
+
+        add_row = partial(_add_form_row, recognition_layout)
+        add_coordinate_row = partial(_add_coordinate_row, recognition_layout)
+        add_row("模板名:", self.template_edit)
+        # 字段顺序与蓝图窗口保持一致。此前主窗口把匹配阈值放在坐标之后、超时放在
+        # 「下一模板」之后、完成后等待与等待方式挤在同一行，同一个数据在两个窗口里
+        # 的阅读顺序完全不同。
+        add_row(labels["threshold"], self.threshold_edit)
+        add_row(labels["timeout"], self.timeout_edit)
+        add_row("完成后等待(秒):", self.after_wait_edit)
+        # X/Y 成对并排（此前 4 个坐标各占一行，输入框 529px 却只填一个短数字）
+        # 「偏移」一行已于 2026-09-28 按所有者要求删除：界面不再提供偏移输入，
+        # 引擎仍读 task["offset"]（缺省 (0, 0)），已有数据里的值原样保留。
+        add_coordinate_row("点击:", self.click_x_edit, self.click_y_edit)
+
+        # 「识别区域」组：一个步骤可以有多条区域（引擎逐条尝试）。
+        # 区域**只能靠框选产生**，这里只负责查看/切换/删除，不提供手工输入坐标。
+        _add_region_selector_row(
+            region_layout, self.region_selector,
+            self.region_status_label, self.region_delete_button,
+        )
+
+        next_row = QHBoxLayout()
+        next_row.setContentsMargins(0, 0, 0, 0)
+        next_row.addWidget(QLabel("下一模板:"), 0)
+        next_row.addWidget(self.next_template_edit, 1)
+        next_button = QPushButton("选择图片")
+        next_button.clicked.connect(self.select_next_template_file)
+        next_row.addWidget(next_button)
+        next_capture_button = QPushButton("手动框选图片")
+        next_capture_button.clicked.connect(self.start_next_template_capture)
+        next_row.addWidget(next_capture_button)
+        next_region_button = QPushButton("框选出现位置")
+        next_region_button.clicked.connect(self.start_next_region_capture)
+        next_row.addWidget(next_region_button)
+        recognition_layout.addLayout(next_row)
+
+        wait_row = QHBoxLayout()
+        wait_row.setContentsMargins(0, 0, 0, 0)
+        wait_row.addWidget(QLabel("等待方式:"), 0)
+        wait_row.addWidget(self.wait_for_combo, 1)
+        recognition_layout.addLayout(wait_row)
+
+        options_row = QHBoxLayout()
+        options_row.setContentsMargins(0, 0, 0, 0)
+        options_row.addWidget(self.click_checkbox)
+        options_row.addWidget(self.match_required_checkbox)
+        options_row.addWidget(self.optional_checkbox)
+        self.detour_button = QPushButton("迂回")
+        self.detour_button.clicked.connect(self.open_detour_editor)
+        options_row.addWidget(self.detour_button)
+        options_row.addStretch(1)
+        recognition_layout.addLayout(options_row)
+
+        # 面板顺序：识别设置 -> 识别区域 -> 持续点击设置 -> 类型专用字段 -> 组设置
+        layout.addWidget(self.recognition_group)
+        layout.addWidget(self.region_group)
+        layout.addWidget(self.click_until_group)
+
+        special_group, special_form = self._editor_special_form_container()
+        self.special_form = special_form
+        self.special_edits = {}
+        if special_group is not None:
+            self.special_group = special_group
+            layout.addWidget(special_group)
+        else:
+            layout.addLayout(special_form)
+
+        # 组设置（选中组时显示）
+        self.group_form = QGroupBox("组设置")
+        group_form_layout = QFormLayout(self.group_form)
+        self.group_name_edit = QLineEdit()
+        self.group_color_button = QPushButton("选择组颜色")
+        self.group_color_button.clicked.connect(self._pick_group_color)
+        group_form_layout.addRow("组名称:", self.group_name_edit)
+        group_form_layout.addRow("组颜色:", self.group_color_button)
+        self.group_apply_button = QPushButton("应用组设置")
+        self.group_apply_button.clicked.connect(self._apply_group_editor)
+        group_form_layout.addRow(self.group_apply_button)
+        self.group_form.setVisible(False)
+        layout.addWidget(self.group_form)
+
+        layout.addStretch(1)
 
     # ---------- 编辑器面板「任务 -> 控件 / 控件 -> 任务」的公共核心 ----------
     #

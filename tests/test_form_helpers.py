@@ -197,6 +197,41 @@ class WindowLayoutTests(unittest.TestCase):
                         f"{name} 的{field} X/Y 应在同一行（否则 partial 绑定错了）",
                     )
 
+    def test_both_windows_use_the_shared_panel_builder(self):
+        """面板控件必须由 mixin 的共享构造器建；两个窗口的差异只能通过覆盖钩子表达。"""
+        for owner in (g.PySide6ScriptWindow, g.BlueprintWindow):
+            with self.subTest(owner=owner.__name__):
+                self.assertIs(getattr(owner, "_build_shared_editor_panel"),
+                              getattr(g.CaptureOverlayMixin, "_build_shared_editor_panel"),
+                              f"{owner.__name__} 应直接复用共享构造器")
+                # 「应用修改」两个窗口都提供同名槽（共享构造器直接接 _apply_editor）
+                self.assertTrue(callable(getattr(owner, "_apply_editor", None)),
+                                f"{owner.__name__} 缺少 _apply_editor 槽")
+        # 主窗口覆盖 3 个钩子（标签文字 / 类型专用字段容器 / 预览占位文字）
+        for name in ("_editor_field_labels", "_editor_special_form_container",
+                     "_editor_preview_placeholder"):
+            with self.subTest(hook=name):
+                self.assertIsNot(getattr(g.PySide6ScriptWindow, name),
+                                 getattr(g.CaptureOverlayMixin, name),
+                                 f"{name} 是主窗口的显式差异，应覆盖")
+
+    def test_shared_builder_creates_every_panel_widget(self):
+        """共享构造器少建一个控件就会在这里失败（两个窗口都要有）。"""
+        expected = (
+            "selected_label", "template_preview", "editor_actions", "apply_button",
+            "description_edit", "enabled_checkbox", "recognition_group", "region_group",
+            "click_until_group", "template_edit", "threshold_edit", "timeout_edit",
+            "after_wait_edit", "click_x_edit", "click_y_edit", "region_selector",
+            "region_status_label", "region_delete_button", "next_template_edit",
+            "wait_for_combo", "click_checkbox", "match_required_checkbox", "optional_checkbox",
+            "detour_button", "special_form", "group_form", "group_name_edit",
+            "group_color_button", "group_apply_button",
+        )
+        for label, window in self._windows():
+            for attr in expected:
+                with self.subTest(window=label, attr=attr):
+                    self.assertTrue(hasattr(window, attr), f"{label} 缺少面板控件 {attr}")
+
     def test_offset_row_is_gone_from_both_windows(self):
         """「偏移」一行已按所有者要求删掉：两个窗口都不该再有它的控件。
 

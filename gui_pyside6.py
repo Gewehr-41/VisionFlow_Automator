@@ -6,7 +6,6 @@ import threading
 import uuid
 import zipfile
 from copy import deepcopy
-from functools import partial
 
 os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.window=false")
 
@@ -220,173 +219,9 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
         self.refresh()
 
     def _build_editor_panel(self):
-        self.selected_label = QLabel("未选择步骤")
-        self.selected_label.setWordWrap(True)
-        self.editor_layout.addWidget(self.selected_label)
+        """面板控件全部由 mixin 的共享构造器建（见 capture_overlay.py）。"""
+        self._build_shared_editor_panel(self.editor_layout)
 
-        self.template_preview = QLabel()
-        self.template_preview.setAlignment(Qt.AlignCenter)
-        self.template_preview.setFixedSize(180, 110)
-        self.template_preview.setStyleSheet("border: 1px solid #cbd5e1; background: #f8fafc;")
-        self.template_preview.setVisible(False)
-        self.editor_layout.addWidget(self.template_preview)
-
-        self.editor_actions = QWidget()
-        action_layout = QGridLayout(self.editor_actions)
-        action_layout.setContentsMargins(0, 0, 0, 0)
-        action_layout.setHorizontalSpacing(6)
-        action_layout.setVerticalSpacing(4)
-        for index, (label, handler) in enumerate((
-            ("绑定图片", self.select_template_file),
-            ("记录点击点", self.start_click_capture),
-            ("框选识别区域", self.start_region_capture),
-            ("清空识别区域", self.clear_match_region),
-        )):
-            button = QPushButton(label)
-            button.clicked.connect(handler)
-            action_layout.addWidget(button, index // 2, index % 2)
-        self.apply_button = QPushButton("应用修改")
-        self.apply_button.clicked.connect(self._apply_editor)
-        action_layout.addWidget(self.apply_button, 2, 0, 1, 2)
-
-        # 模板预览在左、操作按钮在右，与主窗口保持一致，避免按钮整行铺开
-        preview_row = QHBoxLayout()
-        preview_row.setContentsMargins(0, 0, 0, 0)
-        preview_row.setSpacing(8)
-        preview_row.addWidget(self.template_preview, 0, Qt.AlignTop)
-        preview_row.addWidget(self.editor_actions, 1)
-        self.editor_layout.addLayout(preview_row)
-
-        name_form = QFormLayout()
-        self.description_edit = QLineEdit()
-        self.enabled_checkbox = QCheckBox("启用步骤")
-        name_form.addRow("步骤名称:", self.description_edit)
-        name_form.addRow("状态:", self.enabled_checkbox)
-        self.editor_layout.addLayout(name_form)
-
-        self.recognition_group = QWidget()
-        recognition_layout = QVBoxLayout(self.recognition_group)
-        recognition_layout.setContentsMargins(0, 0, 0, 0)
-        # 识别区域单独成组：它对 normal/advanced 与 click_until_gone 都可见
-        # （引擎两种步骤都会用到 match_rects，见 _set_region_group_visible）。
-        # 这里只创建，挂到面板上的动作放在 recognition_group 之后以决定显示顺序。
-        self.region_group = QGroupBox("识别区域")
-        region_layout = QVBoxLayout(self.region_group)
-        region_layout.setContentsMargins(0, 0, 0, 0)
-        self.template_edit = QLineEdit()
-        self.threshold_edit = QLineEdit()
-        self.timeout_edit = QLineEdit()
-        self.after_wait_edit = QLineEdit()
-        self.click_x_edit = QLineEdit()
-        self.click_y_edit = QLineEdit()
-        self.region_selector = QComboBox()
-        self.region_status_label = QLabel("未设置")
-        self.region_delete_button = QPushButton("删除本区域")
-        self.region_delete_button.clicked.connect(self.delete_current_region)
-        self.region_selector.currentIndexChanged.connect(self._on_region_selector_changed)
-        self.next_template_edit = QLineEdit()
-        self.wait_for_combo = QComboBox()
-        self.wait_for_combo.addItems(["1. 画面结果变化", "2. 等待目标模板出现", "3. 画面变化后目标结果出现"])
-        self.click_checkbox = QCheckBox("执行点击")
-        self.match_required_checkbox = QCheckBox("必须识别到图片再点击")
-        self.optional_checkbox = QCheckBox("可选步骤（跳过）")
-
-        add_row = partial(_add_form_row, recognition_layout)
-
-        add_coordinate_row = partial(_add_coordinate_row, recognition_layout)
-
-        add_row("模板名:", self.template_edit)
-        add_row("匹配阈值:", self.threshold_edit)
-        add_row("超时(秒):", self.timeout_edit)
-        add_row("完成后等待(秒):", self.after_wait_edit)
-        # X/Y 成对并排（此前 4 个坐标各占一行，输入框 529px 却只填一个短数字）
-        # 「偏移」一行已于 2026-09-28 按所有者要求删除（与主窗口一致）。
-        add_coordinate_row("点击:", self.click_x_edit, self.click_y_edit)
-
-        # 「识别区域」组：一个步骤可以有多条区域（引擎逐条尝试）。
-        # 区域**只能靠框选产生**，这里只负责查看/切换/删除，不提供手工输入坐标。
-        _add_region_selector_row(
-            region_layout, self.region_selector,
-            self.region_status_label, self.region_delete_button,
-        )
-
-        next_row = QHBoxLayout()
-        next_row.setContentsMargins(0, 0, 0, 0)
-        next_row.addWidget(QLabel("下一模板:"), 0)
-        next_row.addWidget(self.next_template_edit, 1)
-        next_button = QPushButton("选择图片")
-        next_button.clicked.connect(self.select_next_template_file)
-        next_row.addWidget(next_button)
-        next_capture_button = QPushButton("手动框选图片")
-        next_capture_button.clicked.connect(self.start_next_template_capture)
-        next_row.addWidget(next_capture_button)
-        next_region_button = QPushButton("框选出现位置")
-        next_region_button.clicked.connect(self.start_next_region_capture)
-        next_row.addWidget(next_region_button)
-        recognition_layout.addLayout(next_row)
-
-        wait_row = QHBoxLayout()
-        wait_row.setContentsMargins(0, 0, 0, 0)
-        wait_row.addWidget(QLabel("等待方式:"), 0)
-        wait_row.addWidget(self.wait_for_combo, 1)
-        recognition_layout.addLayout(wait_row)
-
-        options_row = QHBoxLayout()
-        options_row.setContentsMargins(0, 0, 0, 0)
-        options_row.addWidget(self.click_checkbox)
-        options_row.addWidget(self.match_required_checkbox)
-        options_row.addWidget(self.optional_checkbox)
-        self.detour_button = QPushButton("迂回")
-        self.detour_button.clicked.connect(self.open_detour_editor)
-        options_row.addWidget(self.detour_button)
-        options_row.addStretch(1)
-        recognition_layout.addLayout(options_row)
-
-        self.editor_layout.addWidget(self.recognition_group)
-
-        # 识别区域组紧跟在识别设置之后（创建在 _build_editor_panel 开头）
-        self.editor_layout.addWidget(self.region_group)
-
-        self.click_until_group = QGroupBox("持续点击设置")
-        click_until_layout = QVBoxLayout(self.click_until_group)
-        click_until_layout.setContentsMargins(0, 0, 0, 0)
-        self.click_until_template_edit = QLineEdit()
-        self.click_until_interval_edit = QLineEdit()
-        self.click_until_stop_delay_edit = QLineEdit()
-        self.click_until_timeout_edit = QLineEdit()
-        self.click_until_continue_checkbox = QCheckBox("超时后继续执行")
-        self.click_until_stop_on_change_checkbox = QCheckBox("画面变化视为成功")
-
-        add_click_until_row = partial(_add_click_until_row, click_until_layout)
-
-        add_click_until_row("模板名(逗号分隔):", self.click_until_template_edit)
-        add_click_until_row("点击间隔(秒):", self.click_until_interval_edit)
-        add_click_until_row("识别后停止延时(秒):", self.click_until_stop_delay_edit)
-        add_click_until_row("超时(秒):", self.click_until_timeout_edit)
-        click_until_layout.addWidget(self.click_until_continue_checkbox)
-        click_until_layout.addWidget(self.click_until_stop_on_change_checkbox)
-        self.click_until_group.setVisible(False)
-        self.editor_layout.addWidget(self.click_until_group)
-
-        self.special_form = QFormLayout()
-        self.special_edits = {}
-        self.editor_layout.addLayout(self.special_form)
-
-        # 组设置表单（选中组时显示）
-        self.group_form = QGroupBox("组设置")
-        group_form_layout = QFormLayout(self.group_form)
-        self.group_name_edit = QLineEdit()
-        self.group_color_button = QPushButton("选择组颜色")
-        self.group_color_button.clicked.connect(self._pick_group_color)
-        group_form_layout.addRow("组名称:", self.group_name_edit)
-        group_form_layout.addRow("组颜色:", self.group_color_button)
-        self.group_apply_button = QPushButton("应用组设置")
-        self.group_apply_button.clicked.connect(self._apply_group_editor)
-        group_form_layout.addRow(self.group_apply_button)
-        self.group_form.setVisible(False)
-        self.editor_layout.addWidget(self.group_form)
-
-        self.editor_layout.addStretch(1)
 
     def _snapshot(self):
         return {
@@ -2002,186 +1837,9 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         editor_layout = QVBoxLayout(editor_content)
         editor_scroll.setWidget(editor_content)
         editor_panel_layout.addWidget(editor_scroll)
-        self.selected_label = QLabel("未选择步骤")
-        self.selected_label.setWordWrap(True)
-        editor_layout.addWidget(self.selected_label)
-        self.template_preview = QLabel("无模板预览")
-        self.template_preview.setAlignment(Qt.AlignCenter)
-        self.template_preview.setFixedSize(180, 110)
-        self.template_preview.setStyleSheet("border: 1px solid #cbd5e1; background: #f8fafc;")
-        self.template_preview.setVisible(False)
-
-        # 注意：编辑器相关的按钮此前写成 editor_layout.addWidget(self.editor_actions)，
-        # 此时 editor_actions 根本没有父控件，会变成一个独立顶层窗口（表现为弹窗）。
-        # 现在它与模板预览一起放进 preview_row，父控件关系由布局建立。
-        self.editor_actions = QWidget()
-        action_layout = QGridLayout(self.editor_actions)
-        action_layout.setContentsMargins(0, 0, 0, 0)
-        action_layout.setHorizontalSpacing(6)
-        action_layout.setVerticalSpacing(4)
-        bind_button = QPushButton("绑定图片")
-        bind_button.clicked.connect(self.select_template_file)
-        action_layout.addWidget(bind_button, 0, 0)
-        click_capture_button = QPushButton("记录点击点")
-        click_capture_button.clicked.connect(self.start_click_capture)
-        action_layout.addWidget(click_capture_button, 0, 1)
-        region_capture_button = QPushButton("框选识别区域")
-        region_capture_button.clicked.connect(self.start_region_capture)
-        action_layout.addWidget(region_capture_button, 1, 0)
-        clear_region_button = QPushButton("清空识别区域")
-        clear_region_button.clicked.connect(self.clear_match_region)
-        action_layout.addWidget(clear_region_button, 1, 1)
-        self.apply_button = QPushButton("应用修改")
-        self.apply_button.clicked.connect(self.apply_selected_task)
-        action_layout.addWidget(self.apply_button, 2, 0, 1, 2)
-
-        # 模板预览在左、操作按钮在右，避免按钮整行铺开导致右侧留白。
-        # 放在同一行会建立父子关系，使缩略图与按钮都成为内嵌控件。
-        preview_row = QHBoxLayout()
-        preview_row.setContentsMargins(0, 0, 0, 0)
-        preview_row.setSpacing(8)
-        # 与预览图同高：预览是 180x110 的固定尺寸控件，若不加高度限制，
-        # 外部布局可能把它拉伸（图片仍按 180x110 显示，周边留白），
-        # 看起来就像缩略图只占了一小块。
-        self.template_preview.setFixedHeight(110)
-        preview_row.addWidget(self.template_preview, 0, Qt.AlignTop)
-        preview_row.addWidget(self.editor_actions, 1)
-        editor_layout.addLayout(preview_row)
-
-        # 步骤名称与启用状态对所有步骤类型可见（与蓝图保持一致）
-        self.description_edit = QLineEdit()
-        self.enabled_checkbox = QCheckBox("启用步骤")
-        name_form = QFormLayout()
-        name_form.addRow("步骤名称:", self.description_edit)
-        name_form.addRow("启用状态:", self.enabled_checkbox)
-        editor_layout.addLayout(name_form)
-
-        self.recognition_group = QWidget()
-        recognition_layout = QVBoxLayout(self.recognition_group)
-        recognition_layout.setContentsMargins(0, 0, 0, 0)
-        editor_layout.addWidget(self.recognition_group)
-
-        # 识别区域单独成组：它对 normal/advanced 与 click_until_gone 都可见
-        # （引擎两种步骤都会用到 match_rects，见 _set_region_group_visible）
-        self.region_group = QGroupBox("识别区域")
-        region_layout = QVBoxLayout(self.region_group)
-        region_layout.setContentsMargins(0, 0, 0, 0)
-        editor_layout.addWidget(self.region_group)
-
-        self.click_until_group = QGroupBox("持续点击设置")
-        click_until_layout = QVBoxLayout(self.click_until_group)
-        click_until_layout.setContentsMargins(0, 0, 0, 0)
-        self.click_until_template_edit = QLineEdit()
-        self.click_until_interval_edit = QLineEdit()
-        self.click_until_stop_delay_edit = QLineEdit()
-        self.click_until_timeout_edit = QLineEdit()
-        self.click_until_continue_checkbox = QCheckBox("超时后继续执行")
-        self.click_until_stop_on_change_checkbox = QCheckBox("画面变化视为成功")
-
-        add_click_until_row = partial(_add_click_until_row, click_until_layout)
-
-        add_click_until_row("模板名(逗号分隔):", self.click_until_template_edit)
-        add_click_until_row("点击间隔(秒):", self.click_until_interval_edit)
-        add_click_until_row("识别后停止延时(秒):", self.click_until_stop_delay_edit)
-        add_click_until_row("超时(秒):", self.click_until_timeout_edit)
-        click_until_layout.addWidget(self.click_until_continue_checkbox)
-        click_until_layout.addWidget(self.click_until_stop_on_change_checkbox)
-        self.click_until_group.setVisible(False)
-        editor_layout.addWidget(self.click_until_group)
-
-        self.template_edit = QLineEdit()
-        self.threshold_edit = QLineEdit()
-        self.timeout_edit = QLineEdit()
-        self.after_wait_edit = QLineEdit()
-        self.click_checkbox = QCheckBox("执行点击")
-        self.match_required_checkbox = QCheckBox("必须识别到图片再点击")
-        self.optional_checkbox = QCheckBox("可选步骤（跳过）")
-        self.click_x_edit = QLineEdit()
-        self.click_y_edit = QLineEdit()
-        self.region_selector = QComboBox()
-        self.region_status_label = QLabel("未设置")
-        self.region_delete_button = QPushButton("删除本区域")
-        self.region_delete_button.clicked.connect(self.delete_current_region)
-        self.region_selector.currentIndexChanged.connect(self._on_region_selector_changed)
-        self.next_template_edit = QLineEdit()
-        self.wait_for_combo = QComboBox()
-        self.wait_for_combo.addItems(["1. 画面结果变化", "2. 等待目标模板出现", "3. 画面变化后目标结果出现"])
-
-        add_row = partial(_add_form_row, recognition_layout)
-
-        add_coordinate_row = partial(_add_coordinate_row, recognition_layout)
-
-        add_row("模板名:", self.template_edit)
-        # 字段顺序与蓝图窗口保持一致。此前主窗口把匹配阈值放在坐标之后、超时放在
-        # 「下一模板」之后、完成后等待与等待方式挤在同一行，同一个数据在两个窗口里
-        # 的阅读顺序完全不同。
-        add_row("匹配阈值(0-1):", self.threshold_edit)
-        add_row("超时(秒，0为不限制):", self.timeout_edit)
-        add_row("完成后等待(秒):", self.after_wait_edit)
-        # X/Y 成对并排（此前 4 个坐标各占一行，输入框 529px 却只填一个短数字）
-        # 「偏移」一行已于 2026-09-28 按所有者要求删除：界面不再提供偏移输入，
-        # 引擎仍读 task["offset"]（缺省 (0, 0)），已有数据里的值原样保留。
-        add_coordinate_row("点击:", self.click_x_edit, self.click_y_edit)
-
-        # 「识别区域」组：一个步骤可以有多条区域（引擎逐条尝试）。
-        # 区域**只能靠框选产生**，这里只负责查看/切换/删除，不提供手工输入坐标。
-        _add_region_selector_row(
-            region_layout, self.region_selector,
-            self.region_status_label, self.region_delete_button,
-        )
-
-        next_row = QHBoxLayout()
-        next_row.setContentsMargins(0, 0, 0, 0)
-        next_row.addWidget(QLabel("下一模板:"), 0)
-        next_row.addWidget(self.next_template_edit, 1)
-        next_button = QPushButton("选择图片")
-        next_button.clicked.connect(self.select_next_template_file)
-        next_row.addWidget(next_button)
-        next_capture_button = QPushButton("手动框选图片")
-        next_capture_button.clicked.connect(self.start_next_template_capture)
-        next_row.addWidget(next_capture_button)
-        next_region_button = QPushButton("框选出现位置")
-        next_region_button.clicked.connect(self.start_next_region_capture)
-        next_row.addWidget(next_region_button)
-        recognition_layout.addLayout(next_row)
-
-        wait_row = QHBoxLayout()
-        wait_row.setContentsMargins(0, 0, 0, 0)
-        wait_row.addWidget(QLabel("等待方式:"), 0)
-        wait_row.addWidget(self.wait_for_combo, 1)
-        recognition_layout.addLayout(wait_row)
-
-        options_row = QHBoxLayout()
-        options_row.setContentsMargins(0, 0, 0, 0)
-        options_row.addWidget(self.click_checkbox)
-        options_row.addWidget(self.match_required_checkbox)
-        options_row.addWidget(self.optional_checkbox)
-        self.detour_button = QPushButton("迂回")
-        self.detour_button.clicked.connect(self.open_detour_editor)
-        options_row.addWidget(self.detour_button)
-        options_row.addStretch(1)
-        recognition_layout.addLayout(options_row)
-
-        self.special_group = QGroupBox("类型专用字段")
-        self.special_form = QFormLayout(self.special_group)
-        self.special_edits = {}
-        editor_layout.addWidget(self.special_group)
-
-        # 组设置（选中组时显示）
-        self.group_form = QGroupBox("组设置")
-        group_form_layout = QFormLayout(self.group_form)
-        self.group_name_edit = QLineEdit()
-        self.group_color_button = QPushButton("选择组颜色")
-        self.group_color_button.clicked.connect(self._pick_group_color)
-        group_form_layout.addRow("组名称:", self.group_name_edit)
-        group_form_layout.addRow("组颜色:", self.group_color_button)
-        self.group_apply_button = QPushButton("应用组设置")
-        self.group_apply_button.clicked.connect(self._apply_group_editor)
-        group_form_layout.addRow(self.group_apply_button)
-        self.group_form.setVisible(False)
-        editor_layout.addWidget(self.group_form)
-
-        editor_layout.addStretch(1)
+        self.editor_layout = editor_layout          # 与蓝图窗口同名，便于共用构造器
+        # 面板控件全部由 mixin 的共享构造器建（见 capture_overlay.py）
+        self._build_shared_editor_panel(editor_layout)
         splitter.addWidget(editor_panel)
         splitter.setStretchFactor(0, 2)
         splitter.setStretchFactor(1, 3)
@@ -2728,6 +2386,28 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
 
     # 「可选步骤（跳过）」的回写：以前主窗口这里有一个空实现，导致勾选框点了等于没勾
     # （§8.2 #7）。2026-09-28 按所有者要求对齐蓝图窗口，直接沿用 mixin 的实现。
+
+    # ---- 面板构造的 3 处显式差异（见 capture_overlay.py 里的共享构造器）----
+
+    def _apply_editor(self):
+        """与蓝图窗口同名的「应用修改」槽：共享构造器直接接这个名字。
+
+        主窗口的实际逻辑仍在 apply_selected_task（保存、刷新、写日志），这里转调。
+        """
+        return self.apply_selected_task()
+
+    def _editor_field_labels(self):
+        """主窗口这两个标签多了括号说明，历史上与蓝图窗口不同。"""
+        return {"threshold": "匹配阈值(0-1):", "timeout": "超时(秒，0为不限制):", "status": "启用状态:"}
+
+    def _editor_special_form_container(self):
+        """主窗口把「类型专用字段」套在 GroupBox 里（蓝图窗口是裸表单）。"""
+        group = QGroupBox("类型专用字段")
+        return group, QFormLayout(group)
+
+    def _editor_preview_placeholder(self):
+        """主窗口的预览占位文字（蓝图窗口是空字符串）。"""
+        return "无模板预览"
 
 
     def _on_group_expanded_changed(self, item):

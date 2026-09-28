@@ -168,7 +168,49 @@ class CaptureMixinContractTests(unittest.TestCase):
         self.assertEqual(task["match_rects"], [(10, 20, 30, 40)])
         self.assertEqual(task["match_rect"], (10, 20, 30, 40))
         self.assertEqual(task["search_rect"], (10, 20, 30, 40))
-        self.assertEqual(self.window.match_rect_edit.text(), "10, 20, 30, 40")
+        # 主窗口用 6 个可见输入框展示识别区域。此前 mixin 写的是一个从未被放进
+        # 任何布局的隐形 match_rect_edit，所以主窗口框选后其实没有任何可见反馈。
+        self.assertEqual(
+            [self.window.region_left_edit.text(), self.window.region_top_edit.text(),
+             self.window.region_right_edit.text(), self.window.region_bottom_edit.text()],
+            ["10", "20", "30", "40"],
+        )
+
+    def test_finish_region_capture_calls_the_show_region_hook(self):
+        """mixin 必须真的调用 _capture_show_region_widgets（接线，而不是靠副作用）。
+
+        注意：主窗口的可见框在 `_capture_after_task_changed()` 之后也会被重载填上，
+        所以只断言框的内容**无法**证明这个钩子被调用过 —— 必须直接盯住调用。
+        """
+        seen = []
+        self.window.current_task_index = 0
+        self.window._capture_target = "match"
+        self.window._capture_show_region_widgets = lambda rect: seen.append(rect)
+
+        self.window.finish_region_capture(10, 20, 30, 40)
+
+        self.assertEqual(seen, [(10, 20, 30, 40)])
+
+    def test_clear_match_region_calls_the_clear_region_hook(self):
+        """清空识别区域时同样必须调用 _capture_clear_region_widgets。"""
+        calls = []
+        self.window.current_task_index = 0
+        self.window._capture_clear_region_widgets = lambda: calls.append(True)
+
+        self.window.clear_match_region()
+
+        self.assertEqual(calls, [True])
+
+    def test_finish_region_capture_next_target_does_not_touch_region_widgets(self):
+        """框选「下一模板出现位置」时不该动识别区域的显示控件。"""
+        seen = []
+        self.window.current_task_index = 0
+        self.window._capture_target = "next"
+        self.window._capture_show_region_widgets = lambda rect: seen.append(rect)
+
+        self.window.finish_region_capture(1, 2, 3, 4)
+
+        self.assertEqual(seen, [])
 
     def test_finish_region_capture_next_target_writes_next_rect(self):
         self.window.current_task_index = 0
@@ -255,7 +297,10 @@ class CaptureMixinContractTests(unittest.TestCase):
         self.window.clear_match_region()
         for key in ("match_rects", "match_rect", "search_rect"):
             self.assertNotIn(key, task)
-        self.assertEqual(self.window.match_rect_edit.text(), "")
+        for editor in (self.window.region_left_edit, self.window.region_top_edit,
+                       self.window.region_right_edit, self.window.region_bottom_edit,
+                       self.window.region_center_x_edit, self.window.region_center_y_edit):
+            self.assertEqual(editor.text(), "", "清空识别区域后可见的 6 个框都应清空")
 
     # ---------- 取消 / 太小 ----------
 

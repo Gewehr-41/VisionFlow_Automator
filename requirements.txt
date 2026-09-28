@@ -1,8 +1,8 @@
 # VisionFlow Automator — Python 依赖清单
 # 创建于 2026-09-28。
 #
-# 版本号取自【系统 Python 3.10.8】，因为两个启动脚本
-# （启动新界面.bat / 启动脚本编辑器.vbs）调用的都是裸 `python`，
+# 版本号取自【系统 Python 3.10.8】，因为启动脚本
+# （启动新界面.bat）调用的是裸 `python`，
 # 即系统 Python。这是当前唯一能启动推荐界面 gui_pyside6.py 的环境。
 #
 # 安装：

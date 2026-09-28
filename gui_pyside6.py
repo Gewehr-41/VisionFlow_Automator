@@ -237,8 +237,26 @@ class CaptureOverlayMixin:
         """把「下一模板」同步到编辑控件（两个窗口的等待方式下拉框内容不同）。"""
         self.next_template_edit.setText(image_name)
 
-    def _capture_clear_extra_region_widgets(self):
-        """清空识别区域时一并清理的额外控件（主窗口有 6 个分段区域输入框）。"""
+    def _capture_show_region_widgets(self, rect):
+        """把刚框好的识别区域显示到本窗口的"识别区域"控件上。
+
+        两个窗口展示同一份数据的方式不同，所以这里只留接口：
+          - 蓝图窗口：一个可见的文本框（"左上,右下" 形式）
+          - 主窗口：6 个可见输入框（左上/右下/中心 各一对 X/Y）
+        默认什么都不做，子类各自覆盖。
+
+        背景：此前 mixin 直接 `self.match_rect_edit.setText(...)`，而主窗口的那个
+        match_rect_edit 从来没有被放进任何布局 —— 它是个无父控件的隐形顶层窗口，
+        于是"框选识别区域"的结果在主窗口里根本没有可见反馈。
+        """
+        return rect
+
+    def _capture_clear_region_widgets(self):
+        """清空识别区域时一并清理本窗口的区域控件（与上面成对）。
+
+        背景：此前 mixin 直接 `self.match_rect_edit.clear()`，对主窗口同样是写进
+        那个隐形控件。
+        """
 
     # ---------- 分组编辑：子类必须覆盖的数据访问 ----------
 
@@ -487,12 +505,11 @@ class CaptureOverlayMixin:
         match_rects.append((left, top, right, bottom))
         task["match_rect"] = match_rects[0]
         task["search_rect"] = match_rects[0]
-        self.match_rect_edit.setText(f"{left}, {top}, {right}, {bottom}")
+        self._capture_show_region_widgets((left, top, right, bottom))
         self._capture_after_task_changed()
 
     def clear_match_region(self):
-        self.match_rect_edit.clear()
-        self._capture_clear_extra_region_widgets()
+        self._capture_clear_region_widgets()
         task = self._capture_current_task()
         if task is None:
             return
@@ -2080,6 +2097,13 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
         self.refresh()
         self._select_node(self.current_index)
         self.save_layout()
+
+    def _capture_show_region_widgets(self, rect):
+        """蓝图窗口用一个可见文本框展示识别区域（"左上,右下" 形式）。"""
+        self.match_rect_edit.setText(f"{rect[0]}, {rect[1]}, {rect[2]}, {rect[3]}")
+
+    def _capture_clear_region_widgets(self):
+        self.match_rect_edit.clear()
 
     def _capture_show_parent(self):
         parent = self.parent()
@@ -3880,7 +3904,6 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         self.region_bottom_edit = QLineEdit()
         self.region_center_x_edit = QLineEdit()
         self.region_center_y_edit = QLineEdit()
-        self.match_rect_edit = QLineEdit()
         self.next_template_edit = QLineEdit()
         self.wait_for_combo = QComboBox()
         self.wait_for_combo.addItems(["1. 画面结果变化", "2. 等待目标模板出现", "3. 画面变化后目标结果出现"])
@@ -3890,11 +3913,15 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         add_coordinate_row = partial(_add_coordinate_row, recognition_layout)
 
         add_row("模板名:", self.template_edit)
+        # 字段顺序与蓝图窗口保持一致。此前主窗口把匹配阈值放在坐标之后、超时放在
+        # 「下一模板」之后、完成后等待与等待方式挤在同一行，同一个数据在两个窗口里
+        # 的阅读顺序完全不同。
+        add_row("匹配阈值(0-1):", self.threshold_edit)
+        add_row("超时(秒，0为不限制):", self.timeout_edit)
+        add_row("完成后等待(秒):", self.after_wait_edit)
         # X/Y 成对并排（此前 4 个坐标各占一行，输入框 529px 却只填一个短数字）
         add_coordinate_row("偏移:", self.offset_x_edit, self.offset_y_edit)
         add_coordinate_row("点击:", self.click_x_edit, self.click_y_edit)
-        add_row("匹配阈值(0-1):", self.threshold_edit)
-
         add_coordinate_row("左上:", self.region_left_edit, self.region_top_edit)
         add_coordinate_row("右下:", self.region_right_edit, self.region_bottom_edit)
         add_coordinate_row("中心:", self.region_center_x_edit, self.region_center_y_edit)
@@ -3914,18 +3941,10 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         next_row.addWidget(next_region_button)
         recognition_layout.addLayout(next_row)
 
-        timeout_row = QHBoxLayout()
-        timeout_row.setContentsMargins(0, 0, 0, 0)
-        timeout_row.addWidget(QLabel("超时(秒，0为不限制):"), 0)
-        timeout_row.addWidget(self.timeout_edit, 1)
-        recognition_layout.addLayout(timeout_row)
-
         wait_row = QHBoxLayout()
         wait_row.setContentsMargins(0, 0, 0, 0)
         wait_row.addWidget(QLabel("等待方式:"), 0)
         wait_row.addWidget(self.wait_for_combo, 1)
-        wait_row.addWidget(QLabel("完成后等待(秒):"), 0)
-        wait_row.addWidget(self.after_wait_edit, 1)
         recognition_layout.addLayout(wait_row)
 
         options_row = QHBoxLayout()
@@ -4530,7 +4549,6 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         self.click_y_edit.setText(str(task.get("click_y", click_position[1] if isinstance(click_position, (list, tuple)) and len(click_position) >= 2 else "")))
         rects = task.get("match_rects")
         rect = (rects[0] if isinstance(rects, list) and rects else None) or task.get("match_rect") or task.get("search_rect")
-        self.match_rect_edit.setText(", ".join(str(value) for value in rect[:4]) if isinstance(rect, (list, tuple)) and len(rect) >= 4 else "")
         region_values = list(rect[:4]) if isinstance(rect, (list, tuple)) and len(rect) >= 4 else ["", "", "", ""]
         self.region_left_edit.setText(str(region_values[0]))
         self.region_top_edit.setText(str(region_values[1]))
@@ -4629,8 +4647,7 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         self.offset_y_edit.clear()
         self.click_x_edit.clear()
         self.click_y_edit.clear()
-        self.match_rect_edit.clear()
-        for editor in (self.region_left_edit, self.region_top_edit, self.region_right_edit, self.region_bottom_edit, self.region_center_x_edit, self.region_center_y_edit):
+        for editor in self._region_widgets():
             editor.clear()
         self.next_template_edit.clear()
         self.wait_for_combo.setCurrentIndex(0)
@@ -4641,10 +4658,17 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
 
 
     def _current_match_rect(self):
+        """返回可见的 4 个区域框所表示的矩形；不构成合法矩形时返回 None（= 无识别区域）。
+
+        此前这里有一条兜底：4 框不完整时改读 `self.match_rect_edit`。但主窗口的那个
+        控件从未被放进任何布局，是个不可见、不可编辑的隐形顶层窗口 —— 于是"把某个
+        框清空/填错后点应用修改"会把那个看不见的旧值悄悄写回任务，用户的输入被静默
+        忽略。现在可见的 4 个框是唯一来源。
+        """
         values = [self._int_value(editor.text()) for editor in (self.region_left_edit, self.region_top_edit, self.region_right_edit, self.region_bottom_edit)]
         if all(value is not None for value in values) and values[2] > values[0] and values[3] > values[1]:
             return tuple(values)
-        return self._parse_rect(self.match_rect_edit.text())
+        return None
 
     def toggle_item(self, item, _column):
         index = self._task_index_from_item(item)
@@ -4807,12 +4831,26 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         self.next_template_edit.setText(image_name)
         self._capture_set_wait_for_next()
 
-    def _capture_clear_extra_region_widgets(self):
-        for editor in (
+    def _region_widgets(self):
+        """按「左上 X/Y、右下 X/Y、中心 X/Y」的顺序返回 6 个区域输入框。"""
+        return (
             self.region_left_edit, self.region_top_edit,
             self.region_right_edit, self.region_bottom_edit,
             self.region_center_x_edit, self.region_center_y_edit,
-        ):
+        )
+
+    def _capture_show_region_widgets(self, rect):
+        """主窗口用 6 个可见输入框展示识别区域（中心取左上/右下的中点）。"""
+        left, top, right, bottom = (int(value) for value in rect[:4])
+        self.region_left_edit.setText(str(left))
+        self.region_top_edit.setText(str(top))
+        self.region_right_edit.setText(str(right))
+        self.region_bottom_edit.setText(str(bottom))
+        self.region_center_x_edit.setText(str((left + right) // 2))
+        self.region_center_y_edit.setText(str((top + bottom) // 2))
+
+    def _capture_clear_region_widgets(self):
+        for editor in self._region_widgets():
             editor.clear()
 
     # ---------- 分组编辑钩子（组编辑的共享实现在 CaptureOverlayMixin 中）----------
@@ -5031,7 +5069,6 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
                     task.pop("match_rect", None)
                     task.pop("search_rect", None)
                     task.pop("match_rects", None)
-                self.match_rect_edit.setText(", ".join(str(value) for value in match_rect) if match_rect else "")
                 next_template = self.next_template_edit.text().strip()
                 if next_template:
                     task["next_template"] = next_template

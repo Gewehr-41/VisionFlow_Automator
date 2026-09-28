@@ -198,12 +198,69 @@ class EditorRoundTripTests(unittest.TestCase):
 
     def test_apply_round_trips_match_rect(self):
         task = self._load_first_task()
-        self.window.match_rect_edit.setText("10, 20, 30, 40")
+        # 主窗口的区域来源是可见的 4 个输入框（此前测试写的是一个从未进布局的
+        # 隐形 match_rect_edit —— 那条断言在无意中给隐形控件上了锁）
+        for editor, value in ((self.window.region_left_edit, "10"),
+                              (self.window.region_top_edit, "20"),
+                              (self.window.region_right_edit, "30"),
+                              (self.window.region_bottom_edit, "40")):
+            editor.setText(value)
         self.window.apply_selected_task()
 
         self.assertEqual(task["match_rect"], (10, 20, 30, 40))
         self.assertEqual(task["search_rect"], (10, 20, 30, 40))
         self.assertEqual(task["match_rects"], [(10, 20, 30, 40)])
+
+    def test_apply_clears_region_when_boxes_are_empty(self):
+        task = self._load_first_task()
+        task["match_rect"] = (10, 20, 30, 40)
+        task["search_rect"] = (10, 20, 30, 40)
+        task["match_rects"] = [(10, 20, 30, 40)]
+        self.window.load_selected_task(self.window._find_task_item(0), None)
+
+        for editor in (self.window.region_left_edit, self.window.region_top_edit,
+                       self.window.region_right_edit, self.window.region_bottom_edit):
+            editor.clear()
+        self.window.apply_selected_task()
+
+        self.assertNotIn("match_rect", task)
+        self.assertNotIn("search_rect", task)
+        self.assertNotIn("match_rects", task)
+
+    def test_apply_treats_incomplete_boxes_as_no_region(self):
+        """4 框不完整时不再回退到不可见的旧值，而是按「无识别区域」处理。"""
+        task = self._load_first_task()
+        task["match_rect"] = (10, 20, 30, 40)
+        task["search_rect"] = (10, 20, 30, 40)
+        task["match_rects"] = [(10, 20, 30, 40)]
+        self.window.load_selected_task(self.window._find_task_item(0), None)
+
+        self.window.region_right_edit.clear()
+        self.window.region_bottom_edit.clear()
+        self.window.apply_selected_task()
+
+        self.assertNotIn("match_rect", task, "不完整的区域应视为无区域，而不是悄悄写回旧值")
+
+    def test_apply_treats_invalid_boxes_as_no_region(self):
+        task = self._load_first_task()
+        task["match_rect"] = (10, 20, 30, 40)
+        task["search_rect"] = (10, 20, 30, 40)
+        task["match_rects"] = [(10, 20, 30, 40)]
+        self.window.load_selected_task(self.window._find_task_item(0), None)
+
+        # right < left：退化矩形
+        for editor, value in ((self.window.region_left_edit, "300"),
+                              (self.window.region_top_edit, "20"),
+                              (self.window.region_right_edit, "100"),
+                              (self.window.region_bottom_edit, "40")):
+            editor.setText(value)
+        self.window.apply_selected_task()
+
+        self.assertNotIn("match_rect", task)
+
+    def test_main_window_has_no_hidden_match_rect_widget(self):
+        """主窗口不该再有那个从未进布局的隐形 match_rect_edit。"""
+        self.assertFalse(hasattr(self.window, "match_rect_edit"))
 
     def test_apply_writes_description_and_threshold(self):
         task = self._load_first_task()

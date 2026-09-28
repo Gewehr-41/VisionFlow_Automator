@@ -61,7 +61,7 @@ py -3 -m pip install numpy opencv-python mss pyautogui pygetwindow PySide6
 当前版本使用 `gui_pyside6.py` 的 PySide6 主界面（唯一维护中的界面）。
 
 > **关于 Tkinter 版 `gui.py`**：该界面已于 2026-09-28 **退役**，移入 `legacy/gui.py`。
-> 它仍然可以运行（`启动脚本编辑器.vbs` 会指向它），但**不再维护**，且含有若干
+> 它**不再维护**，且含有若干
 > **已知的数据破坏性问题**——它与新界面共享同一批 JSON 数据文件，运行并保存可能
 > 覆盖新界面的数据。日常使用请勿运行它。详见 `legacy/README.md`。
 
@@ -74,7 +74,7 @@ python gui_pyside6.py
 
 也可以双击 `启动新界面.bat` 静默启动 PySide6 界面（脚本会自隐藏命令行窗口）。启动失败时，可运行 `python gui_pyside6.py` 查看错误。
 
-> `启动脚本编辑器.vbs` 仍可启动已退役的 Tkinter 旧界面（`legacy\gui.py`），但**不建议日常使用**——它与新界面共享数据文件，可能覆盖新界面的数据。详见 `legacy/README.md`。
+> 旧界面的启动脚本 `启动脚本编辑器.vbs` 已于 2026-09-28 一并退役，**现在只剩 `启动新界面.bat` 这一个入口**——避免误点旧界面覆盖新界面的数据。如确需运行旧界面，请手动 `cd` 到项目根目录后执行 `python legacy\gui.py`（见 `legacy/README.md`）。
 
 ## 3. 第一次运行
 
@@ -386,8 +386,7 @@ VisionFlow_Automator/
 ├─ legacy/                已退役的旧代码（Tkinter 界面，含独立说明）
 │   ├─ gui.py             已退役的 Tkinter 界面
 │   └─ README.md          退役说明与注意事项
-├─ 启动新界面.bat         启动 PySide6 界面（静默）
-└─ 启动脚本编辑器.vbs     启动已退役的 Tkinter 旧界面（不建议日常使用）
+└─ 启动新界面.bat         启动 PySide6 界面（静默）—— 唯一入口
 ```
 
 ### 10.2 数据保存

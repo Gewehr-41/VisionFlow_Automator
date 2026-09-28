@@ -182,5 +182,171 @@ class WindowLayoutTests(unittest.TestCase):
                 self.assertGreater(rows, 0, f"{name} 的识别表单一行都没有")
 
 
+def field_label_of_row(row_layout):
+    """返回某一行里第一个 QLabel 的文本（代表这一行是什么字段）。"""
+    for i in range(row_layout.count()):
+        widget = row_layout.itemAt(i).widget()
+        if isinstance(widget, QLabel):
+            return widget.text()
+    return None
+
+
+# 标签 -> 规范字段名。两个窗口的标签文案不同（例如「匹配阈值(0-1)」与「匹配阈值」），
+# 这里只比较**字段顺序**，所以先归一化。
+def canonical_field(label):
+    if label is None:
+        return None
+    if label.startswith("模板名"):
+        return "模板名"
+    if label.startswith("匹配阈值"):
+        return "匹配阈值"
+    if label.startswith("超时"):
+        return "超时"
+    if label.startswith("完成后等待"):
+        return "完成后等待"
+    if label in ("偏移:", "点击:"):
+        return label.rstrip(":")
+    if label in ("左上:", "右下:", "中心:") or label.startswith("识别区域"):
+        return "<区域>"
+    if label.startswith("下一模板"):
+        return "下一模板"
+    if label.startswith("等待方式"):
+        return "等待方式"
+    return label
+
+
+def canonical_field_order(window):
+    """按界面上的实际顺序返回规范字段名（连续的区域行合并为一个 <区域>）。"""
+    layout = window.recognition_group.layout()
+    order = []
+    for i in range(layout.count()):
+        row = layout.itemAt(i).layout()
+        if row is None:
+            continue
+        field = canonical_field(field_label_of_row(row))
+        if field is None:
+            continue
+        if field == "<区域>" and order and order[-1] == "<区域>":
+            continue  # 主窗口的区域是 3 行，合并成一个
+        order.append(field)
+    return order
+
+
+class FormOrderParityTests(unittest.TestCase):
+    """两个窗口的识别表单字段顺序必须一致。
+
+    背景：此前主窗口的匹配阈值在坐标之后、超时在「下一模板」之后、完成后等待与
+    等待方式挤在同一行，而蓝图窗口是「模板名 / 匹配阈值 / 超时 / 完成后等待 /
+    坐标 / 区域 / 下一模板 / 等待方式」——同一份数据在两个窗口里读起来完全不同。
+    """
+
+    EXPECTED = ["模板名", "匹配阈值", "超时", "完成后等待",
+                "偏移", "点击", "<区域>", "下一模板", "等待方式"]
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._orig_presets_file = tasks.PRESETS_FILE
+        self._orig_tasks_file = tasks.TASKS_FILE
+        self._orig_save_presets = g.save_presets
+        self._orig_save_tasks = g.save_tasks
+        tasks.PRESETS_FILE = os.path.join(self._tmp.name, "saved_presets.json")
+        tasks.TASKS_FILE = os.path.join(self._tmp.name, "saved_tasks.json")
+        g.save_presets = tasks.save_presets
+        g.save_tasks = tasks.save_tasks
+        self.main_window = g.PySide6ScriptWindow()
+        self.blueprint = g.BlueprintWindow([{"id": "a", "type": "normal"}], {},
+                                           lambda *a, **k: None, {}, None, {})
+
+    def tearDown(self):
+        self.main_window.close()
+        self.blueprint.close()
+        tasks.PRESETS_FILE = self._orig_presets_file
+        tasks.TASKS_FILE = self._orig_tasks_file
+        g.save_presets = self._orig_save_presets
+        g.save_tasks = self._orig_save_tasks
+        self._tmp.cleanup()
+
+    def test_main_window_field_order(self):
+        self.assertEqual(canonical_field_order(self.main_window), self.EXPECTED)
+
+    def test_blueprint_window_field_order(self):
+        self.assertEqual(canonical_field_order(self.blueprint), self.EXPECTED)
+
+    def test_both_windows_agree(self):
+        self.assertEqual(
+            canonical_field_order(self.main_window),
+            canonical_field_order(self.blueprint),
+        )
+
+
+class RegionDisplayWidgetTests(unittest.TestCase):
+    """识别区域的"显示控件"：主窗口 = 6 个可见框，蓝图 = 1 个可见文本框。"""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._orig_presets_file = tasks.PRESETS_FILE
+        self._orig_tasks_file = tasks.TASKS_FILE
+        self._orig_save_presets = g.save_presets
+        self._orig_save_tasks = g.save_tasks
+        tasks.PRESETS_FILE = os.path.join(self._tmp.name, "saved_presets.json")
+        tasks.TASKS_FILE = os.path.join(self._tmp.name, "saved_tasks.json")
+        g.save_presets = tasks.save_presets
+        g.save_tasks = tasks.save_tasks
+        self.main_window = g.PySide6ScriptWindow()
+        self.blueprint = g.BlueprintWindow([{"id": "a", "type": "normal"}], {},
+                                           lambda *a, **k: None, {}, None, {})
+
+    def tearDown(self):
+        self.main_window.close()
+        self.blueprint.close()
+        tasks.PRESETS_FILE = self._orig_presets_file
+        tasks.TASKS_FILE = self._orig_tasks_file
+        g.save_presets = self._orig_save_presets
+        g.save_tasks = self._orig_save_tasks
+        self._tmp.cleanup()
+
+    def test_main_window_has_no_hidden_match_rect_widget(self):
+        """那个从未进布局、isWindow()=True 的隐形控件必须已经不存在。"""
+        self.assertFalse(hasattr(self.main_window, "match_rect_edit"))
+
+    def test_blueprint_keeps_its_visible_match_rect_widget(self):
+        layout = self.blueprint.recognition_group.layout()
+        self.assertIsNotNone(
+            find_row_layout_containing(layout, self.blueprint.match_rect_edit),
+            "蓝图窗口的识别区域文本框应当是可见控件",
+        )
+        self.assertFalse(self.blueprint.match_rect_edit.isWindow())
+
+    def test_main_window_show_region_widgets_fills_six_boxes(self):
+        self.main_window._capture_show_region_widgets((10, 20, 300, 400))
+        self.assertEqual(
+            [self.main_window.region_left_edit.text(), self.main_window.region_top_edit.text(),
+             self.main_window.region_right_edit.text(), self.main_window.region_bottom_edit.text(),
+             self.main_window.region_center_x_edit.text(), self.main_window.region_center_y_edit.text()],
+            ["10", "20", "300", "400", "155", "210"],
+        )
+
+    def test_main_window_clear_region_widgets_empties_six_boxes(self):
+        self.main_window._capture_show_region_widgets((10, 20, 300, 400))
+        self.main_window._capture_clear_region_widgets()
+        for editor in self.main_window._region_widgets():
+            self.assertEqual(editor.text(), "")
+
+    def test_blueprint_show_region_widgets_writes_text_field(self):
+        self.blueprint._capture_show_region_widgets((10, 20, 300, 400))
+        self.assertEqual(self.blueprint.match_rect_edit.text(), "10, 20, 300, 400")
+
+    def test_blueprint_clear_region_widgets_empties_text_field(self):
+        self.blueprint._capture_show_region_widgets((10, 20, 300, 400))
+        self.blueprint._capture_clear_region_widgets()
+        self.assertEqual(self.blueprint.match_rect_edit.text(), "")
+
+    def test_region_display_hooks_exist_on_both_windows(self):
+        for name, window in (("主窗口", self.main_window), ("蓝图窗口", self.blueprint)):
+            with self.subTest(window=name):
+                self.assertTrue(callable(getattr(window, "_capture_show_region_widgets", None)))
+                self.assertTrue(callable(getattr(window, "_capture_clear_region_widgets", None)))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2,7 +2,29 @@
 
 # 更新日志
 
+> 本文件**按时间记录当时的改动**，所以历史条目里出现的路径 / 文件名**可能已经不存在**
+> （最典型的是 `legacy/gui.py` 与 `legacy/README.md`，已于 2026-09-28 删除）。
+> 需要看**当前**状态请读 `README.md` 与 `项目接手文档.md`。
+
 ## 2026-09-28
+
+### 分发打包（PyInstaller）与工程清理
+
+- **新增 `VisionFlow_Automator.spec`**：PyInstaller 打包规格（`onedir` + 无控制台窗口）。
+  `.gitignore` 增加 `!VisionFlow_Automator.spec` 例外（否则会被 `*.spec` 规则忽略）。
+  排除 42 个实测未使用的 Qt/Py 模块（本机 `Qt6*.dll` 共 316.2 MB，其中 277.5 MB 与本项目无关，
+  `Qt6WebEngineCore.dll` 单个就有 194.0 MB），并按二进制依赖图二次裁掉 Qt 声明式 UI 链
+  （`Qt6VirtualKeyboard` → `Qt6Quick` → `Qt6Qml` → `Qt6Network`）、`Qt6Pdf`、TUIO 触摸插件与
+  `opencv_videoio_ffmpeg4120_64.dll`（27 MB，全项目 0 处视频 API）。
+  **故意保留** `Qt6Svg` + `qsvg.dll`（复选框 SVG 样式需要）、`opengl32sw.dll`（GPU 兜底）
+  与 `tkinter`（`pyautogui` 在导入期经 `mouseinfo` 无保护地 `import tkinter`，排除即启动失败）。
+  产物 **202.8 MB / 1197 文件**（未优化时 249.0 MB）。构建与验证细节见 `项目接手文档.md` §10。
+- **删除无用文件**：`.venv`（3401 文件 / 197.2 MB，缺 PySide6、无法启动新界面）、
+  3 个 `__pycache__`（45 个 `.pyc`，其中 6 个的源文件早已删除）、已退役的 `legacy/gui.py`
+  与 `legacy/README.md`、0 字节的 `待办.txt`。工程（不含 `.git`）从 3560 文件 / 199.8 MB
+  降到 **113 文件 / 1.5 MB**，355 个测试仍全部通过。删除前逐项验证，内容均保留在 git 历史中。
+- **同步文档**：README、项目接手文档、优化路线.md 中指向 `legacy/gui.py` / `legacy/README.md`
+  的引用改为"已删除（可从 git 历史恢复）"，并刷新 README 的文件结构与模块清单。
 
 ### 启动入口收敛
 
@@ -11,6 +33,9 @@
   JSON 数据文件、并含有若干已知的数据破坏性问题——两个入口并存等于给"误点旧界面
   覆盖新界面数据"留了通道。旧界面如确需运行，改为手动 `cd` 到项目根目录后
   `python legacy\gui.py`（已记入 `legacy/README.md`）。
+  > **注（同日稍后）**：`legacy/gui.py` 与 `legacy/README.md` 已随工程清理一并删除，
+  > 上面这条运行方式已失效；需要时用 `git checkout <commit> -- legacy/gui.py` 取回
+  > （见本节首条「分发打包与工程清理」）。
 - 同步更新 README（3 处）、requirements.txt、优化路线.md 与项目接手文档中对该脚本的引用。
 
 ### 工程基础（此前缺失）

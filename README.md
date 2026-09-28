@@ -60,10 +60,16 @@ py -3 -m pip install numpy opencv-python mss pyautogui pygetwindow PySide6
 
 当前版本使用 `gui_pyside6.py` 的 PySide6 主界面（唯一维护中的界面）。
 
-> **关于 Tkinter 版 `gui.py`**：该界面已于 2026-09-28 **退役**，移入 `legacy/gui.py`。
-> 它**不再维护**，且含有若干
-> **已知的数据破坏性问题**——它与新界面共享同一批 JSON 数据文件，运行并保存可能
-> 覆盖新界面的数据。日常使用请勿运行它。详见 `legacy/README.md`。
+> **关于 Tkinter 版 `gui.py`**：该界面已于 2026-09-28 **退役**，随后连同 `legacy/README.md`
+> 一并**删除**（提交 `26b098c`）——现在工程里已经没有它了。
+> 删除原因：它**不再维护**，且含有若干**已知的数据破坏性问题**——它与新界面共享同一批 JSON
+> 数据文件，运行并保存可能覆盖新界面的数据。
+> 仅需查阅旧实现时，从 git 历史取回即可（**只读代码，不要运行它去打开现有数据**）：
+>
+> ```powershell
+> git log --oneline --follow -- legacy/gui.py      # 查看完整历史
+> git checkout <commit> -- legacy/gui.py           # 从任意提交恢复
+> ```
 
 ### 2.2 启动
 
@@ -74,7 +80,7 @@ python gui_pyside6.py
 
 也可以双击 `启动新界面.bat` 静默启动 PySide6 界面（脚本会自隐藏命令行窗口）。启动失败时，可运行 `python gui_pyside6.py` 查看错误。
 
-> 旧界面的启动脚本 `启动脚本编辑器.vbs` 已于 2026-09-28 一并退役，**现在只剩 `启动新界面.bat` 这一个入口**——避免误点旧界面覆盖新界面的数据。如确需运行旧界面，请手动 `cd` 到项目根目录后执行 `python legacy\gui.py`（见 `legacy/README.md`）。
+> 旧界面的启动脚本 `启动脚本编辑器.vbs` 已于 2026-09-28 一并退役，**现在只剩 `启动新界面.bat` 这一个入口**——避免误点旧界面覆盖新界面的数据。旧界面本体（`legacy/gui.py`）随后也已删除，如需查阅请从 git 历史取回（见 §4.4）。
 
 ## 3. 第一次运行
 
@@ -164,8 +170,8 @@ python gui_pyside6.py
 ### 4.4 界面版本
 
 - `gui_pyside6.py`：**当前唯一维护中的界面**。使用 PySide6 原生控件和图形场景，提供树形任务列表（支持嵌套分组）、Qt 蓝图画布、线程化执行状态回传和透明屏幕采集覆盖层。
-- `legacy/gui.py`：**已退役**的 Tkinter 旧界面（2026-08-26 后停止维护）。仅作历史留存，含已知的数据破坏性问题，**请勿用于日常操作**。详见 `legacy/README.md`。
-- 两个界面共享任务、预设和蓝图数据文件，**不要同时使用**，否则后保存的界面会覆盖先前的数据。
+- ~~`legacy/gui.py`~~：**已退役并删除**的第一代 Tkinter 旧界面（2026-08-26 后停止维护，2026-09-28 退役，随后连同 `legacy/README.md` 一起删除，提交 `26b098c`）。它完整保留在 git 历史中（`git log --oneline --follow -- legacy/gui.py` 可查、`git checkout <commit> -- legacy/gui.py` 可取回），含有已知的数据破坏性问题，**不要运行它去打开现有数据**。
+- 历史上两个界面共享同一批任务、预设和蓝图数据文件，**因此当时不要同时使用**，否则后保存的界面会覆盖先前的数据。现在工程里只剩 PySide6 一个界面，已不存在这个问题。
 
 ## 5. 模板图片
 
@@ -373,26 +379,40 @@ Windows 125%、150% 等缩放可能同时改变模板尺寸和坐标。建议固
 
 ```text
 VisionFlow_Automator/
-├─ gui_pyside6.py         PySide6 图形界面入口（当前唯一维护中的界面）
+├─ gui_pyside6.py         PySide6 图形界面入口（唯一维护中的界面，两个窗口类）
+├─ capture_overlay.py     屏幕采集覆盖层 + 两个窗口共享的编辑器/表单内核
+├─ task_list_manager.py   任务列表渲染与交互（TaskListMixin）
+├─ preset_manager.py      预设管理（PresetManagerMixin）
+├─ execution_control.py   执行控制（启动/停止/暂停/单步 + 全局停止热键）
+├─ blueprint_canvas.py    蓝图画布图元（节点/连线/弯折点/分组框/视图）
+├─ blueprint_interaction.py  蓝图交互（命中测试/选择/弯折点/缩放/布局保存）
+├─ blueprint_groups.py    蓝图分组（渲染/增删改/收拢展开/菜单）
+├─ task_widgets.py        任务列表控件与 TaskWorker 工作线程
+├─ ui_common.py           界面公用小函数（表单行 / 坐标行 / 数值转换）
 ├─ main.py                任务执行和识别流程
-├─ tasks.py               默认任务与保存逻辑
+├─ tasks.py               默认任务与保存逻辑（原子写盘）
 ├─ nodes.py               统一节点接口与 NodeGraph
+├─ paths.py               资源与数据路径的唯一定义处（兼容源码运行与打包运行）
+├─ diagnostics.py         运行期诊断消息的集中收集点
 ├─ config.py              全局识别、超时和窗口配置
 ├─ requirements.txt       Python 依赖清单
+├─ VisionFlow_Automator.spec  PyInstaller 打包规格（构建说明见「项目接手文档.md」§10）
 ├─ saved_tasks.json       custom 自定义任务
 ├─ saved_presets.json     用户预设、删除记录和分组信息
 ├─ saved_blueprint_layouts.json  蓝图步骤布局和缩放
 ├─ saved_blueprint_graphs.json   蓝图步骤与连接关系
 ├─ README.md               本说明
 ├─ CHANGELOG.md            更新日志
-├─ icons/                 PNG 模板目录
-├─ core/                  截屏、输入和模板匹配模块
-├─ tests/                  单元测试
-├─ legacy/                已退役的旧代码（Tkinter 界面，含独立说明）
-│   ├─ gui.py             已退役的 Tkinter 界面
-│   └─ README.md          退役说明与注意事项
+├─ 项目接手文档.md         接手文档（现状/问题清单/设计/打包）
+├─ 优化路线.md             决策记录与路线
+├─ icons/                  模板 PNG（62 张）+ 2 个 Qt 复选框 SVG
+├─ core/                   截屏、输入和模板匹配模块
+├─ tests/                  单元测试（unittest，355 个用例）
 └─ 启动新界面.bat         启动 PySide6 界面（静默）—— 唯一入口
 ```
+
+> 第一代 Tkinter 界面 `legacy/gui.py` 与 `legacy/README.md` 已于 2026-09-28 删除
+> （提交 `26b098c`），目录不再存在；内容完整保留在 git 历史中，见 §4.4。
 
 ### 10.2 数据保存
 

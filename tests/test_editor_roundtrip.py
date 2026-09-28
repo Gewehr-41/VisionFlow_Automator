@@ -244,6 +244,29 @@ class ExecutionControlSharingTests(unittest.TestCase):
         self.assertIs(g.TaskWorker, execution_control.TaskWorker)
 
 
+class BlueprintInteractionSharingTests(unittest.TestCase):
+    """蓝图窗口的画布交互（24 个方法）必须由 blueprint_interaction 提供。"""
+
+    METHODS = ["_add_bend", "_apply_wire_geometry", "_create_bend_handle", "_delete_bend",
+               "_edge_for_wire", "_node_endpoint", "_node_hidden", "_node_item_from",
+               "_on_bend_moved", "_on_node_moved", "_on_selection_changed", "_on_wire_clicked",
+               "_on_zoom_changed", "_persist_bends", "_refresh_editor_from_selection",
+               "_restore_saved_zoom", "_schedule_scene_rect_update", "_select_node",
+               "_sync_bend_handles", "_update_scene_rect_deferred", "_visible_scene_rect",
+               "_wire_color", "save_layout", "set_grid_snap"]
+
+    def test_canvas_methods_come_from_the_mixin(self):
+        import blueprint_interaction
+
+        for name in self.METHODS:
+            with self.subTest(method=name):
+                self.assertNotIn(name, g.BlueprintWindow.__dict__,
+                                 f"{name} 不该在蓝图窗口类里再定义一份")
+                self.assertIs(getattr(g.BlueprintWindow, name),
+                              getattr(blueprint_interaction.BlueprintInteractionMixin, name),
+                              f"{name} 应由 BlueprintInteractionMixin 提供")
+
+
 class DataIsolationSeamTests(unittest.TestCase):
     """元守卫：测试的数据隔离必须**同时**替换路径常量，不能只替换函数名。
 

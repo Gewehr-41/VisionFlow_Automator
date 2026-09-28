@@ -17,6 +17,8 @@ build/
 dist/
 *.egg-info/
 *.spec
+# 例外：本项目唯一的构建规格要入库（其余 .spec 是临时试验产物）
+!VisionFlow_Automator.spec
 
 # ---- 编辑器 / IDE ----
 .idea/

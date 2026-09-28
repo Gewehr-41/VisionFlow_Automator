@@ -26,6 +26,7 @@ import tasks
 _APP = QApplication.instance() or QApplication([])
 
 import config
+import execution_control
 import gui_pyside6 as g
 
 _ROOT = os.path.dirname(os.path.abspath(g.__file__))
@@ -139,14 +140,25 @@ class ConfigRestoreUnitTests(_GuiTestCase):
 
 
 class ConfigRestoreWiringTests(_GuiTestCase):
-    """真的调用 _start_worker / on_worker_finished，验证接线。"""
+    """真的调用 _start_worker / on_worker_finished，验证接线。
+
+    ⚠️ 拦 worker / 线程必须替换 **`execution_control`** 里的名字：这两个类现在是
+    由 `execution_control.py` 导入并实例化的（`_start_worker` 已从窗口类外移）。
+    只替换 `g.TaskWorker` 在代码搬走后会失效 —— 测试会**真的启动一个 worker 线程**
+    （去截屏、点击），而断言因为恰好仍成立而**不会失败**。
+    所以下面还显式断言"用到的确实是替身"，把这个缝锁死。
+    """
 
     def setUp(self):
         super().setUp()
-        self._orig_thread = g.QThread
-        self._orig_worker = g.TaskWorker
+        self._orig_thread = execution_control.QThread
+        self._orig_worker = execution_control.TaskWorker
+        self._orig_g_thread = g.QThread
+        self._orig_g_worker = g.TaskWorker
         self._orig_start_hotkey = self.window._start_stop_hotkey
         self._orig_stop_hotkey = self.window._stop_stop_hotkey
+        execution_control.QThread = _FakeThread
+        execution_control.TaskWorker = _FakeWorker
         g.QThread = _FakeThread
         g.TaskWorker = _FakeWorker
         self.window._start_stop_hotkey = lambda: None
@@ -155,8 +167,10 @@ class ConfigRestoreWiringTests(_GuiTestCase):
         self.orig_mode = config.USE_WINDOW_MODE
 
     def tearDown(self):
-        g.QThread = self._orig_thread
-        g.TaskWorker = self._orig_worker
+        execution_control.QThread = self._orig_thread
+        execution_control.TaskWorker = self._orig_worker
+        g.QThread = self._orig_g_thread
+        g.TaskWorker = self._orig_g_worker
         config.TARGET_WINDOW_TITLE = self.orig_title
         config.USE_WINDOW_MODE = self.orig_mode
         super().tearDown()
@@ -166,6 +180,10 @@ class ConfigRestoreWiringTests(_GuiTestCase):
         self.window.window_combo.addItem("测试目标窗口")
         self.window.window_combo.setCurrentIndex(0)
         self.window._start_worker(None)
+        # 缝是否真的生效：用到的必须是替身，绝不能是真 worker/真线程
+        self.assertIsInstance(self.window.worker, _FakeWorker,
+                              "worker 替身没生效 —— 会真的启动脚本（截屏+点击）")
+        self.assertIsInstance(self.window.worker_thread, _FakeThread, "线程替身没生效")
 
     def test_start_worker_snapshots_config_before_overwriting(self):
         self.assertTrue(self.window.selected_tasks(), "预设里没有启用步骤，无法测试")

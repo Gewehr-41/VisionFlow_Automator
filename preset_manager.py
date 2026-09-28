@@ -63,6 +63,7 @@ class PresetManagerMixin:
             if str(name) in keep_names
         }
         save_presets(payload)
+
     def _refresh_mode_combo(self, selected=None):
         selected = selected or self.mode_combo.currentText() or "custom"
         self.mode_combo.blockSignals(True)

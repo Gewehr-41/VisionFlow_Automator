@@ -212,6 +212,38 @@ class TaskListSharingTests(unittest.TestCase):
                          "_capture_task_list 不能被采集 mixin 的空实现盖住")
 
 
+class ExecutionControlSharingTests(unittest.TestCase):
+    """执行控制（14 个方法）必须由 execution_control 提供。"""
+
+    METHODS = ["_capture_log", "_log_pending_warnings", "_on_global_stop_hotkey",
+               "_restore_config_after_run", "_start_stop_hotkey", "_start_worker",
+               "_stop_stop_hotkey", "_request_worker_quit_if_running", "append_log",
+               "on_worker_finished", "start_script", "stop_script", "step_script", "toggle_pause"]
+
+    def test_execution_methods_come_from_the_mixin(self):
+        import execution_control
+
+        for name in self.METHODS:
+            with self.subTest(method=name):
+                self.assertNotIn(name, g.PySide6ScriptWindow.__dict__,
+                                 f"{name} 不该在窗口类里再定义一份")
+                self.assertIs(getattr(g.PySide6ScriptWindow, name),
+                              getattr(execution_control.ExecutionControlMixin, name),
+                              f"{name} 应由 ExecutionControlMixin 提供")
+
+    def test_worker_class_is_imported_by_the_execution_module(self):
+        """worker/线程类由 execution_control 导入 —— 测试拦 worker 必须替换那里的名字。
+
+        否则 `_start_worker` 会拿到真类，**真的启动脚本**（截屏 + 点击），
+        而只看 config 断言的测试不会失败。这条守卫把这个事实钉住。
+        """
+        import execution_control
+
+        self.assertIs(execution_control.TaskWorker,
+                      __import__("task_widgets").TaskWorker)
+        self.assertIs(g.TaskWorker, execution_control.TaskWorker)
+
+
 class DataIsolationSeamTests(unittest.TestCase):
     """元守卫：测试的数据隔离必须**同时**替换路径常量，不能只替换函数名。
 

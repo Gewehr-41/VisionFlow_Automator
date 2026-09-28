@@ -31,6 +31,7 @@ class TaskListMixin:
         for group_id in self._selected_group_ids():
             entries.append(("group", group_id))
         return entries
+
     def _copy_selected_entries(self, selected_entries, target_tasks):
         """把选中的步骤/组复制成新任务列表，供追加到目标预设。
 
@@ -166,6 +167,7 @@ class TaskListMixin:
             ensure_group(group_id).addChild(make_task_item(index, task))
 
         # 依据子步骤启用情况回填组勾选状态（自底向上，先算子组再算父组）
+
         def refresh_group_check_state(group):
             for child_index in range(group.childCount()):
                 child = group.child(child_index)
@@ -198,12 +200,15 @@ class TaskListMixin:
             self.select_task_index(target_index)
         else:
             self.clear_editor()
+
     def select_task_index(self, index):
         item = self._find_task_item(index)
         if item is not None:
             self.task_list.setCurrentItem(item)
+
     def _find_task_item(self, index):
         """在（可能嵌套的）任务树中按步骤下标查找对应的树项。"""
+
         def search(parent):
             count = parent.childCount() if hasattr(parent, "childCount") else parent.topLevelItemCount()
             for position in range(count):
@@ -217,6 +222,7 @@ class TaskListMixin:
             return None
 
         return search(self.task_list)
+
     def toggle_item(self, item, _column):
         index = self._task_index_from_item(item)
         if index is None:
@@ -234,6 +240,7 @@ class TaskListMixin:
             TASKS[row]["enabled"] = should_enable
         self.append_log(f"已切换 {len(rows)} 个选中步骤的启用状态。")
         self._schedule_task_list_commit()
+
     def _schedule_task_list_commit(self):
         """把勾选状态变更统一延迟到下一事件循环一次性保存并刷新任务树。
 
@@ -244,6 +251,7 @@ class TaskListMixin:
             return
         self._task_list_commit_scheduled = True
         QTimer.singleShot(0, self._run_task_list_commit)
+
     def _run_task_list_commit(self):
         self._task_list_commit_scheduled = False
         self.save_current_tasks()
@@ -261,6 +269,7 @@ class TaskListMixin:
         self.save_current_tasks()
         self.refresh_task_list()
         self.select_task_index(self.current_task_index)
+
     def _capture_task_list(self):
         return TASKS
     @Slot()

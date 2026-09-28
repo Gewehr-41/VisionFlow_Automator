@@ -158,6 +158,52 @@ class StaticMethodGuardTests(unittest.TestCase):
             blueprint.close()
 
 
+class DataIsolationSeamTests(unittest.TestCase):
+    """元守卫：测试的数据隔离必须**同时**替换路径常量，不能只替换函数名。
+
+    背景：界面代码正在被逐步搬出 `gui_pyside6.py`。测试里 `g.save_presets = tasks.save_presets`
+    这类补丁只在"写盘代码与这个模块级名字同模块"时才有效；一旦代码搬到别的模块，
+    它就会绕过补丁去写**真实文件**（本项目真的踩过这个坑：4 个数据文件被误写）。
+    而 `tasks.PRESETS_FILE` 这类**路径**补丁是与模块无关的，任何模块调用
+    `tasks.save_presets` 都会写到临时目录。
+    所以规则是：凡替换了写盘函数，就必须同时替换对应的路径常量。
+    """
+
+    FUNC_TO_PATH = {
+        "save_presets": "PRESETS_FILE",
+        "save_tasks": "TASKS_FILE",
+        "save_blueprint_layouts": "BLUEPRINT_LAYOUT_FILE",
+        "save_blueprint_graphs": "BLUEPRINT_GRAPH_FILE",
+    }
+
+    def test_writers_patched_in_tests_also_patch_their_paths(self):
+        import re
+        from pathlib import Path
+
+        offenders = []
+        for path in sorted(Path(__file__).resolve().parent.glob("*.py")):
+            text = path.read_text(encoding="utf-8")
+            patched_funcs = {func for func in self.FUNC_TO_PATH
+                             if re.search(rf"g\.{func}\s*=", text)}
+            if not patched_funcs:
+                continue
+            missing = []
+            for func in sorted(patched_funcs):
+                path_name = self.FUNC_TO_PATH[func]
+                # 必须是「重定向到临时目录」的赋值；tearDown 里的还原赋值不算数
+                # （只匹配到赋值符号会被 self._orig_xxx 这种还原语句蒙混过去）
+                if not re.search(rf"tasks\.{path_name}\s*=\s*(os\.path\.join|tempfile\.|self\._tmp)",
+                                 text):
+                    missing.append(path_name)
+            if missing:
+                offenders.append(f"{path.name} 替换了函数但没把路径重定向到临时目录: {missing}")
+        self.assertEqual(
+            offenders, [],
+            "只替换写盘函数、不替换路径常量的隔离在代码搬走后会失效并写坏真实数据：\n  "
+            + "\n  ".join(offenders),
+        )
+
+
 class EditorRoundTripTests(unittest.TestCase):
     """加载 → 改值 → 应用 的完整往返（会真正调用应用按钮的处理函数）。"""
 
@@ -595,6 +641,11 @@ class BlueprintGraphWiringTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self._orig_presets_file = tasks.PRESETS_FILE
         self._orig_tasks_file = tasks.TASKS_FILE
+        # 蓝图数据文件的**路径**也要一起替换（不只是替换函数）：
+        # 任何搬到别的模块里的写盘代码会走 `tasks.save_blueprint_*`，那时只有路径补丁
+        # 还能拦住它 —— 只补函数名的隔离在代码搬家后会失效并写坏真实文件。
+        self._orig_layout_file = tasks.BLUEPRINT_LAYOUT_FILE
+        self._orig_graph_file = tasks.BLUEPRINT_GRAPH_FILE
         self._orig_save_presets = g.save_presets
         self._orig_save_tasks = g.save_tasks
         self._orig_save_layouts = g.save_blueprint_layouts
@@ -603,10 +654,12 @@ class BlueprintGraphWiringTests(unittest.TestCase):
         self._tasks_snapshot = copy.deepcopy(g.TASKS)
         tasks.PRESETS_FILE = os.path.join(self._tmp.name, "saved_presets.json")
         tasks.TASKS_FILE = os.path.join(self._tmp.name, "saved_tasks.json")
+        tasks.BLUEPRINT_LAYOUT_FILE = os.path.join(self._tmp.name, "saved_blueprint_layouts.json")
+        tasks.BLUEPRINT_GRAPH_FILE = os.path.join(self._tmp.name, "saved_blueprint_graphs.json")
         g.save_presets = tasks.save_presets
         g.save_tasks = tasks.save_tasks
-        g.save_blueprint_layouts = lambda *a, **k: None
-        g.save_blueprint_graphs = lambda *a, **k: None
+        g.save_blueprint_layouts = tasks.save_blueprint_layouts
+        g.save_blueprint_graphs = tasks.save_blueprint_graphs
         self.window = g.PySide6ScriptWindow()
 
     def tearDown(self):
@@ -614,6 +667,8 @@ class BlueprintGraphWiringTests(unittest.TestCase):
         g.TASKS[:] = self._tasks_snapshot
         tasks.PRESETS_FILE = self._orig_presets_file
         tasks.TASKS_FILE = self._orig_tasks_file
+        tasks.BLUEPRINT_LAYOUT_FILE = self._orig_layout_file
+        tasks.BLUEPRINT_GRAPH_FILE = self._orig_graph_file
         g.save_presets = self._orig_save_presets
         g.save_tasks = self._orig_save_tasks
         g.save_blueprint_layouts = self._orig_save_layouts

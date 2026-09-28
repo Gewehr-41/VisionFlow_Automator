@@ -56,6 +56,7 @@ import config
 from main import reload_templates, run_task_queue
 from tasks import (
     DELETED_PRESET_NAMES,
+    LOAD_WARNINGS,
     PRESET_METADATA,
     TASKS,
     USER_PRESETS,
@@ -68,7 +69,7 @@ from tasks import (
     save_tasks,
     TASK_PRESETS,
 )
-from nodes import NodeGraph, fill_missing_connections, remap_jump_targets
+from nodes import JUMP_FIELD_LABELS, NodeGraph, fill_missing_connections, remap_jump_targets
 from core.screen import get_window_rect
 from core.hotkey import GlobalHotkey
 from core.input import release_all_inputs
@@ -3418,38 +3419,11 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
         errors.extend(self._validate_blueprint_connections())
         errors = list(dict.fromkeys(errors))
         if self.tasks:
-            id_to_index = {str(t.get("id")): i for i, t in enumerate(self.tasks) if t.get("id") is not None}
-            incoming = {
-                id_to_index[str(t["flow_next"])]
-                for t in self.tasks
-                if t.get("flow_next") is not None and str(t["flow_next"]) in id_to_index
-            }
-            entry = next((i for i in range(len(self.tasks)) if i not in incoming), 0)
-            reachable = set()
-            pending = [entry]
-            while pending:
-                index = pending.pop()
-                if index in reachable or not (0 <= index < len(self.tasks)):
-                    continue
-                reachable.add(index)
-                task = self.tasks[index]
-                targets = []
-                flow_target = id_to_index.get(str(task.get("flow_next"))) if task.get("flow_next") is not None else None
-                if flow_target is not None:
-                    targets.append(flow_target)
-                for key in ("detour_jump_to", "detour_success_jump_to", "condition_true_jump_to", "condition_false_jump_to", "switch_default_jump_to", "loop_target", "loop_exit_target", "event_timeout_target", "timeout_jump_to"):
-                    value = task.get(key)
-                    if value is not None:
-                        target = self._resolve_number(value)
-                        if target is not None:
-                            targets.append(target)
-                for value in (task.get("switch_cases") or {}).values():
-                    target = self._resolve_number(value)
-                    if target is not None:
-                        targets.append(target)
-                if flow_target is None and not task.get("flow_next_disabled") and index + 1 < len(self.tasks):
-                    targets.append(index + 1)
-                pending.extend(targets)
+            # 复用 nodes.NodeGraph 的可达性计算。此前这里把 entry_index +
+            # reachable_indices 的逻辑内联重写了一遍，且列表只列了 9 个跳转字段
+            # （漏 event_trigger_target 与 wait_timeout_jump_to），于是仅靠这两类
+            # 跳转才可达的步骤会被**误报为"不可达步骤"**。
+            reachable = NodeGraph(self.tasks).reachable_indices()
             unreachable = [str(i + 1) for i in range(len(self.tasks)) if i not in reachable]
             if unreachable:
                 errors.append(f"不可达步骤: {', '.join(unreachable)}")
@@ -3476,12 +3450,7 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
                     errors.append(f"步骤 {index + 1} 的普通连接目标不存在。")
                 elif target_index == index:
                     errors.append(f"步骤 {index + 1} 不能连接到自身。")
-            for key, label in (
-                ("detour_jump_to", "未识别"), ("detour_success_jump_to", "识别成功"),
-                ("timeout_jump_to", "超时"), ("condition_true_jump_to", "条件成立"),
-                ("condition_false_jump_to", "条件不成立"), ("loop_target", "循环体"),
-                ("loop_exit_target", "循环退出"),
-            ):
+            for key, label in JUMP_FIELD_LABELS.items():
                 target_number = task.get(key)
                 if target_number is None:
                     continue
@@ -3496,7 +3465,7 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
                     errors.append(f"步骤 {index + 1} 的“{label}”不能跳转到自身。")
             switch_cases = task.get("switch_cases") or {}
             switch_targets = list(switch_cases.items()) if isinstance(switch_cases, dict) else []
-            for case_value, target_number in switch_targets + [("默认", task.get("switch_default_jump_to"))]:
+            for case_value, target_number in switch_targets:
                 if target_number is None:
                     continue
                 try:
@@ -3655,6 +3624,15 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         # refresh_task_list() 会自动选中第一个步骤并触发 _update_template_preview，
         # 若不设此标志，启动瞬间编辑面板就会显示第一张模板缩略图。
         self._initializing = False
+        # 数据文件读取阶段的警告必须落到日志框。启动脚本用隐藏窗口运行 python，
+        # stderr 用户看不到；不落日志就等于"数据静默消失"。
+        self._log_load_warnings()
+
+    def _log_load_warnings(self):
+        """把 tasks 在读取数据文件时收集到的警告写进日志框，返回条数。"""
+        for warning in LOAD_WARNINGS:
+            self.append_log(warning)
+        return len(LOAD_WARNINGS)
 
     def _build_ui(self):
         root = QWidget(self)

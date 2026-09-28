@@ -297,6 +297,66 @@ class JumpFieldCoverageTests(unittest.TestCase):
                 expected = "c" if field == "flow_next" else 3
                 self.assertEqual(tasks[0][field], expected)
 
+    # ---------- 显示名映射（界面校验的字段列表由它派生） ----------
+
+    def test_jump_field_labels_cover_exactly_the_declared_fields(self):
+        self.assertEqual(
+            set(nodes.JUMP_FIELD_LABELS), set(nodes.JUMP_TARGET_FIELDS),
+            "JUMP_FIELD_LABELS 的键必须与 JUMP_TARGET_FIELDS 完全一致，"
+            "否则界面的蓝图校验会漏字段（漏字段不报错，只静默看不见）",
+        )
+
+    def test_jump_field_labels_are_non_empty(self):
+        for field, label in nodes.JUMP_FIELD_LABELS.items():
+            with self.subTest(field=field):
+                self.assertTrue(str(label).strip(), f"{field} 的显示名不能为空")
+
+
+class ReachableIndicesTests(unittest.TestCase):
+    """可达性计算：必须认得全部跳转字段，且对非法入口不崩。"""
+
+    def _chain_then_branch(self, branch_field):
+        """a -flow_next-> b -（branch_field）-> c，且 b 禁用顺序落到下一步。"""
+        return [
+            {"id": "a", "type": "normal", "flow_next": "b"},
+            {"id": "b", "type": "normal", branch_field: 3, "flow_next_disabled": True},
+            {"id": "c", "type": "normal"},
+        ]
+
+    def test_every_declared_jump_field_extends_reachability(self):
+        """仅靠某一个跳转字段可达的步骤，必须算作可达（覆盖全部 11 个字段）。"""
+        for field in nodes.JUMP_TARGET_FIELDS:
+            with self.subTest(field=field):
+                tasks = self._chain_then_branch(field)
+                self.assertEqual(
+                    nodes.NodeGraph(tasks).reachable_indices(), {0, 1, 2},
+                    f"仅靠 {field} 可达的步骤被算成了不可达",
+                )
+
+    def test_fall_through_reaches_next_step(self):
+        tasks = [{"id": "a", "type": "normal"}, {"id": "b", "type": "normal"}]
+        self.assertEqual(nodes.NodeGraph(tasks).reachable_indices(), {0, 1})
+
+    def test_flow_next_disabled_stops_fall_through(self):
+        tasks = [
+            {"id": "a", "type": "normal", "flow_next_disabled": True},
+            {"id": "b", "type": "normal"},
+        ]
+        self.assertEqual(nodes.NodeGraph(tasks).reachable_indices(), {0})
+
+    def test_out_of_range_entry_returns_empty_instead_of_raising(self):
+        graph = nodes.NodeGraph([{"id": "a"}, {"id": "b"}])
+        self.assertEqual(graph.reachable_indices(999), set())
+
+    def test_negative_entry_returns_empty_instead_of_walking_from_the_end(self):
+        """旧实现会把 -1 当成最后一个节点继续遍历，静默给出错误结果。"""
+        graph = nodes.NodeGraph([{"id": "a"}, {"id": "b"}, {"id": "c"}])
+        self.assertEqual(graph.reachable_indices(-1), set())
+
+    def test_empty_graph_is_safe(self):
+        """空图以前会 IndexError：entry_index() 返回 0，旧实现直接取 self.nodes[0]。"""
+        self.assertEqual(nodes.NodeGraph([]).reachable_indices(), set())
+
 
 if __name__ == "__main__":
     unittest.main()

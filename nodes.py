@@ -212,7 +212,9 @@ class NodeGraph:
         pending = [self.entry_index() if entry_index is None else entry_index]
         while pending:
             index = pending.pop()
-            if index in reachable:
+            # 越界守卫：调用方传入的 entry_index 或跳转目标都可能越界，
+            # 少了这一步会在 self.nodes[index] 处直接 IndexError。
+            if index in reachable or not (0 <= index < len(self.nodes)):
                 continue
             reachable.add(index)
             pending.extend(self.outgoing_targets(index))
@@ -316,6 +318,28 @@ JUMP_TARGET_FIELDS = (
     "event_timeout_target",
     "event_trigger_target",
 )
+
+# 每个跳转字段在界面上的人话名字。
+#
+# 这是**唯一**一份「跳转字段 -> 显示名」映射：界面的蓝图校验此前各自手工维护
+# 字段列表（一处 7 个、一处 9 个），于是同一个新字段总是漏掉几处，而漏掉不会
+# 报错、只会让校验静默看不见那条跳转。
+#
+# 键必须与 JUMP_TARGET_FIELDS 完全一致；由
+# tests/test_graph_connections.py::JumpFieldCoverageTests 强制校验。
+JUMP_FIELD_LABELS = {
+    "detour_jump_to": "未识别",
+    "detour_success_jump_to": "识别成功",
+    "timeout_jump_to": "超时",
+    "wait_timeout_jump_to": "等待超时",
+    "condition_true_jump_to": "条件成立",
+    "condition_false_jump_to": "条件不成立",
+    "switch_default_jump_to": "Switch 默认",
+    "loop_target": "循环体",
+    "loop_exit_target": "循环退出",
+    "event_timeout_target": "事件超时",
+    "event_trigger_target": "事件触发",
+}
 
 
 def remap_jump_targets(tasks, index_map):

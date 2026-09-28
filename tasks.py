@@ -8,12 +8,21 @@ from copy import deepcopy
 from nodes import normalize_task
 
 
+# 读取阶段的警告集中存放。
+#
+# 启动脚本（启动新界面.bat）用**隐藏窗口**运行 python，stderr 用户根本看不到，
+# 所以"打印一行警告"并不等于"用户会知道"。界面在启动时会把这里的内容写进
+# 日志框（gui_pyside6 的 _log_load_warnings），这才是真正可见的那条路径。
+LOAD_WARNINGS = []
+
+
 def _warn(message):
     """读取失败时给出可见提示，避免静默回退默认值导致用户数据"无声消失"。
 
-    只写入 stderr（GUI 会捕获并显示），不改动数据层与界面层的耦合。
+    同时写入 stderr 并追加到 LOAD_WARNINGS，由界面在启动时显示。
     """
     print(message, file=sys.stderr)
+    LOAD_WARNINGS.append(message)
     return message
 
 
@@ -223,7 +232,10 @@ def load_deleted_preset_names():
             data = json.load(f)
         deleted_names = data.get("__deleted__", []) if isinstance(data, dict) else []
         return {str(name) for name in deleted_names} if isinstance(deleted_names, list) else set()
-    except Exception:
+    except Exception as exc:
+        # 静默返回空集合的后果不只是"少了个名单"：删除名单一旦为空，保存时
+        # __deleted__ 会被写成 []，此前删掉的预设会重新出现在界面上。
+        _warn(f"警告: 读取 {PRESETS_FILE} 的删除名单失败（{exc}），已删除的预设可能会重新出现。")
         return set()
 
 
@@ -266,7 +278,8 @@ def load_preset_metadata():
             data = json.load(f)
         metadata = data.get("__group_metadata__", {}) if isinstance(data, dict) else {}
         return metadata if isinstance(metadata, dict) else {}
-    except Exception:
+    except Exception as exc:
+        _warn(f"警告: 读取 {PRESETS_FILE} 的分组元数据失败（{exc}），分组名称与颜色将回退为默认值。")
         return {}
 
 
@@ -277,7 +290,8 @@ def load_blueprint_layouts():
         with open(BLUEPRINT_LAYOUT_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         return data if isinstance(data, dict) else {}
-    except Exception:
+    except Exception as exc:
+        _warn(f"警告: 读取 {BLUEPRINT_LAYOUT_FILE} 失败（{exc}），蓝图的节点位置与缩放将不会恢复。")
         return {}
 
 
@@ -292,7 +306,8 @@ def load_blueprint_graphs():
         with open(BLUEPRINT_GRAPH_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         return data if isinstance(data, dict) else {}
-    except Exception:
+    except Exception as exc:
+        _warn(f"警告: 读取 {BLUEPRINT_GRAPH_FILE} 失败（{exc}），蓝图图数据将不会加载。")
         return {}
 
 

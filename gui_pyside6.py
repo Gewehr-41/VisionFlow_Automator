@@ -5219,9 +5219,9 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
                 templates = [item.strip() for item in template_value.replace("，", ",").split(",") if item.strip()]
                 task["templates"] = templates or ["new_step"]
                 task["template"] = task["templates"][0]
-                task["click_interval"] = self._float_value(self.click_until_interval_edit.text(), 0.5)
-                task["stop_delay"] = self._float_value(self.click_until_stop_delay_edit.text(), 0.0)
-                task["timeout"] = self._float_value(self.click_until_timeout_edit.text(), 30.0)
+                task["click_interval"] = self._float(self.click_until_interval_edit.text(), 0.5)
+                task["stop_delay"] = self._float(self.click_until_stop_delay_edit.text(), 0.0)
+                task["timeout"] = self._float(self.click_until_timeout_edit.text(), 30.0)
                 task["continue_after_timeout"] = self.click_until_continue_checkbox.isChecked()
                 task["stop_on_change"] = self.click_until_stop_on_change_checkbox.isChecked()
                 task["click"] = True
@@ -5234,15 +5234,15 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
                     task["template"] = task["templates"][0]
                 else:
                     task["template"] = template_value
-                task["threshold"] = self._float_value(self.threshold_edit.text(), config.THRESHOLD)
-                task["timeout"] = self._float_value(self.timeout_edit.text(), 5.0)
-                task["after_wait"] = self._float_value(self.after_wait_edit.text(), 0.25)
+                task["threshold"] = self._float(self.threshold_edit.text(), config.THRESHOLD)
+                task["timeout"] = self._float(self.timeout_edit.text(), 5.0)
+                task["after_wait"] = self._float(self.after_wait_edit.text(), 0.25)
                 task["click"] = self.click_checkbox.isChecked()
                 task["click_requires_match"] = self.match_required_checkbox.isChecked()
                 # 「偏移」不再由界面回写：控件已删除（2026-09-28），
                 # task["offset"] 保持数据里的原值，引擎缺省按 (0, 0) 使用。
-                click_x = self._int_value(self.click_x_edit.text())
-                click_y = self._int_value(self.click_y_edit.text())
+                click_x = self._int(self.click_x_edit.text())
+                click_y = self._int(self.click_y_edit.text())
                 if click_x is not None and click_y is not None:
                     task["click_x"] = click_x
                     task["click_y"] = click_y
@@ -5305,12 +5305,12 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
                 if value == "":
                     task.pop(key, None)
                 else:
-                    parsed = self._int_value(value)
+                    parsed = self._int(value)
                     if parsed is not None:
                         task[key] = parsed
             elif key in {"wait_timeout", "offset_x", "offset_y", "delay_before", "hold_time", "start_x", "start_y", "end_x", "end_y", "duration", "click_interval", "stop_delay", "event_timeout", "after_wait", "threshold"}:
                 fallback = config.THRESHOLD if key == "threshold" else task.get(key, 0.0)
-                task[key] = self._float_value(value, fallback)
+                task[key] = self._float(value, fallback)
             else:
                 task[key] = value
         if task.get("type") == "event" and task.get("event_template"):
@@ -5322,15 +5322,8 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         self.select_task_index(self.current_task_index)
         self.append_log(f"已应用第 {self.current_task_index + 1} 步修改。")
 
-    @staticmethod
-    def _float_value(value, fallback):
-        # 与蓝图窗口共用同一实现（此前 _float / _float_value 两份完全相同）
-        return _to_float(value, fallback)
-
-    @staticmethod
-    def _int_value(value):
-        # 与蓝图窗口共用同一实现（此前 _int / _int_value 两份完全相同）
-        return _to_int(value)
+    # _float / _int 已在 CaptureOverlayMixin 里统一实现（两窗口共用一套名字）。
+    # 此前主窗口另有 _float_value / _int_value 两个逐字相同的别名，已删除。
 
     @Slot()
     def save_current_tasks(self):

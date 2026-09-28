@@ -10,6 +10,9 @@ commit 36da50b 在删除已退休的 `open_detour_editor` 时，误把紧随其�
     TypeError: PySide6ScriptWindow._float_value() takes 2 positional
                arguments but 3 were given
 
+（该别名后来与蓝图窗口的 `_float` / `_int` 合并，统一由 `CaptureOverlayMixin`
+提供，名字为 `_float` / `_int`；下面两条测试跟着改名。）
+
 而当时 131 个测试全绿——因为没有任何一个测试真正点过「应用修改」。
 本文件补上两件事：
 
@@ -85,7 +88,9 @@ class StaticMethodGuardTests(unittest.TestCase):
         )
 
     def test_value_helpers_are_staticmethods(self):
-        wanted = {"_float_value", "_int_value", "_float", "_int"}
+        # 两窗口共用 mixin 里的 _float / _int（主窗口原来的 _float_value / _int_value
+        # 是同实现的重复别名，已删除）
+        wanted = {"_float", "_int"}
         found = {}
         for class_name, func_name, _node, decorators in _iter_class_methods():
             if func_name in wanted:
@@ -105,10 +110,10 @@ class StaticMethodGuardTests(unittest.TestCase):
         """这条正是当初崩溃的调用形式：实例属性访问 + 两个实参。"""
         window = g.PySide6ScriptWindow()
         try:
-            self.assertEqual(window._float_value("1.5", 0.0), 1.5)
-            self.assertEqual(window._float_value("不是数字", 9.0), 9.0)
-            self.assertEqual(window._int_value("7"), 7)
-            self.assertIsNone(window._int_value("x"))
+            self.assertEqual(window._float("1.5", 0.0), 1.5)
+            self.assertEqual(window._float("不是数字", 9.0), 9.0)
+            self.assertEqual(window._int("7"), 7)
+            self.assertIsNone(window._int("x"))
         finally:
             window.close()
 

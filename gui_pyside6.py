@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
 
 import config
 import diagnostics
+import paths
 from main import reload_templates
 from tasks import (
     DELETED_PRESET_NAMES,
@@ -1531,6 +1532,9 @@ class PySide6ScriptWindow(TaskListMixin, PresetManagerMixin, CaptureOverlayMixin
         # 日志框。启动脚本用隐藏窗口运行 python，stdout/stderr 用户看不到；
         # 不落日志就等于"问题静默消失"。
         self._warning_cursor = 0
+        # 启动时先把"数据放在哪、资源在哪"记一行：打包成 exe 之后这是排查
+        # "预设不见了 / 读不到模板"的第一手信息（用户可以直接看日志框）。
+        self.append_log(paths.describe())
         self._log_pending_warnings()
         # 运行期也会产生诊断信息，其中热键那条来自后台线程、模板那条来自 worker 线程。
         # 只在 GUI 线程里搬运，所以用一个定时器轮询（而不是让 worker 直接碰控件）。
@@ -1697,8 +1701,8 @@ class PySide6ScriptWindow(TaskListMixin, PresetManagerMixin, CaptureOverlayMixin
         # 这两个 SVG 是**程序自带的界面资源**（复选框指示器），不是用户模板。
         # 它们有意固定在 <脚本目录>/icons，不跟随 config.ICON_DIR —— 用户把
         # ICON_DIR 指向自己的模板目录时，界面样式仍应正常。
-        checked_indicator = os.path.join(os.path.dirname(__file__), "icons", "checkbox_checked.svg").replace("\\", "/")
-        indeterminate_indicator = os.path.join(os.path.dirname(__file__), "icons", "checkbox_indeterminate.svg").replace("\\", "/")
+        checked_indicator = os.path.join(paths.ICON_DIR, "checkbox_checked.svg").replace("\\", "/")
+        indeterminate_indicator = os.path.join(paths.ICON_DIR, "checkbox_indeterminate.svg").replace("\\", "/")
         self.setStyleSheet(
             "QMainWindow { background: #f3f5f8; color: #1f2937; }"
             "QGroupBox { border: 1px solid #cbd5e1; border-radius: 6px; margin-top: 10px; padding: 10px; font-weight: bold; }"

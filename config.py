@@ -1,9 +1,10 @@
 # 全局配置：集中管理模板识别、屏幕捕获和输入操作参数。
 import os
 
+from paths import ICON_DIR   # 路径只在 paths.py 里算（见那里的说明）
+
 
 # ==================== 全局配置 ====================
-ICON_DIR = os.path.join(os.path.dirname(__file__), "icons")
 THRESHOLD = 0.8                    # 模板匹配阈值
 USE_MULTI_SCALE = True              # 是否启用多尺度匹配
 SCALE_RANGE = (0.8, 1.2)            # 缩放范围

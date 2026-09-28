@@ -7,6 +7,7 @@ from copy import deepcopy
 
 from diagnostics import warn
 from nodes import normalize_task
+import paths
 
 
 # 读取失败的提示统一走 diagnostics.warn（写 stderr + 收集起来给界面日志框）。
@@ -92,10 +93,10 @@ DEFAULT_TASKS = [
     make_normal_task("side_road_special", "side", "歧路：识别并点击特殊关卡", "side_road"),
 ]
 
-TASKS_FILE = os.path.join(os.path.dirname(__file__), "saved_tasks.json")
-PRESETS_FILE = os.path.join(os.path.dirname(__file__), "saved_presets.json")
-BLUEPRINT_LAYOUT_FILE = os.path.join(os.path.dirname(__file__), "saved_blueprint_layouts.json")
-BLUEPRINT_GRAPH_FILE = os.path.join(os.path.dirname(__file__), "saved_blueprint_graphs.json")
+TASKS_FILE = paths.TASKS_FILE
+PRESETS_FILE = paths.PRESETS_FILE
+BLUEPRINT_LAYOUT_FILE = paths.BLUEPRINT_LAYOUT_FILE
+BLUEPRINT_GRAPH_FILE = paths.BLUEPRINT_GRAPH_FILE
 
 
 def dump_json_atomic(path, payload):

@@ -14,11 +14,20 @@ class StopExecution(Exception):
 
 
 def load_templates(icon_dir):
-    """加载模板图，返回 {模板名: 图像对象}。"""
+    """加载模板图，返回 {模板名: 图像对象}。
+
+    **不因为"读不到模板"而让程序起不来**：本函数是在**导入期**被调用的
+    （`main.py` 模块级 `templates = load_templates(ICON_DIR)`），而用户随时可能
+    在整理 `icons/`（清空重录、临时挪走图片……）。所以"目录不存在"或"一张都读不出来"
+    时只给一条**可见警告**并返回空库：界面照常打开，识别类步骤会因为找不到模板而
+    "未识别"，但不会崩、更不会变成"双击没反应"。
+    """
     templates = {}
     icon_path = Path(icon_dir)
     if not icon_path.exists():
-        raise FileNotFoundError(f"图标目录不存在: {icon_dir}")
+        warn(f"警告: 图标目录不存在: {icon_dir}"
+             "（识别功能暂时不可用，界面仍可正常打开）")
+        return templates
 
     for file in sorted(icon_path.glob("*.png")):
         name = file.stem
@@ -34,7 +43,9 @@ def load_templates(icon_dir):
             warn(f"警告: 无法读取模板文件 {file.name}（该模板本次不可用）")
 
     if not templates:
-        raise ValueError(f"没有在 {icon_dir} 中找到模板图，请检查目录和文件名。")
+        warn(f"警告: {icon_dir} 里没有可用的模板图（PNG）"
+             "——识别功能暂时不可用，界面仍可正常打开；"
+             "把图片放回去（或在步骤里重新绑定）即可恢复。")
 
     return templates
 

@@ -25,6 +25,9 @@
 import contextlib
 import io
 import os
+import pathlib
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -200,12 +203,63 @@ class CoreModuleWarningTests(_WarnIsolation):
         core_template_match.load_templates(directory)
         self.assertEqual(diagnostics.snapshot(), [], "全部正常时不该产生警告")
 
-    def test_directory_without_usable_templates_still_raises(self):
-        """原有行为：一张都读不出来时抛错（不是静默返回空字典）。"""
+    def test_directory_without_usable_templates_warns_and_returns_empty(self):
+        """一张都读不出来时**不再抛错**：给可见警告 + 返回空库，界面照样能打开。
+
+        回归背景（所有者 2026-09-28 实测）：`main.py` 在**导入期**就调用
+        `load_templates(ICON_DIR)`，此前"零模板"会 `raise ValueError` →
+        整个程序起不来；打包版没有控制台，表现成"双击没反应"。
+        用户整理 icons/ 时不该把程序弄成打不开。
+        """
         directory = self._make_icon_dir(valid=0, broken=2)
         with contextlib.redirect_stderr(io.StringIO()):
-            with self.assertRaises(ValueError):
-                core_template_match.load_templates(directory)
+            loaded = core_template_match.load_templates(directory)
+        self.assertEqual(loaded, {}, "读不到模板时应返回空库，而不是抛错")
+        messages = diagnostics.snapshot()
+        self.assertTrue(any("没有可用的模板图" in message for message in messages),
+                        f"应有可见警告说明识别不可用: {messages}")
+        self.assertTrue(any("界面仍可正常打开" in message for message in messages),
+                        "警告应说明界面仍能打开，避免用户以为程序坏了")
+
+    def test_missing_icon_directory_warns_and_returns_empty(self):
+        """图标目录整个不存在时同样不致命（用户可能正在挪目录）。"""
+        missing = os.path.join(tempfile.gettempdir(), "vf_不存在的图标目录_9f3a")
+        with contextlib.redirect_stderr(io.StringIO()):
+            loaded = core_template_match.load_templates(missing)
+        self.assertEqual(loaded, {})
+        self.assertTrue(any("图标目录不存在" in message for message in diagnostics.snapshot()))
+
+    def test_app_starts_even_when_the_template_library_is_empty(self):
+        """端到端：模板库为空时，导入 main 并构造主窗口都必须成功。
+
+        这是"编辑 icons 不能影响启动"的真正守卫：`main.py` 在导入期加载模板库，
+        所以这里用子进程把 ICON_DIR 指向一个空目录，再走一遍真实的启动路径
+        （导入 main -> 导入 gui_pyside6 -> 构造主窗口）。
+        """
+        project_root = pathlib.Path(__file__).resolve().parents[1]
+        empty = tempfile.mkdtemp(prefix="vf_empty_icons_")
+        script = (
+            "import os, sys\n"
+            "os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')\n"
+            f"sys.path.insert(0, {str(project_root)!r})\n"
+            "import config\n"
+            f"config.ICON_DIR = {empty!r}\n"
+            "import main\n"
+            "assert main.templates == {}, main.templates\n"
+            "import gui_pyside6 as g\n"
+            "from PySide6.QtWidgets import QApplication\n"
+            "app = QApplication.instance() or QApplication([])\n"
+            "window = g.PySide6ScriptWindow()\n"
+            "window.close()\n"
+            "print('START-OK')\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script], capture_output=True, text=True,
+            cwd=str(project_root), encoding="utf-8", errors="replace",
+        )
+        self.assertIn("START-OK", result.stdout,
+                      f"模板库为空时程序应能启动；stderr={result.stderr[-600:]}")
+        self.assertEqual(result.returncode, 0, result.stderr[-600:])
 
     def test_invalid_hotkey_combo_warns_and_explains_the_consequence(self):
         hotkey = GlobalHotkey()

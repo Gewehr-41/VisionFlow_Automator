@@ -787,6 +787,73 @@ class CaptureMixinContractTests(unittest.TestCase):
         for key in ("click_x", "click_y", "click_position"):
             self.assertNotIn(key, step, "「清空点击点」后三个键都要消失")
 
+    # ---------- 多模板选择策略下拉（所有者 2026-09-28 决定）----------
+
+    def test_match_strategy_combo_sits_after_enabled_with_five_options(self):
+        """策略下拉必须紧跟在「启用步骤」之后，并提供 5 个选项、默认"置信度最高"。"""
+        from PySide6.QtWidgets import QFormLayout
+
+        import main as engine
+
+        blueprint = self._blueprint_window()
+        try:
+            for label, window in (("主窗口", self.window), ("蓝图窗口", blueprint)):
+                with self.subTest(window=label):
+                    combo = window.match_strategy_combo
+                    self.assertEqual(
+                        [combo.itemText(i) for i in range(combo.count())],
+                        [text for _key, text in engine.MATCH_STRATEGIES],
+                    )
+                    self.assertEqual(combo.currentData(), "confidence", "默认应是置信度最高")
+
+                    layout = next(
+                        lay for lay in window.findChildren(QFormLayout)
+                        if any(
+                            (lay.itemAt(row, QFormLayout.FieldRole) or None) is not None
+                            and lay.itemAt(row, QFormLayout.FieldRole).widget() is window.enabled_checkbox
+                            for row in range(lay.rowCount())
+                        )
+                    )
+
+                    def row_of(widget):
+                        for row in range(layout.rowCount()):
+                            item = layout.itemAt(row, QFormLayout.FieldRole)
+                            if item is not None and item.widget() is widget:
+                                return row
+                        return None
+
+                    enabled_row = row_of(window.enabled_checkbox)
+                    strategy_row = row_of(combo)
+                    self.assertIsNotNone(strategy_row, "策略下拉应与「启用步骤」在同一张表单里")
+                    self.assertGreater(strategy_row, enabled_row, "策略下拉应排在「启用步骤」之后")
+        finally:
+            blueprint.close()
+
+    def test_load_shows_legacy_advanced_as_leftmost_and_apply_writes_it_back(self):
+        """旧 advanced 步骤打开时显示为"最左"；改成别的策略后「应用修改」要写进任务。"""
+        if not g.TASKS:
+            g.TASKS.append({"id": "probe", "type": "normal", "description": "探针"})
+        task = g.TASKS[0]
+        original = dict(task)
+        try:
+            task.clear()
+            task.update({"id": "probe", "type": "advanced", "description": "旧高级步骤",
+                         "template": "t", "templates": ["t"]})
+            self.window.refresh_task_list()   # 列表刷新后 select_task_index 才会真正加载编辑器
+            self.window.select_task_index(0)
+            self.assertEqual(self.window.match_strategy_combo.currentData(), "leftmost",
+                             "旧 advanced 没有 match_strategy，界面应显示它的真实语义：最左")
+
+            index = self.window.match_strategy_combo.findData("bottommost")
+            self.window.match_strategy_combo.setCurrentIndex(index)
+            self.window.apply_selected_task()
+
+            self.assertEqual(task["match_strategy"], "bottommost")
+            self.assertEqual(task["type"], "advanced", "类型字段不因本下拉而改变")
+        finally:
+            task.clear()
+            task.update(original)
+
     def test_detour_dialog_writes_click_until_settings(self):
         """click_until_gone 子步骤的「持续点击设置」与主界面写同样的键。"""
         from PySide6.QtWidgets import QCheckBox

@@ -40,7 +40,7 @@ from PySide6.QtWidgets import (
 )
 
 import config
-from main import reload_templates
+from main import MATCH_STRATEGIES, get_task_match_strategy, reload_templates
 from tasks import TASKS
 from ui_common import (
     _add_click_until_row,
@@ -807,7 +807,7 @@ class CaptureOverlayMixin:
 
         add_row = QHBoxLayout()
         type_combo = QComboBox()
-        type_combo.addItems(["normal", "advanced", "loop", "key_press", "keyboard_move", "drag", "click_until_gone", "delay"])
+        type_combo.addItems(["normal", "loop", "key_press", "keyboard_move", "drag", "click_until_gone", "delay"])
         add_row.addWidget(type_combo, 1)
         add_button = QPushButton("新增步骤")
         add_button.clicked.connect(lambda: (detour_steps.append({"type": type_combo.currentText() or "normal"}), refresh_list()))
@@ -898,7 +898,7 @@ class CaptureOverlayMixin:
         # ---------- 基本 ----------
         type_combo = QComboBox()
         type_combo.addItems([
-            "normal", "advanced", "loop", "key_press", "keyboard_move",
+            "normal", "loop", "key_press", "keyboard_move",
             "drag", "click_until_gone", "delay",
         ])
         type_combo.setCurrentText(str(detour_task.get("type", "normal")))
@@ -917,6 +917,13 @@ class CaptureOverlayMixin:
         template_row.addWidget(template_bind_button)
         template_row.addWidget(template_capture_button)
         form.addRow("模板名:", template_widget)
+
+        # 多模板选择策略（与主界面同一组选项、同一个字段）
+        strategy_combo = QComboBox()
+        for strategy_key, strategy_label in MATCH_STRATEGIES:
+            strategy_combo.addItem(strategy_label, strategy_key)
+        strategy_combo.setCurrentIndex(max(0, strategy_combo.findData(get_task_match_strategy(detour_task))))
+        form.addRow("多模板时:", strategy_combo)
 
         # ---------- 识别与点击（normal / advanced）----------
         normal_group = QGroupBox("识别与点击")
@@ -1219,6 +1226,7 @@ class CaptureOverlayMixin:
                         else "change_then_appear" if wait_mode.startswith("3")
                         else "time"
                     )
+                    detour_task["match_strategy"] = strategy_combo.currentData() or "confidence"
 
             click_x = self._int(click_x_edit.text())
             click_y = self._int(click_y_edit.text())
@@ -1313,6 +1321,11 @@ class CaptureOverlayMixin:
         self.enabled_checkbox = QCheckBox("启用步骤")
         name_form.addRow("步骤名称:", self.description_edit)
         name_form.addRow(labels["status"], self.enabled_checkbox)
+        # 绑定了多张候选模板时按哪种策略挑一张（选项取自引擎的单一来源）
+        self.match_strategy_combo = QComboBox()
+        for strategy_key, strategy_label in MATCH_STRATEGIES:
+            self.match_strategy_combo.addItem(strategy_label, strategy_key)
+        name_form.addRow("多模板时:", self.match_strategy_combo)
         layout.addLayout(name_form)
 
         self.recognition_group = QWidget()
@@ -1679,6 +1692,9 @@ class CaptureOverlayMixin:
         """把任务里两个窗口共有的字段加载到面板控件。"""
         self.description_edit.setText(str(task.get("description", "")))
         self.enabled_checkbox.setChecked(bool(task.get("enabled", True)))
+        # 多模板选择策略：未迁移的旧 advanced 步骤会解析成"最左"，界面显示与实际行为一致
+        strategy_index = self.match_strategy_combo.findData(get_task_match_strategy(task))
+        self.match_strategy_combo.setCurrentIndex(max(0, strategy_index))
         templates = task.get("templates") or task.get("template", "")
         if isinstance(templates, (list, tuple)):
             templates = ", ".join(str(item) for item in templates)
@@ -1756,6 +1772,8 @@ class CaptureOverlayMixin:
             task["wait_for"] = "change_then_appear"
         else:
             task["wait_for"] = "time"
+        # 多模板选择策略（默认"置信度最高"）
+        task["match_strategy"] = self.match_strategy_combo.currentData() or "confidence"
 
     def _editor_apply_optional(self, task):
         """回写「可选步骤（跳过）」。

@@ -780,7 +780,7 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
     def change_type(self, index):
         if not (0 <= index < len(self.tasks)):
             return
-        types = ["normal", "advanced", "loop", "keyboard_move", "key_press", "drag", "click_until_gone", "delay", "condition", "switch", "event"]
+        types = ["normal", "loop", "keyboard_move", "key_press", "drag", "click_until_gone", "delay", "condition", "switch", "event"]
         current = self.tasks[index].get("type", "normal")
         task_type, ok = QInputDialog.getItem(self, "更改步骤类型", "步骤类型:", types, max(0, types.index(current) if current in types else 0), False)
         if not ok:
@@ -847,7 +847,7 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
 
 
     def add_task(self, group_id=None, position=None):
-        types = ["normal", "advanced", "loop", "keyboard_move", "key_press", "drag", "click_until_gone", "delay"]
+        types = ["normal", "loop", "keyboard_move", "key_press", "drag", "click_until_gone", "delay"]
         task_type, ok = QInputDialog.getItem(self, "新增步骤类型", "请选择步骤类型:", types, 0, False)
         if not ok:
             return
@@ -1638,7 +1638,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
 
     @Slot()
     def add_task(self):
-        types = ["normal", "advanced", "loop", "keyboard_move", "key_press", "drag", "click_until_gone", "delay"]
+        types = ["normal", "loop", "keyboard_move", "key_press", "drag", "click_until_gone", "delay"]
         task_type, ok = QInputDialog.getItem(self, "新增步骤类型", "请选择步骤类型:", types, 0, False)
         if not ok:
             return

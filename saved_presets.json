@@ -17,7 +17,7 @@
       "description": "进入休息室",
       "group_id": "group_37b807c3_copy",
       "group_name": "每日任务 复制",
-      "enabled": false,
+      "enabled": true,
       "click_x": 1779,
       "click_y": 463,
       "click_position": [
@@ -98,7 +98,7 @@
       ],
       "group_id": "group_37b807c3_copy",
       "group_name": "每日任务 复制",
-      "enabled": false,
+      "enabled": true,
       "group_color": "#eab308",
       "delay_before": 1.0,
       "id": "task_copy",
@@ -118,7 +118,7 @@
       "description": "进入茶吧菜单",
       "group_id": "group_37b807c3_copy",
       "group_name": "每日任务 复制",
-      "enabled": false,
+      "enabled": true,
       "delay_before": 1.0,
       "group_color": "#eab308",
       "id": "f3ec4923-1364-4956-b4c2-7cb44b892339",
@@ -141,7 +141,7 @@
       "description": "制作茶品",
       "group_id": "group_37b807c3_copy",
       "group_name": "每日任务 复制",
-      "enabled": false,
+      "enabled": true,
       "click_x": 1662,
       "click_y": 1007,
       "click_position": [
@@ -218,7 +218,7 @@
       "description": "确认",
       "group_id": "group_37b807c3_copy",
       "group_name": "每日任务 复制",
-      "enabled": false,
+      "enabled": true,
       "click_x": 1167,
       "click_y": 754,
       "click_position": [
@@ -272,7 +272,7 @@
       "required": true,
       "group_id": "group_37b807c3_copy",
       "group_name": "每日任务 复制",
-      "enabled": false,
+      "enabled": true,
       "click_x": 1833,
       "click_y": 41,
       "click_position": [
@@ -333,7 +333,7 @@
       "description": "确认",
       "group_id": "group_37b807c3_copy",
       "group_name": "每日任务 复制",
-      "enabled": false,
+      "enabled": true,
       "click_x": 1313,
       "click_y": 733,
       "click_position": [
@@ -388,7 +388,7 @@
       ],
       "group_id": "group_37b807c3_copy",
       "group_name": "每日任务 复制",
-      "enabled": false,
+      "enabled": true,
       "group_color": "#eab308",
       "delay_before": 0.0,
       "id": "ca24ea78-bf39-428d-b400-944c89fd02d6",
@@ -409,7 +409,7 @@
       "description": "进入厨房2",
       "group_id": "group_37b807c3_copy",
       "group_name": "每日任务 复制",
-      "enabled": false,
+      "enabled": true,
       "group_color": "#eab308",
       "id": "ccb74687-6045-40bb-96f4-1f9d978d0a1e",
       "timeout": 1.0
@@ -431,7 +431,7 @@
       "description": "选择菜品",
       "group_id": "group_37b807c3_copy",
       "group_name": "每日任务 复制",
-      "enabled": false,
+      "enabled": true,
       "match_rect": [
         1261,
         939,
@@ -473,7 +473,7 @@
       "description": "确认邀请",
       "group_id": "group_37b807c3_copy",
       "group_name": "每日任务 复制",
-      "enabled": false,
+      "enabled": true,
       "click_x": 1296,
       "click_y": 970,
       "click_position": [
@@ -510,7 +510,7 @@
       "required": true,
       "group_id": "group_37b807c3_copy",
       "group_name": "每日任务 复制",
-      "enabled": false,
+      "enabled": true,
       "click_x": 1820,
       "click_y": 46,
       "click_position": [
@@ -568,7 +568,7 @@
       "required": true,
       "group_id": "group_37b807c3_copy",
       "group_name": "每日任务 复制",
-      "enabled": false,
+      "enabled": true,
       "click_x": 611,
       "click_y": 749,
       "click_position": [
@@ -608,7 +608,7 @@
       "description": "开始循环",
       "group_id": "group_37b807c3_copy",
       "group_name": "每日任务 复制",
-      "enabled": false,
+      "enabled": true,
       "click_x": 285,
       "click_y": 1003,
       "click_position": [
@@ -673,7 +673,7 @@
       "description": "确认领取",
       "group_id": "group_37b807c3_copy",
       "group_name": "每日任务 复制",
-      "enabled": false,
+      "enabled": true,
       "click_x": 960,
       "click_y": 987,
       "click_position": [
@@ -715,7 +715,7 @@
       "description": "返回",
       "group_id": "group_37b807c3_copy",
       "group_name": "每日任务 复制",
-      "enabled": false,
+      "enabled": true,
       "click_x": 151,
       "click_y": 50,
       "click_position": [
@@ -755,7 +755,7 @@
       "description": "返回主界面",
       "group_id": "group_37b807c3_copy",
       "group_name": "每日任务 复制",
-      "enabled": false,
+      "enabled": true,
       "group_color": "#eab308",
       "id": "63fe2632-509d-41b5-9fe3-55eb1602e333",
       "timeout": 1.0
@@ -777,7 +777,7 @@
       "description": "返回主界面2",
       "group_id": "group_37b807c3_copy",
       "group_name": "每日任务 复制",
-      "enabled": false,
+      "enabled": true,
       "click_x": 1164,
       "click_y": 757,
       "click_position": [
@@ -1721,7 +1721,8 @@
   ],
   "追放主线关卡": [
     {
-      "type": "advanced",
+      "type": "normal",
+      "match_strategy": "leftmost",
       "mode": "custom",
       "template": "captured_b702c0520d",
       "templates": [
@@ -3911,9 +3912,9 @@
       },
       "expanded": {
         "group_37b807c3_copy": false,
-        "group_896c3838_copy": true,
-        "group_c9dda062_copy": true,
-        "group_8f247b3d_copy": true
+        "group_896c3838_copy": false,
+        "group_c9dda062_copy": false,
+        "group_8f247b3d_copy": false
       },
       "order": [
         "group_37b807c3_copy",

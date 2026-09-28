@@ -780,7 +780,7 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
     def change_type(self, index):
         if not (0 <= index < len(self.tasks)):
             return
-        types = ["normal", "advanced", "loop", "keyboard_move", "key_press", "drag", "click_until_gone", "delay", "condition", "switch", "event"]
+        types = ["normal", "loop", "keyboard_move", "key_press", "drag", "click_until_gone", "delay", "condition", "switch", "event"]
         current = self.tasks[index].get("type", "normal")
         task_type, ok = QInputDialog.getItem(self, "更改步骤类型", "步骤类型:", types, max(0, types.index(current) if current in types else 0), False)
         if not ok:
@@ -847,7 +847,7 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
 
 
     def add_task(self, group_id=None, position=None):
-        types = ["normal", "advanced", "loop", "keyboard_move", "key_press", "drag", "click_until_gone", "delay"]
+        types = ["normal", "loop", "keyboard_move", "key_press", "drag", "click_until_gone", "delay"]
         task_type, ok = QInputDialog.getItem(self, "新增步骤类型", "请选择步骤类型:", types, 0, False)
         if not ok:
             return
@@ -1392,11 +1392,16 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         expanded[group_id] = state
         self._save_presets()
 
-    def _rebuild_special_form(self, task):
-        """主窗口多一步：整组「类型专用字段」的显隐（蓝图窗口没有这个 GroupBox）。"""
-        super()._rebuild_special_form(task)
-        self.special_group.setVisible(bool(self.special_edits)
-                                      and str(task.get("type", "normal")) != "click_until_gone")
+    def _rebuild_special_form(self, task, form=None):
+        """主窗口多一步：整组「类型专用字段」的显隐（蓝图窗口没有这个 GroupBox）。
+
+        `form` 非空表示调用方只是借用同一份规格在别处摆字段（例如迂回子步骤对话框），
+        此时不去动本窗口的 GroupBox。
+        """
+        super()._rebuild_special_form(task, form)
+        if form is None:
+            self.special_group.setVisible(bool(self.special_edits)
+                                          and str(task.get("type", "normal")) != "click_until_gone")
 
     def _special_field_specs(self, task):
         """主窗口的类型专用字段表。
@@ -1633,7 +1638,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
 
     @Slot()
     def add_task(self):
-        types = ["normal", "advanced", "loop", "keyboard_move", "key_press", "drag", "click_until_gone", "delay"]
+        types = ["normal", "loop", "keyboard_move", "key_press", "drag", "click_until_gone", "delay"]
         task_type, ok = QInputDialog.getItem(self, "新增步骤类型", "请选择步骤类型:", types, 0, False)
         if not ok:
             return

@@ -4,7 +4,7 @@
     "type": "normal",
     "mode": "custom",
     "enabled": true,
-    "template": "new_step, 16",
+    "template": "16",
     "description": "识别活动层",
     "click": true,
     "required": true,
@@ -13,6 +13,120 @@
     "after_wait": 0.25,
     "click_requires_match": true,
     "wait_for": "time",
+    "optional": false,
+    "detour_steps": [
+      {
+        "type": "keyboard_move",
+        "template": "new_step",
+        "move_steps": [],
+        "delay_before": 0.0,
+        "after_wait": 0.0
+      }
+    ],
+    "detour_enabled": false,
+    "detour_jump_to": null,
+    "detour_success_jump_to": null
+  },
+  {
+    "id": "7cb707ee-21aa-41b9-977f-d72db8514bf6",
+    "type": "normal",
+    "match_strategy": "leftmost",
+    "mode": "custom",
+    "enabled": true,
+    "template": "new_step",
+    "description": "新增advanced步骤",
+    "click": true,
+    "required": true,
+    "templates": [
+      "new_step",
+      "1"
+    ],
+    "threshold": 0.8,
+    "timeout": 5.0,
+    "after_wait": 0.25,
+    "click_requires_match": true,
+    "wait_for": "time",
     "optional": false
+  },
+  {
+    "id": "6d26f460-a8f3-405d-8302-7a2396634461",
+    "type": "normal",
+    "mode": "custom",
+    "enabled": true,
+    "template": "new_step",
+    "description": "新增normal步骤",
+    "click": true,
+    "required": true
+  },
+  {
+    "id": "8275b6df-6f77-47d5-8067-f31e89b6875e",
+    "type": "delay",
+    "mode": "custom",
+    "enabled": true,
+    "template": "",
+    "description": "新增delay步骤",
+    "click": false,
+    "required": true
+  },
+  {
+    "id": "86854013-b287-4fc3-a2f7-1573c104ea21",
+    "type": "click_until_gone",
+    "mode": "custom",
+    "enabled": true,
+    "template": "",
+    "description": "新增click_until_gone步骤",
+    "click": true,
+    "required": true
+  },
+  {
+    "id": "4978c596-8f93-40cf-9dcc-3cd0d8af50b4",
+    "type": "drag",
+    "mode": "custom",
+    "enabled": true,
+    "template": "",
+    "description": "新增drag步骤",
+    "click": false,
+    "required": true
+  },
+  {
+    "id": "821ec5e8-d67e-4a39-83d2-42b98fa1113d",
+    "type": "key_press",
+    "mode": "custom",
+    "enabled": true,
+    "template": "",
+    "description": "新增key_press步骤",
+    "click": false,
+    "required": true
+  },
+  {
+    "id": "9583bbf7-026f-47d3-8ff5-0272f067ef64",
+    "type": "keyboard_move",
+    "mode": "custom",
+    "enabled": true,
+    "template": "",
+    "description": "新增keyboard_move步骤",
+    "click": false,
+    "required": true
+  },
+  {
+    "id": "43492e25-052b-49c4-80fb-72dc59078dca",
+    "type": "loop",
+    "mode": "custom",
+    "enabled": true,
+    "template": "",
+    "description": "新增loop步骤",
+    "click": false,
+    "required": true
+  },
+  {
+    "id": "626af60a-f3b3-4ee5-a59c-36ecd8c153e3",
+    "type": "normal",
+    "match_strategy": "leftmost",
+    "mode": "custom",
+    "enabled": true,
+    "template": "new_step",
+    "description": "新增advanced步骤",
+    "click": true,
+    "required": true
   }
 ]

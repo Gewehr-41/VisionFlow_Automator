@@ -34,12 +34,13 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
 
 import config
-from main import reload_templates
+from main import MATCH_STRATEGIES, get_task_match_strategy, reload_templates
 from tasks import TASKS
 from ui_common import (
     _add_click_until_row,
@@ -51,6 +52,20 @@ from ui_common import (
     _to_float,
     _to_int,
 )
+
+class _EditorFormHost:
+    """把共享编辑器逻辑复用到独立对话框时所需的最小宿主。
+
+    `_rebuild_special_form` / `_apply_special_fields` 只依赖两样东西：
+    一个用来摆字段的 `QFormLayout`，以及一份「键 -> 控件」的表。窗口用自己
+    （`self`）充当这个角色；迂回子步骤对话框没有窗口类，于是用这个壳——
+    这样「类型专用字段」的规格与读写在项目里**仍然只有一份**。
+    """
+
+    def __init__(self, form_layout):
+        self.special_form = form_layout
+        self.special_edits = {}
+
 
 class CaptureOverlayMixin:
     """屏幕采集覆盖层的共享实现。
@@ -792,7 +807,7 @@ class CaptureOverlayMixin:
 
         add_row = QHBoxLayout()
         type_combo = QComboBox()
-        type_combo.addItems(["normal", "advanced", "loop", "key_press", "keyboard_move", "drag", "click_until_gone", "delay"])
+        type_combo.addItems(["normal", "loop", "key_press", "keyboard_move", "drag", "click_until_gone", "delay"])
         add_row.addWidget(type_combo, 1)
         add_button = QPushButton("新增步骤")
         add_button.clicked.connect(lambda: (detour_steps.append({"type": type_combo.currentText() or "normal"}), refresh_list()))
@@ -838,48 +853,33 @@ class CaptureOverlayMixin:
         dialog.exec()
 
     def _configure_detour_step(self, detour_task, parent=None):
+        """迂回子步骤的设置窗口（字段集与主界面同类型的步骤面板保持一致）。
+
+        所有者 2026-09-28 要求：「设置窗口直接用主界面相同类型对应的设置窗口」。
+        这里保持独立对话框（不动两个窗口的主面板），但把字段补齐到与主界面一致，
+        并让「类型专用字段」走**同一份规格**：
+
+          · 识别与点击：匹配阈值 / 超时 / 完成后等待 / 点击坐标(+记录+清空) /
+            下一模板(+选择图片/手动框选/框选出现位置) / 等待方式 / 执行点击 /
+            必须识别到图片再点击 / 可选步骤（跳过）
+          · 识别区域：与主界面一致——**只能框选**、可多条、可切换/删除
+            （不再是自己那套手工坐标文本框）
+          · 持续点击设置：`click_until_gone` 的 6 个字段
+          · 类型专用字段：复用主界面的 `_special_field_specs(task)`，
+            由 `_EditorFormHost` 充当最小宿主（原先这里手写了一版
+            「时长/按键/移动步骤」，与主界面必然漂移）
+        """
         dialog = QDialog(parent or self)
         dialog.setWindowTitle("迂回步骤设置")
-        dialog.resize(460, 440)
-        layout = QVBoxLayout(dialog)
+        dialog.resize(620, 660)
+        outer = QVBoxLayout(dialog)
+        scroll = QScrollArea(dialog)
+        scroll.setWidgetResizable(True)
+        body = QWidget()
+        scroll.setWidget(body)
+        outer.addWidget(scroll, 1)
+        layout = QVBoxLayout(body)
         form = QFormLayout()
-
-        type_combo = QComboBox()
-        type_combo.addItems(["normal", "advanced", "loop", "key_press", "keyboard_move", "drag", "click_until_gone", "delay"])
-        type_combo.setCurrentText(str(detour_task.get("type", "normal")))
-        form.addRow("类型:", type_combo)
-
-        description_edit = QLineEdit(str(detour_task.get("description", "")))
-        form.addRow("描述:", description_edit)
-
-        # ── 普通/高级步骤专属：这些键此前的对话框完全不显示 ──
-        # 引擎一直在读它们（main.execute_task 的 timeout / click_requires_match /
-        # optional / wait_for），而这份对话框两边的窗口都用得到。字段顺序与两个
-        # 窗口的步骤面板保持一致：超时 -> 等待方式 -> 两个复选框。只在普通/高级
-        # 类型下显示并回写，避免给拖拽、按键等类型塞进引擎根本不读的键。
-        # （原来的「偏移」一行已于 2026-09-28 按所有者要求一并删除。）
-        normal_group = QGroupBox("识别与点击（仅普通/高级步骤生效）")
-        normal_form = QFormLayout(normal_group)
-        timeout_edit = QLineEdit(str(detour_task.get("timeout", detour_task.get("wait_timeout", 5))))
-        normal_form.addRow("超时(秒，0为不限制):", timeout_edit)
-        wait_for_combo = QComboBox()
-        wait_for_combo.addItems(["1. 画面结果变化", "2. 等待目标模板出现", "3. 画面变化后目标结果出现"])
-        saved_wait_for = str(detour_task.get("wait_for", "time"))
-        wait_for_combo.setCurrentIndex(
-            2 if saved_wait_for == "change_then_appear" else 1 if saved_wait_for == "next_appear" else 0
-        )
-        normal_form.addRow("等待方式:", wait_for_combo)
-        match_required_checkbox = QCheckBox("必须识别到图片再点击")
-        match_required_checkbox.setChecked(bool(detour_task.get("click_requires_match", True)))
-        normal_form.addRow(match_required_checkbox)
-        optional_checkbox = QCheckBox("可选步骤（跳过）")
-        optional_checkbox.setChecked(bool(detour_task.get("optional", not bool(detour_task.get("required", True)))))
-        normal_form.addRow(optional_checkbox)
-
-        def sync_normal_group_visibility():
-            normal_group.setVisible(type_combo.currentText() in ("normal", "advanced"))
-
-        type_combo.currentTextChanged.connect(lambda _text: sync_normal_group_visibility())
 
         def hide_dialogs():
             dialog.hide()
@@ -895,21 +895,217 @@ class CaptureOverlayMixin:
             dialog.raise_()
             dialog.activateWindow()
 
+        # ---------- 基本 ----------
+        type_combo = QComboBox()
+        type_combo.addItems([
+            "normal", "loop", "key_press", "keyboard_move",
+            "drag", "click_until_gone", "delay",
+        ])
+        type_combo.setCurrentText(str(detour_task.get("type", "normal")))
+        form.addRow("类型:", type_combo)
+
+        description_edit = QLineEdit(str(detour_task.get("description", "")))
+        form.addRow("描述:", description_edit)
+
         template_edit = QLineEdit(str(detour_task.get("template", "")))
         template_widget = QWidget()
         template_row = QHBoxLayout(template_widget)
         template_row.setContentsMargins(0, 0, 0, 0)
         template_row.addWidget(template_edit, 1)
-        bind_button = QPushButton("绑定图片")
+        template_bind_button = QPushButton("绑定图片")
+        template_capture_button = QPushButton("手动框选图片")
+        template_row.addWidget(template_bind_button)
+        template_row.addWidget(template_capture_button)
+        form.addRow("模板名:", template_widget)
 
-        def bind_image():
+        # 多模板选择策略（与主界面同一组选项、同一个字段）
+        strategy_combo = QComboBox()
+        for strategy_key, strategy_label in MATCH_STRATEGIES:
+            strategy_combo.addItem(strategy_label, strategy_key)
+        strategy_combo.setCurrentIndex(max(0, strategy_combo.findData(get_task_match_strategy(detour_task))))
+        form.addRow("多模板时:", strategy_combo)
+
+        # ---------- 识别与点击（normal / advanced）----------
+        normal_group = QGroupBox("识别与点击")
+        normal_form = QFormLayout(normal_group)
+        # 标签沿用**宿主窗口**的那一套（与主界面/蓝图窗口的步骤面板逐字一致）
+        editor_labels = self._editor_field_labels()
+        threshold_edit = QLineEdit(str(detour_task.get("threshold", config.THRESHOLD)))
+        normal_form.addRow(editor_labels["threshold"], threshold_edit)
+        timeout_edit = QLineEdit(str(detour_task.get("timeout", detour_task.get("wait_timeout", 5))))
+        normal_form.addRow(editor_labels["timeout"], timeout_edit)
+        after_wait_edit = QLineEdit(str(detour_task.get("after_wait", 0.25)))
+        normal_form.addRow("完成后等待(秒):", after_wait_edit)
+
+        click_position = detour_task.get("click_position")
+        click_x_edit = QLineEdit(str(detour_task.get(
+            "click_x",
+            click_position[0] if isinstance(click_position, (list, tuple)) and len(click_position) >= 2 else "",
+        )))
+        click_y_edit = QLineEdit(str(detour_task.get(
+            "click_y",
+            click_position[1] if isinstance(click_position, (list, tuple)) and len(click_position) >= 2 else "",
+        )))
+        click_widget = QWidget()
+        click_row = QHBoxLayout(click_widget)
+        click_row.setContentsMargins(0, 0, 0, 0)
+        click_row.addWidget(QLabel("X"))
+        click_row.addWidget(click_x_edit, 1)
+        click_row.addWidget(QLabel("Y"))
+        click_row.addWidget(click_y_edit, 1)
+        click_capture_button = QPushButton("记录点击点")
+        click_clear_button = QPushButton("清空点击点")
+        click_row.addWidget(click_capture_button)
+        click_row.addWidget(click_clear_button)
+        normal_form.addRow("点击:", click_widget)
+
+        next_template_edit = QLineEdit(str(detour_task.get("next_template") or ""))
+        next_widget = QWidget()
+        next_row = QHBoxLayout(next_widget)
+        next_row.setContentsMargins(0, 0, 0, 0)
+        next_row.addWidget(next_template_edit, 1)
+        next_bind_button = QPushButton("选择图片")
+        next_capture_button = QPushButton("手动框选图片")
+        next_region_button = QPushButton("框选出现位置")
+        next_row.addWidget(next_bind_button)
+        next_row.addWidget(next_capture_button)
+        next_row.addWidget(next_region_button)
+        normal_form.addRow("下一模板:", next_widget)
+
+        wait_for_combo = QComboBox()
+        wait_for_combo.addItems(["1. 画面结果变化", "2. 等待目标模板出现", "3. 画面变化后目标结果出现"])
+        saved_wait_for = str(detour_task.get("wait_for", "time"))
+        wait_for_combo.setCurrentIndex(
+            2 if saved_wait_for == "change_then_appear" else 1 if saved_wait_for == "next_appear" else 0
+        )
+        normal_form.addRow("等待方式:", wait_for_combo)
+
+        click_checkbox = QCheckBox("执行点击")
+        click_checkbox.setChecked(bool(detour_task.get("click", True)))
+        match_required_checkbox = QCheckBox("必须识别到图片再点击")
+        match_required_checkbox.setChecked(bool(detour_task.get("click_requires_match", True)))
+        optional_checkbox = QCheckBox("可选步骤（跳过）")
+        optional_checkbox.setChecked(bool(detour_task.get("optional", not bool(detour_task.get("required", True)))))
+        options_widget = QWidget()
+        options_row = QHBoxLayout(options_widget)
+        options_row.setContentsMargins(0, 0, 0, 0)
+        options_row.addWidget(click_checkbox)
+        options_row.addWidget(match_required_checkbox)
+        options_row.addWidget(optional_checkbox)
+        options_row.addStretch(1)
+        normal_form.addRow(options_widget)
+
+        # ---------- 识别区域（与主界面一致：只能框选、可多条）----------
+        region_group = QGroupBox("识别区域")
+        region_layout = QVBoxLayout(region_group)
+        region_selector = QComboBox()
+        region_status_label = QLabel("未设置")
+        region_delete_button = QPushButton("删除本区域")
+        _add_region_selector_row(
+            region_layout, region_selector, region_status_label, region_delete_button,
+        )
+        region_capture_button = QPushButton("框选识别区域")
+        region_layout.addWidget(region_capture_button)
+
+        regions = [tuple(int(value) for value in rect) for rect in self._region_rects_of(detour_task)]
+        region_index = 0
+
+        def refresh_regions():
+            nonlocal region_index
+            region_selector.blockSignals(True)
+            region_selector.clear()
+            for rect in regions:
+                region_selector.addItem(f"{rect[0]}, {rect[1]}, {rect[2]}, {rect[3]}")
+            if regions:
+                region_index = max(0, min(region_index, len(regions) - 1))
+                region_selector.setCurrentIndex(region_index)
+                region_status_label.setText(f"共 {len(regions)} 个")
+            else:
+                region_index = 0
+                region_status_label.setText("未设置")
+            region_delete_button.setEnabled(bool(regions))
+            region_selector.blockSignals(False)
+
+        def on_region_changed(index):
+            nonlocal region_index
+            if index >= 0:
+                region_index = index
+
+        def capture_region():
+            hide_dialogs()
+
+            def on_captured(result):
+                restore_dialogs()
+                if result[0] == "region":
+                    regions.append(tuple(int(value) for value in result[1]))
+                    region_index = len(regions) - 1
+                    refresh_regions()
+
+            self._begin_dialog_capture("region", on_captured)
+
+        def delete_region():
+            if not regions:
+                return
+            regions.pop(region_index)
+            refresh_regions()
+
+        region_selector.currentIndexChanged.connect(on_region_changed)
+        region_delete_button.clicked.connect(delete_region)
+        region_capture_button.clicked.connect(capture_region)
+        refresh_regions()
+
+        # ---------- 持续点击设置（click_until_gone）----------
+        click_until_group = QGroupBox("持续点击设置")
+        click_until_form = QFormLayout(click_until_group)
+        click_until_templates = detour_task.get("templates") or detour_task.get("template", "")
+        if isinstance(click_until_templates, (list, tuple)):
+            click_until_templates = ", ".join(str(item) for item in click_until_templates)
+        click_until_template_edit = QLineEdit(str(click_until_templates))
+        click_until_form.addRow("模板名(逗号分隔):", click_until_template_edit)
+        click_until_interval_edit = QLineEdit(str(detour_task.get("click_interval", 0.5)))
+        click_until_form.addRow("点击间隔(秒):", click_until_interval_edit)
+        click_until_stop_delay_edit = QLineEdit(str(detour_task.get("stop_delay", 0.0)))
+        click_until_form.addRow("识别后停止延时(秒):", click_until_stop_delay_edit)
+        click_until_timeout_edit = QLineEdit(str(detour_task.get("timeout", 30)))
+        click_until_form.addRow("超时(秒):", click_until_timeout_edit)
+        click_until_continue_checkbox = QCheckBox("超时后继续执行")
+        click_until_continue_checkbox.setChecked(bool(detour_task.get("continue_after_timeout", False)))
+        click_until_form.addRow(click_until_continue_checkbox)
+        click_until_stop_on_change_checkbox = QCheckBox("画面变化视为成功")
+        click_until_stop_on_change_checkbox.setChecked(bool(detour_task.get("stop_on_change", False)))
+        click_until_form.addRow(click_until_stop_on_change_checkbox)
+
+        # ---------- 类型专用字段（与主界面共用同一份规格）----------
+        special_group = QGroupBox("类型专用字段")
+        special_form = QFormLayout(special_group)
+        special_host = _EditorFormHost(special_form)
+        self._rebuild_special_form(detour_task, form=special_host)
+
+        def sync_visibility():
+            task_type = type_combo.currentText()
+            normal_group.setVisible(task_type in ("normal", "advanced"))
+            region_group.setVisible(task_type in ("normal", "advanced", "click_until_gone"))
+            click_until_group.setVisible(task_type == "click_until_gone")
+            special_group.setVisible(bool(self._special_field_specs({"type": task_type})))
+
+        def on_type_changed(new_type):
+            sync_visibility()
+            self._rebuild_special_form({**detour_task, "type": new_type}, form=special_host)
+
+        type_combo.currentTextChanged.connect(on_type_changed)
+        sync_visibility()
+
+        # ---------- 采集动作 ----------
+        next_rect_box = [None]
+        existing_next_rect = detour_task.get("next_match_rect") or detour_task.get("next_search_rect")
+        if isinstance(existing_next_rect, (list, tuple)) and len(existing_next_rect) >= 4:
+            next_rect_box[0] = tuple(int(value) for value in existing_next_rect)
+            next_region_button.setToolTip(f"已设置：{next_rect_box[0]}")
+
+        def bind_template():
             path, _ = QFileDialog.getOpenFileName(dialog, "选择要绑定的图片", config.ICON_DIR, "PNG 图片 (*.png)")
             if path:
                 template_edit.setText(os.path.splitext(os.path.basename(path))[0])
-
-        bind_button.clicked.connect(bind_image)
-        template_row.addWidget(bind_button)
-        capture_template_button = QPushButton("手动框选")
 
         def capture_template():
             hide_dialogs()
@@ -920,24 +1116,6 @@ class CaptureOverlayMixin:
                     template_edit.setText(result[1])
 
             self._begin_dialog_capture("image", on_captured)
-
-        capture_template_button.clicked.connect(capture_template)
-        template_row.addWidget(capture_template_button)
-        form.addRow("模板:", template_widget)
-        # 5 个新字段紧跟在模板之后，位置与两个窗口的步骤面板一致
-        form.addRow(normal_group)
-        sync_normal_group_visibility()
-
-        click_x_edit = QLineEdit(str(detour_task.get("click_x", "")))
-        click_y_edit = QLineEdit(str(detour_task.get("click_y", "")))
-        click_widget = QWidget()
-        click_row = QHBoxLayout(click_widget)
-        click_row.setContentsMargins(0, 0, 0, 0)
-        click_row.addWidget(QLabel("X"))
-        click_row.addWidget(click_x_edit, 1)
-        click_row.addWidget(QLabel("Y"))
-        click_row.addWidget(click_y_edit, 1)
-        click_capture_button = QPushButton("记录点击点")
 
         def capture_click():
             hide_dialogs()
@@ -950,60 +1128,106 @@ class CaptureOverlayMixin:
 
             self._begin_dialog_capture("click", on_captured)
 
-        click_capture_button.clicked.connect(capture_click)
-        click_row.addWidget(click_capture_button)
-        form.addRow("点击坐标:", click_widget)
+        def clear_click_point():
+            click_x_edit.clear()
+            click_y_edit.clear()
 
-        duration_edit = QLineEdit(str(detour_task.get("duration", detour_task.get("hold_time", ""))))
-        form.addRow("时长/按住(秒):", duration_edit)
+        def bind_next_template():
+            path, _ = QFileDialog.getOpenFileName(dialog, "选择「下一模板」要用的图片", config.ICON_DIR, "PNG 图片 (*.png)")
+            if path:
+                next_template_edit.setText(os.path.splitext(os.path.basename(path))[0])
 
-        key_edit = QLineEdit(str(detour_task.get("key", "")))
-        form.addRow("按键:", key_edit)
+        def capture_next_template():
+            hide_dialogs()
 
-        # 显示的是引擎实际会用的那条区域（match_rects 优先，兼容旧的单矩形字段），
-        # 并且**不带方括号**——此前直接 str() 一个列表，显示成 `[30, 28, 89, 81]`，
-        # 保存时解析不出来就把区域整个删掉了。
-        region_rects = self._region_rects_of(detour_task)
-        match_rect_edit = QLineEdit(", ".join(str(value) for value in region_rects[0]) if region_rects else "")
-        match_rect_widget = QWidget()
-        match_rect_row = QHBoxLayout(match_rect_widget)
-        match_rect_row.setContentsMargins(0, 0, 0, 0)
-        match_rect_row.addWidget(match_rect_edit, 1)
-        region_capture_button = QPushButton("框选识别区域")
+            def on_captured(result):
+                restore_dialogs()
+                if result[0] == "image":
+                    next_template_edit.setText(result[1])
 
-        def capture_region():
+            self._begin_dialog_capture("image", on_captured)
+
+        def capture_next_region():
             hide_dialogs()
 
             def on_captured(result):
                 restore_dialogs()
                 if result[0] == "region":
-                    left, top, right, bottom = result[1]
-                    match_rect_edit.setText(f"{left}, {top}, {right}, {bottom}")
+                    next_rect_box[0] = tuple(int(value) for value in result[1])
+                    next_region_button.setToolTip(f"已设置：{next_rect_box[0]}")
 
             self._begin_dialog_capture("region", on_captured)
 
-        region_capture_button.clicked.connect(capture_region)
-        match_rect_row.addWidget(region_capture_button)
-        form.addRow("识别区域(左上,右下):", match_rect_widget)
-
-        move_steps_edit = QPlainTextEdit()
-        move_steps_edit.setMaximumHeight(90)
-        move_steps = detour_task.get("move_steps") or []
-        move_steps_edit.setPlainText("\n".join(f"{step.get('key', 'W')} {step.get('duration', 1.0)}" for step in move_steps if isinstance(step, dict)))
-        form.addRow("移动步骤(每行: 按键 时长):", move_steps_edit)
+        template_bind_button.clicked.connect(bind_template)
+        template_capture_button.clicked.connect(capture_template)
+        click_capture_button.clicked.connect(capture_click)
+        click_clear_button.clicked.connect(clear_click_point)
+        next_bind_button.clicked.connect(bind_next_template)
+        next_capture_button.clicked.connect(capture_next_template)
+        next_region_button.clicked.connect(capture_next_region)
 
         layout.addLayout(form)
+        layout.addWidget(normal_group)
+        layout.addWidget(region_group)
+        layout.addWidget(click_until_group)
+        layout.addWidget(special_group)
+        layout.addStretch(1)
 
         def save():
-            detour_task["type"] = type_combo.currentText()
+            task_type = type_combo.currentText()
+            detour_task["type"] = task_type
             description = description_edit.text().strip()
             if description:
                 detour_task["description"] = description
-            template = template_edit.text().strip()
-            if template:
-                detour_task["template"] = template
             else:
-                detour_task.pop("template", None)
+                detour_task.pop("description", None)
+
+            if task_type == "click_until_gone":
+                # 与主界面的「持续点击设置」分支逐键一致
+                template_value = click_until_template_edit.text().strip() or "new_step"
+                templates = [item.strip() for item in template_value.replace("，", ",").split(",") if item.strip()]
+                detour_task["templates"] = templates or ["new_step"]
+                detour_task["template"] = detour_task["templates"][0]
+                detour_task["click_interval"] = self._float(click_until_interval_edit.text(), 0.5)
+                detour_task["stop_delay"] = self._float(click_until_stop_delay_edit.text(), 0.0)
+                detour_task["timeout"] = self._float(click_until_timeout_edit.text(), 30.0)
+                detour_task["continue_after_timeout"] = click_until_continue_checkbox.isChecked()
+                detour_task["stop_on_change"] = click_until_stop_on_change_checkbox.isChecked()
+                detour_task["click"] = True
+                detour_task["required"] = True
+            else:
+                template_value = template_edit.text().strip() or "new_step"
+                if task_type == "advanced":
+                    templates = [item.strip() for item in template_value.replace("，", ",").split(",") if item.strip()]
+                    detour_task["templates"] = templates or ["new_step"]
+                    detour_task["template"] = detour_task["templates"][0]
+                else:
+                    detour_task["template"] = template_value
+                if task_type in ("normal", "advanced"):
+                    detour_task["threshold"] = self._float(threshold_edit.text(), config.THRESHOLD)
+                    detour_task["timeout"] = self._float(timeout_edit.text(), detour_task.get("timeout", 5))
+                    detour_task["after_wait"] = self._float(
+                        after_wait_edit.text(), detour_task.get("after_wait", 0.25)
+                    )
+                    detour_task["click"] = click_checkbox.isChecked()
+                    detour_task["click_requires_match"] = match_required_checkbox.isChecked()
+                    detour_task["optional"] = optional_checkbox.isChecked()
+                    detour_task["required"] = not detour_task["optional"]
+                    next_template = next_template_edit.text().strip()
+                    if next_template:
+                        detour_task["next_template"] = next_template
+                        detour_task["next_templates"] = [next_template]
+                    else:
+                        detour_task.pop("next_template", None)
+                        detour_task.pop("next_templates", None)
+                    wait_mode = wait_for_combo.currentText()
+                    detour_task["wait_for"] = (
+                        "next_appear" if wait_mode.startswith("2")
+                        else "change_then_appear" if wait_mode.startswith("3")
+                        else "time"
+                    )
+                    detour_task["match_strategy"] = strategy_combo.currentData() or "confidence"
+
             click_x = self._int(click_x_edit.text())
             click_y = self._int(click_y_edit.text())
             if click_x is not None and click_y is not None:
@@ -1011,84 +1235,33 @@ class CaptureOverlayMixin:
                 detour_task["click_y"] = click_y
                 detour_task["click_position"] = (click_x, click_y)
             else:
-                detour_task.pop("click_x", None)
-                detour_task.pop("click_y", None)
-                detour_task.pop("click_position", None)
-            duration = self._float(duration_edit.text(), 0.0)
-            if duration:
-                if detour_task.get("type") == "key_press":
-                    detour_task["hold_time"] = duration
-                else:
-                    detour_task["duration"] = duration
-            key = key_edit.text().strip()
-            if key:
-                detour_task["key"] = key
-            rect_text = match_rect_edit.text().strip()
-            rect = self._normalize_region(rect_text)
-            if rect_text and rect is None:
-                # 解析不了就**不能**当成"清空区域"：那会在用户毫无察觉的情况下把
-                # 识别区域删掉，匹配范围从"某个区域"变成全屏。这里明确拒绝保存。
-                QMessageBox.warning(
-                    dialog,
-                    "识别区域填得不对",
-                    "识别区域需要 4 个数字（左, 上, 右, 下），例如：30, 28, 89, 81。\n"
-                    "留空表示这一步不使用识别区域。\n\n"
-                    f"当前内容：{match_rect_edit.text().strip()}",
-                )
-                return
-            if rect is not None:
-                detour_task["match_rect"] = rect
-                detour_task["search_rect"] = rect
-                detour_task["match_rects"] = [rect]
+                for key in ("click_x", "click_y", "click_position"):
+                    detour_task.pop(key, None)
+
+            # 识别区域：与主界面同一套内存形状（元组），引擎侧 match_rects 优先
+            if regions:
+                rects = [tuple(rect) for rect in regions]
+                detour_task["match_rects"] = rects
+                detour_task["match_rect"] = rects[0]
+                detour_task["search_rect"] = rects[0]
             else:
-                detour_task.pop("match_rect", None)
-                detour_task.pop("search_rect", None)
-                detour_task.pop("match_rects", None)
-            if type_combo.currentText() in ("normal", "advanced"):
-                detour_task["timeout"] = self._float(timeout_edit.text(), detour_task.get("timeout", 5))
-                wait_mode = wait_for_combo.currentText()
-                detour_task["wait_for"] = (
-                    "next_appear" if wait_mode.startswith("2")
-                    else "change_then_appear" if wait_mode.startswith("3")
-                    else "time"
-                )
-                detour_task["click_requires_match"] = match_required_checkbox.isChecked()
-                detour_task["optional"] = optional_checkbox.isChecked()
-                detour_task["required"] = not detour_task["optional"]
-            steps = []
-            for line in move_steps_edit.toPlainText().splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                parts = line.split()
-                step_key = parts[0]
-                try:
-                    step_duration = float(parts[1].rstrip("sS")) if len(parts) > 1 else 1.0
-                except ValueError:
-                    step_duration = 1.0
-                steps.append({"key": step_key, "duration": step_duration})
-            if steps:
-                detour_task["move_steps"] = steps
+                for key in ("match_rects", "match_rect", "search_rect"):
+                    detour_task.pop(key, None)
+
+            if next_rect_box[0] is not None:
+                detour_task["next_match_rect"] = tuple(next_rect_box[0])
+                detour_task["next_search_rect"] = tuple(next_rect_box[0])
+            else:
+                detour_task.pop("next_match_rect", None)
+                detour_task.pop("next_search_rect", None)
+
+            self._apply_special_fields(detour_task, form=special_host)
             dialog.accept()
 
         save_button = QPushButton("保存")
         save_button.clicked.connect(save)
         layout.addWidget(save_button)
         dialog.exec()
-
-    # ---------- 编辑器面板的构造（两个窗口共用） ----------
-    #
-    # 两个窗口的编辑器面板此前是两份近乎逐行相同的构造代码（蓝图 168 行里有 85 行
-    # 与主窗口逐字相同，其中一段连续 41 行）。这里收成一份。
-    #
-    # 两边**确实不同**的地方用下面 3 个钩子表达（并写明理由）：
-    #   _editor_field_labels()           两个窗口这几个标签的文字历史上不同
-    #   _editor_special_form_container() 主窗口把「类型专用字段」套了 GroupBox，蓝图没有
-    #   _editor_preview_placeholder()    模板预览的占位文字
-    # 「应用修改」按钮直接接 `self._apply_editor`：两个窗口都提供这个同名方法
-    # （主窗口的实现转调 apply_selected_task），因此不需要额外的钩子。
-    # 结构等价性由控件树指纹保证（重构前后逐行一致），不是靠"看起来一样"。
-
     def _editor_field_labels(self):
         return {"threshold": "匹配阈值:", "timeout": "超时(秒):", "status": "状态:"}
 
@@ -1147,7 +1320,19 @@ class CaptureOverlayMixin:
         self.description_edit = QLineEdit()
         self.enabled_checkbox = QCheckBox("启用步骤")
         name_form.addRow("步骤名称:", self.description_edit)
-        name_form.addRow(labels["status"], self.enabled_checkbox)
+        # 「多模板时」与「启用状态」同一栏（所有者 2026-09-28 指定）：只有在绑了多张
+        # 候选模板时它才有意义，放在勾选框右边既醒目又不额外占一行。
+        # 选项取自引擎的单一来源 MATCH_STRATEGIES。
+        self.match_strategy_combo = QComboBox()
+        for strategy_key, strategy_label in MATCH_STRATEGIES:
+            self.match_strategy_combo.addItem(strategy_label, strategy_key)
+        status_row = QWidget()
+        status_layout = QHBoxLayout(status_row)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        status_layout.addWidget(self.enabled_checkbox)
+        status_layout.addWidget(QLabel("多模板时:"))
+        status_layout.addWidget(self.match_strategy_combo, 1)
+        name_form.addRow(labels["status"], status_row)
         layout.addLayout(name_form)
 
         self.recognition_group = QWidget()
@@ -1366,13 +1551,16 @@ class CaptureOverlayMixin:
             ]
         return []
 
-    def _clear_special_form(self):
-        while self.special_form.rowCount():
-            self.special_form.removeRow(0)
-        self.special_edits = {}
+    def _clear_special_form(self, form=None):
+        target = form or self
+        while target.special_form.rowCount():
+            target.special_form.removeRow(0)
+        target.special_edits = {}
 
-    def _rebuild_special_form(self, task):
-        self._clear_special_form()
+    def _rebuild_special_form(self, task, form=None):
+        target = form or self
+        target.special_edits = getattr(target, "special_edits", {})
+        self._clear_special_form(target)
         for key, label, kind in self._special_field_specs(task):
             if key == "condition_templates":
                 value = task.get("condition_templates")
@@ -1400,12 +1588,13 @@ class CaptureOverlayMixin:
                 editor.setChecked(bool(task.get(key, False)))
             else:
                 editor = QLineEdit(str(task.get(key, "")))
-            self.special_edits[key] = editor
-            self.special_form.addRow(label + ":", editor)
+            target.special_edits[key] = editor
+            target.special_form.addRow(label + ":", editor)
 
-    def _apply_special_fields(self, task):
+    def _apply_special_fields(self, task, form=None):
+        target = form or self
         specs = {spec[0]: spec[2] for spec in self._special_field_specs(task)}
-        for key, editor in self.special_edits.items():
+        for key, editor in target.special_edits.items():
             kind = specs.get(key, "text")
             if kind == "move_steps":
                 steps = []
@@ -1510,6 +1699,9 @@ class CaptureOverlayMixin:
         """把任务里两个窗口共有的字段加载到面板控件。"""
         self.description_edit.setText(str(task.get("description", "")))
         self.enabled_checkbox.setChecked(bool(task.get("enabled", True)))
+        # 多模板选择策略：未迁移的旧 advanced 步骤会解析成"最左"，界面显示与实际行为一致
+        strategy_index = self.match_strategy_combo.findData(get_task_match_strategy(task))
+        self.match_strategy_combo.setCurrentIndex(max(0, strategy_index))
         templates = task.get("templates") or task.get("template", "")
         if isinstance(templates, (list, tuple)):
             templates = ", ".join(str(item) for item in templates)
@@ -1587,6 +1779,8 @@ class CaptureOverlayMixin:
             task["wait_for"] = "change_then_appear"
         else:
             task["wait_for"] = "time"
+        # 多模板选择策略（默认"置信度最高"）
+        task["match_strategy"] = self.match_strategy_combo.currentData() or "confidence"
 
     def _editor_apply_optional(self, task):
         """回写「可选步骤（跳过）」。

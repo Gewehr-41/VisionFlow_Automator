@@ -36,17 +36,26 @@ class BlueprintNodeItem(QGraphicsRectItem):
 
     @staticmethod
     def _type_color(task_type):
+        """每种步骤类型一种颜色，便于在蓝图里一眼区分（节点头部同时显示类型名）。
+
+        此前 `click_until_gone` 与 `delay` 没登记，会和"未知类型"一起落到灰色，
+        而它们的头部文字又要仔细看才认得出——所有者 2026-09-28 要求按类型区分颜色。
+        这里保证 6 种实际用到的类型（normal / advanced / click_until_gone /
+        keyboard_move / key_press / drag）色相互相拉开。
+        """
         return {
-            "normal": "#2563eb",
-            "advanced": "#d97706",
-            "keyboard_move": "#16a34a",
-            "key_press": "#7c3aed",
-            "drag": "#db2777",
-            "condition": "#0ea5e9",
-            "switch": "#14b8a6",
-            "loop": "#ef4444",
-            "event": "#9333ea",
-        }.get(task_type, "#475569")
+            "loop": "#ef4444",              # 0°   红
+            "advanced": "#d97706",          # 32°  琥珀
+            "delay": "#65a30d",             # 85°  黄绿
+            "keyboard_move": "#16a34a",     # 142° 绿
+            "switch": "#14b8a6",            # 173° 青绿
+            "click_until_gone": "#0e7490",  # 192° 青
+            "normal": "#2563eb",            # 221° 蓝
+            "condition": "#4f46e5",         # 243° 靛
+            "key_press": "#7c3aed",         # 262° 紫罗兰
+            "event": "#c026d3",             # 292° 品红紫
+            "drag": "#db2777",              # 333° 品红
+        }.get(task_type, "#475569")         # 未知类型保持灰
 
     @staticmethod
     def _dim_color(color_hex):

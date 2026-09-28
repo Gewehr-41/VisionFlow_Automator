@@ -3,280 +3,174 @@
     "version": 1,
     "nodes": [
       {
-        "id": "daily_auto_loop",
+        "id": "c82a3a11-7fd1-4c3e-b615-31e0333ba634",
         "type": "normal",
         "task": {
-          "id": "daily_auto_loop",
-          "mode": "daily",
+          "id": "c82a3a11-7fd1-4c3e-b615-31e0333ba634",
           "type": "normal",
+          "mode": "custom",
           "enabled": true,
-          "description": "打开自动循环界面",
-          "template": "auto",
-          "timeout": 5,
+          "template": "16",
+          "description": "识别活动层",
           "click": true,
-          "offset": [
-            0,
-            0
-          ],
-          "after_wait": 0.25,
-          "wait_for": "next_appear",
-          "wait_timeout": 2.5,
-          "required": true
-        }
-      },
-      {
-        "id": "daily_restroom_move",
-        "type": "keyboard_move",
-        "task": {
-          "id": "daily_restroom_move",
-          "mode": "daily",
-          "type": "keyboard_move",
-          "enabled": true,
-          "description": "进入3D休息室并移动到指定位置",
-          "template": "rest_room_entry",
-          "click": false,
-          "after_wait": 1.0,
-          "wait_for": "time",
-          "wait_timeout": 8,
           "required": true,
-          "move_steps": [
+          "threshold": 0.8,
+          "timeout": 5.0,
+          "after_wait": 0.25,
+          "click_requires_match": true,
+          "wait_for": "time",
+          "optional": false,
+          "detour_steps": [
             {
-              "key": "W",
-              "duration": 1.2
-            },
-            {
-              "key": "A",
-              "duration": 0.8
-            },
-            {
-              "key": "D",
-              "duration": 0.8
-            },
-            {
-              "key": "S",
-              "duration": 0.6
+              "type": "keyboard_move",
+              "template": "new_step",
+              "move_steps": [],
+              "delay_before": 0.0,
+              "after_wait": 0.0
             }
           ],
-          "timeout": 8
+          "detour_enabled": false,
+          "detour_jump_to": null,
+          "detour_success_jump_to": null
         }
       },
       {
-        "id": "daily_press_e",
+        "id": "7cb707ee-21aa-41b9-977f-d72db8514bf6",
+        "type": "normal",
+        "match_strategy": "leftmost",
+        "task": {
+          "id": "7cb707ee-21aa-41b9-977f-d72db8514bf6",
+          "type": "normal",
+          "match_strategy": "leftmost",
+          "mode": "custom",
+          "enabled": true,
+          "template": "new_step",
+          "description": "新增advanced步骤",
+          "click": true,
+          "required": true,
+          "templates": [
+            "new_step",
+            "1"
+          ],
+          "threshold": 0.8,
+          "timeout": 5.0,
+          "after_wait": 0.25,
+          "click_requires_match": true,
+          "wait_for": "time",
+          "optional": false
+        }
+      },
+      {
+        "id": "6d26f460-a8f3-405d-8302-7a2396634461",
+        "type": "normal",
+        "task": {
+          "id": "6d26f460-a8f3-405d-8302-7a2396634461",
+          "type": "normal",
+          "mode": "custom",
+          "enabled": true,
+          "template": "new_step",
+          "description": "新增normal步骤",
+          "click": true,
+          "required": true
+        }
+      },
+      {
+        "id": "8275b6df-6f77-47d5-8067-f31e89b6875e",
+        "type": "delay",
+        "task": {
+          "id": "8275b6df-6f77-47d5-8067-f31e89b6875e",
+          "type": "delay",
+          "mode": "custom",
+          "enabled": true,
+          "template": "",
+          "description": "新增delay步骤",
+          "click": false,
+          "required": true
+        }
+      },
+      {
+        "id": "86854013-b287-4fc3-a2f7-1573c104ea21",
+        "type": "click_until_gone",
+        "task": {
+          "id": "86854013-b287-4fc3-a2f7-1573c104ea21",
+          "type": "click_until_gone",
+          "mode": "custom",
+          "enabled": true,
+          "template": "",
+          "description": "新增click_until_gone步骤",
+          "click": true,
+          "required": true
+        }
+      },
+      {
+        "id": "4978c596-8f93-40cf-9dcc-3cd0d8af50b4",
+        "type": "drag",
+        "task": {
+          "id": "4978c596-8f93-40cf-9dcc-3cd0d8af50b4",
+          "type": "drag",
+          "mode": "custom",
+          "enabled": true,
+          "template": "",
+          "description": "新增drag步骤",
+          "click": false,
+          "required": true
+        }
+      },
+      {
+        "id": "821ec5e8-d67e-4a39-83d2-42b98fa1113d",
         "type": "key_press",
         "task": {
-          "id": "daily_press_e",
-          "mode": "daily",
+          "id": "821ec5e8-d67e-4a39-83d2-42b98fa1113d",
           "type": "key_press",
+          "mode": "custom",
           "enabled": true,
-          "description": "按下 E 键执行交互",
-          "template": "E",
-          "key": "E",
-          "delay_before": 0.0,
-          "hold_time": 0.1,
+          "template": "",
+          "description": "新增key_press步骤",
           "click": false,
-          "after_wait": 0.2,
-          "wait_for": "time",
-          "wait_timeout": 1.0,
-          "required": true,
-          "timeout": 1.0
-        }
-      },
-      {
-        "id": "daily_start_loop",
-        "type": "normal",
-        "task": {
-          "id": "daily_start_loop",
-          "mode": "daily",
-          "type": "normal",
-          "enabled": true,
-          "description": "点击循环开始并等待完成",
-          "template": "start_loop",
-          "timeout": 5,
-          "click": true,
-          "offset": [
-            0,
-            0
-          ],
-          "after_wait": 1.0,
-          "wait_for": "time",
-          "wait_timeout": 2.5,
           "required": true
         }
       },
       {
-        "id": "daily_back_to_main_menu_1",
-        "type": "normal",
+        "id": "9583bbf7-026f-47d3-8ff5-0272f067ef64",
+        "type": "keyboard_move",
         "task": {
-          "id": "daily_back_to_main_menu_1",
-          "mode": "daily",
-          "type": "normal",
+          "id": "9583bbf7-026f-47d3-8ff5-0272f067ef64",
+          "type": "keyboard_move",
+          "mode": "custom",
           "enabled": true,
-          "description": "返回主菜单",
-          "template": "back_to_main_menu",
-          "timeout": 5,
-          "click": true,
-          "offset": [
-            0,
-            0
-          ],
-          "after_wait": 0.5,
-          "wait_for": "time",
-          "wait_timeout": 2.5,
-          "required": true,
-          "detour_steps": []
-        }
-      },
-      {
-        "id": "daily_shop",
-        "type": "normal",
-        "task": {
-          "id": "daily_shop",
-          "mode": "daily",
-          "type": "normal",
-          "enabled": true,
-          "description": "进入商店领取每日礼包",
-          "template": "shop_daily",
-          "timeout": 5,
-          "click": true,
-          "offset": [
-            0,
-            0
-          ],
-          "after_wait": 0.5,
-          "wait_for": "time",
-          "wait_timeout": 2.5,
+          "template": "",
+          "description": "新增keyboard_move步骤",
+          "click": false,
           "required": true
         }
       },
       {
-        "id": "daily_back_to_main_menu_2",
-        "type": "normal",
+        "id": "43492e25-052b-49c4-80fb-72dc59078dca",
+        "type": "loop",
         "task": {
-          "id": "daily_back_to_main_menu_2",
-          "mode": "daily",
-          "type": "normal",
+          "id": "43492e25-052b-49c4-80fb-72dc59078dca",
+          "type": "loop",
+          "mode": "custom",
           "enabled": true,
-          "description": "返回主菜单",
-          "template": "back_to_main_menu",
-          "timeout": 5,
-          "click": true,
-          "offset": [
-            0,
-            0
-          ],
-          "after_wait": 0.5,
-          "wait_for": "time",
-          "wait_timeout": 2.5,
+          "template": "",
+          "description": "新增loop步骤",
+          "click": false,
           "required": true
         }
       },
       {
-        "id": "daily_guild",
+        "id": "626af60a-f3b3-4ee5-a59c-36ecd8c153e3",
         "type": "normal",
+        "match_strategy": "leftmost",
         "task": {
-          "id": "daily_guild",
-          "mode": "daily",
+          "id": "626af60a-f3b3-4ee5-a59c-36ecd8c153e3",
           "type": "normal",
+          "match_strategy": "leftmost",
+          "mode": "custom",
           "enabled": true,
-          "description": "进入公会领取每日奖励",
-          "template": "guild_daily",
-          "timeout": 5,
+          "template": "new_step",
+          "description": "新增advanced步骤",
           "click": true,
-          "offset": [
-            0,
-            0
-          ],
-          "after_wait": 0.5,
-          "wait_for": "time",
-          "wait_timeout": 2.5,
-          "required": true
-        }
-      },
-      {
-        "id": "daily_back_to_main_menu_3",
-        "type": "normal",
-        "task": {
-          "id": "daily_back_to_main_menu_3",
-          "mode": "daily",
-          "type": "normal",
-          "enabled": true,
-          "description": "返回主菜单",
-          "template": "back_to_main_menu",
-          "timeout": 5,
-          "click": true,
-          "offset": [
-            0,
-            0
-          ],
-          "after_wait": 0.5,
-          "wait_for": "time",
-          "wait_timeout": 2.5,
-          "required": true
-        }
-      },
-      {
-        "id": "daily_monthly_card",
-        "type": "normal",
-        "task": {
-          "id": "daily_monthly_card",
-          "mode": "daily",
-          "type": "normal",
-          "enabled": true,
-          "description": "进入月卡领取奖励",
-          "template": "monthly_card",
-          "timeout": 5,
-          "click": true,
-          "offset": [
-            0,
-            0
-          ],
-          "after_wait": 0.5,
-          "wait_for": "time",
-          "wait_timeout": 2.5,
-          "required": true
-        }
-      },
-      {
-        "id": "daily_back_to_main_menu_4",
-        "type": "normal",
-        "task": {
-          "id": "daily_back_to_main_menu_4",
-          "mode": "daily",
-          "type": "normal",
-          "enabled": true,
-          "description": "返回主菜单",
-          "template": "back_to_main_menu",
-          "timeout": 5,
-          "click": true,
-          "offset": [
-            0,
-            0
-          ],
-          "after_wait": 0.5,
-          "wait_for": "time",
-          "wait_timeout": 2.5,
-          "required": true
-        }
-      },
-      {
-        "id": "side_road_special",
-        "type": "normal",
-        "task": {
-          "id": "side_road_special",
-          "mode": "side",
-          "type": "normal",
-          "enabled": true,
-          "description": "歧路：识别并点击特殊关卡",
-          "template": "side_road",
-          "timeout": 5,
-          "click": true,
-          "offset": [
-            0,
-            0
-          ],
-          "after_wait": 0.25,
-          "wait_for": "time",
-          "wait_timeout": 2.5,
           "required": true
         }
       }
@@ -339,9 +233,11 @@
     "nodes": [
       {
         "id": "f530c5de-589e-4c72-ae0c-6f6e709319a9",
-        "type": "advanced",
+        "type": "normal",
+        "match_strategy": "leftmost",
         "task": {
-          "type": "advanced",
+          "type": "normal",
+          "match_strategy": "leftmost",
           "mode": "custom",
           "template": "captured_b702c0520d",
           "templates": [

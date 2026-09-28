@@ -97,16 +97,66 @@ def find_first_match(results, template_names):
 
 
 def find_leftmost_match(results, template_names):
-    """在多个候选模板中，返回最左侧的命中；同一横坐标优先置信度高者。"""
-    matches = []
+    """在多个候选模板中，返回最左侧的命中；同一横坐标优先置信度高者。
+
+    （保留此函数以兼容既有调用点与测试，语义等于 `match_strategy="leftmost"`。）
+    """
+    return find_match_by_strategy(results, template_names, "leftmost")
+
+
+# ---- 多模板候选时的选择策略 ----
+#
+# 步骤字段 `match_strategy`，取值见下表；**未设置时默认"置信度最高"**。
+# 兼容：旧的 `advanced` 步骤没有这个字段，其历史语义正是"选屏幕最左的那张"，
+# 因此在迁移数据之前，未带字段的 advanced 仍按最左处理。
+MATCH_STRATEGIES = (
+    ("confidence", "选置信度最高的那张"),
+    ("leftmost", "选屏幕最左的那张"),
+    ("rightmost", "选屏幕最右的那张"),
+    ("topmost", "选屏幕最上的那张"),
+    ("bottommost", "选屏幕最下的那张"),
+)
+DEFAULT_MATCH_STRATEGY = "confidence"
+_MATCH_STRATEGY_KEYS = {key for key, _label in MATCH_STRATEGIES}
+
+
+def get_task_match_strategy(task=None):
+    """读取步骤的多模板选择策略；未设置或取值非法时回退到默认值。"""
+    value = task.get("match_strategy") if isinstance(task, dict) else None
+    if value in _MATCH_STRATEGY_KEYS:
+        return value
+    if isinstance(task, dict) and task.get("type") == "advanced":
+        return "leftmost"
+    return DEFAULT_MATCH_STRATEGY
+
+
+def find_match_by_strategy(results, template_names, strategy=DEFAULT_MATCH_STRATEGY):
+    """按策略在多个候选模板里挑一个命中。
+
+    位置类策略（最左/最右/最上/最下）在**同一条轴上并列**时优先置信度更高者，
+    与旧 `find_leftmost_match` 的语义一致；置信度策略并列时取更靠左者以保证确定性。
+    """
+    hits = []
     for template_name in template_names:
         center, conf = results.get(template_name, (None, -1.0))
         if center is not None:
-            matches.append((center[0], -conf, template_name, center, conf))
-    if not matches:
+            hits.append((center, conf, template_name))
+    if not hits:
         return None, None, -1.0
-    _, _, best_name, best_center, best_conf = min(matches)
-    return best_name, best_center, best_conf
+
+    if strategy == "leftmost":
+        key = lambda item: (item[0][0], -item[1])
+    elif strategy == "rightmost":
+        key = lambda item: (-item[0][0], -item[1])
+    elif strategy == "topmost":
+        key = lambda item: (item[0][1], -item[1])
+    elif strategy == "bottommost":
+        key = lambda item: (-item[0][1], -item[1])
+    else:
+        key = lambda item: (-item[1], item[0][0])
+
+    center, conf, best_name = min(hits, key=key)
+    return best_name, center, conf
 
 
 def templates_for_names(template_names):
@@ -898,10 +948,10 @@ def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True):
 
         screen_img = capture_screen()
         results = match_task_templates(task, screen_img, template_names, stop_flag=stop_flag)
-        if task.get("type") == "advanced":
-            matched_name, center, conf = find_leftmost_match(results, template_names)
-        else:
-            matched_name, center, conf = find_first_match(results, template_names)
+        # 多张候选模板时按步骤自己的策略挑一张（默认"置信度最高"）
+        matched_name, center, conf = find_match_by_strategy(
+            results, template_names, get_task_match_strategy(task)
+        )
 
         if center is not None:
             tpl_name = matched_name

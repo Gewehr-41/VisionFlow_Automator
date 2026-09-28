@@ -96,6 +96,29 @@ class StaticMethodGuardTests(unittest.TestCase):
             "这类方法必须加 @staticmethod：\n  " + "\n  ".join(offenders),
         )
 
+    def test_staticmethod_does_not_take_self(self):
+        """反向守卫：@staticmethod/@classmethod 不能配错首参。
+
+        这条是删除重复方法时踩坑后补的：按行范围删掉 `@staticmethod def _special_field_specs(task)`
+        时，装饰器那一行留在了原地，落到了下一个方法 `_clear_editor(self)` 头上
+        → 它被当成静态方法调用，`self` 变成了必填参数，
+        20+ 个测试报 `_clear_editor() missing 1 required positional argument: 'self'`。
+        原来那条守卫只查「普通方法首参不是 self」，查不出这种反向错误。
+        """
+        offenders = []
+        for class_name, func_name, node, decorators in _iter_class_methods():
+            args = node.args.posonlyargs + node.args.args
+            first = args[0].arg if args else None
+            if "staticmethod" in decorators and first == "self":
+                offenders.append(f"{class_name}.{func_name} 标了 @staticmethod 却用 self 作首参")
+            if "classmethod" in decorators and first != "cls":
+                offenders.append(f"{class_name}.{func_name} 标了 @classmethod 但首参是 {first!r}")
+        self.assertEqual(
+            offenders, [],
+            "装饰器与方法首参不匹配（通常是删除/移动方法时把装饰器留在了原处）：\n  "
+            + "\n  ".join(offenders),
+        )
+
     def test_value_helpers_are_staticmethods(self):
         # 两窗口共用 mixin 里的 _float / _int（主窗口原来的 _float_value / _int_value
         # 是同实现的重复别名，已删除）
@@ -170,6 +193,45 @@ class EditorRoundTripTests(unittest.TestCase):
         self.assertIsNotNone(item, "找不到第 1 步对应的树项")
         self.window.load_selected_task(item, None)
         return task
+
+    def test_both_windows_share_the_special_form_logic(self):
+        """「类型专用字段」的渲染/回写必须共享；两窗口只提供规格表与两处语义钩子。"""
+        for name in ("_rebuild_special_form", "_apply_special_fields", "_clear_special_form"):
+            with self.subTest(method=name):
+                self.assertIs(getattr(g.BlueprintWindow, name), getattr(g.CaptureOverlayMixin, name),
+                              f"蓝图窗口应直接复用 mixin 的 {name}")
+        # 主窗口只覆盖「多一步显隐」，逻辑仍走 super()
+        self.assertIsNot(g.PySide6ScriptWindow._rebuild_special_form,
+                         g.CaptureOverlayMixin._rebuild_special_form)
+        self.assertIs(g.PySide6ScriptWindow._apply_special_fields,
+                      g.CaptureOverlayMixin._apply_special_fields)
+        # 规格表与两处语义钩子：两个窗口各自提供
+        self.assertIsNot(g.PySide6ScriptWindow._special_field_specs,
+                         g.CaptureOverlayMixin._special_field_specs,
+                         "主窗口的标签文字与蓝图窗口不同，应有自己的规格表")
+        self.assertIsNot(g.PySide6ScriptWindow._special_empty_input_pops,
+                         g.CaptureOverlayMixin._special_empty_input_pops)
+        self.assertIsNot(g.PySide6ScriptWindow._special_float_fallback,
+                         g.CaptureOverlayMixin._special_float_fallback)
+
+    def test_special_form_specs_render_a_row_per_field(self):
+        """规格表里的每一项都必须真的渲染出一行（共享渲染器不能少建行）。"""
+        blueprint = g.BlueprintWindow([{"id": "x", "type": "condition"}], {},
+                                      lambda *a, **k: None, {}, None, {})
+        try:
+            task = {"type": "condition", "condition_templates": ["a"], "condition_operator": "any",
+                    "condition_true_jump_to": 1, "condition_false_jump_to": 2,
+                    "condition_invert": True, "threshold": 0.5}
+            blueprint.current_index = 0
+            blueprint._load_editor_for_task(task)
+            specs = blueprint._special_field_specs(task)
+            self.assertEqual(len(blueprint.special_edits), len(specs))
+            self.assertEqual(blueprint.special_form.rowCount(), len(specs))
+            for key, _label, _kind in specs:
+                with self.subTest(key=key):
+                    self.assertIn(key, blueprint.special_edits)
+        finally:
+            blueprint.close()
 
     def test_both_windows_share_the_editor_core(self):
         """公共实现必须共享；两个窗口的差异只能通过显式钩子表达。"""

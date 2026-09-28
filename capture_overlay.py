@@ -1261,6 +1261,192 @@ class CaptureOverlayMixin:
 
         layout.addStretch(1)
 
+    # ---------- 「类型专用字段」的渲染与回写（两个窗口共用） ----------
+    #
+    # 两个窗口此前各写一份：渲染部分逐字相同，回写部分只差两处语义
+    # （输入为空时是否删键、数值解析失败时的回退值）。这里把**逻辑**收成一份；
+    # 规格表仍由各窗口通过 `_special_field_specs(task)` 提供 —— 两边的标签文字
+    # 历史上就不同（例如主窗口的「按住时长」在蓝图窗口叫「持续时间」），
+    # 那属于窗口自己的文案，保留差异；重复的**代码**才是债。
+
+    def _special_empty_input_pops(self):
+        """输入框为空时是否删除该键。
+
+        mixin 默认 = 蓝图窗口的历史行为（删除）；主窗口历史上是写入回退值/空串，
+        由主窗口覆盖成 False。
+        """
+        return True
+
+    def _special_float_fallback(self, key, task):
+        """数值输入无法解析时的回退值。
+
+        mixin 默认 = 蓝图窗口（0.0）；主窗口对 threshold 用 config.THRESHOLD、
+        其余用任务里的原值，由主窗口覆盖。
+        """
+        return 0.0
+
+    def _special_field_specs(self, task):
+        """返回 [(键, 标签, 种类)]；种类见下面两个方法。默认 = 蓝图窗口的规格表。"""
+        task_type = task.get("type", "normal")
+        if task_type == "keyboard_move":
+            return [
+                ("move_steps", "移动步骤(每行: 按键 时长秒)", "move_steps"),
+                ("delay_before", "执行前延时(秒)", "float"),
+                ("after_wait", "执行后等待(秒)", "float"),
+            ]
+        if task_type == "key_press":
+            return [
+                ("key", "按键", "text"),
+                ("delay_before", "执行前延时(秒)", "float"),
+                ("hold_time", "按住时长(秒)", "float"),
+                ("after_wait", "执行后等待(秒)", "float"),
+            ]
+        if task_type == "drag":
+            return [
+                ("start_x", "起点 X", "float"),
+                ("start_y", "起点 Y", "float"),
+                ("end_x", "终点 X", "float"),
+                ("end_y", "终点 Y", "float"),
+                ("duration", "拖曳时长(秒)", "float"),
+                ("after_wait", "执行后等待(秒)", "float"),
+            ]
+        if task_type == "click_until_gone":
+            return []
+        if task_type == "delay":
+            return [("duration", "延迟时间(秒)", "float")]
+        if task_type == "condition":
+            return [
+                ("condition_templates", "条件模板(逗号分隔)", "templates"),
+                ("condition_operator", "条件运算(all/any/not)", "text"),
+                ("condition_true_jump_to", "成立跳转步骤号", "int"),
+                ("condition_false_jump_to", "不成立跳转步骤号", "int"),
+                ("condition_invert", "反转条件结果", "bool"),
+                ("threshold", "匹配阈值(0-1)", "float"),
+            ]
+        if task_type == "switch":
+            return [
+                ("switch_value", "选择值", "text"),
+                ("switch_cases", "分支(值:步骤号,逗号分隔)", "cases"),
+                ("switch_default_jump_to", "默认步骤号", "int"),
+            ]
+        if task_type == "loop":
+            return [
+                ("loop_count", "循环次数", "int"),
+                ("loop_target", "循环体步骤号", "int"),
+                ("loop_exit_target", "退出步骤号", "int"),
+            ]
+        if task_type == "event":
+            return [
+                ("event_template", "事件模板", "text"),
+                ("event_timeout", "等待超时(秒)", "float"),
+                ("event_timeout_target", "超时跳转步骤号", "int"),
+                ("threshold", "匹配阈值(0-1)", "float"),
+            ]
+        return []
+
+    def _clear_special_form(self):
+        while self.special_form.rowCount():
+            self.special_form.removeRow(0)
+        self.special_edits = {}
+
+    def _rebuild_special_form(self, task):
+        self._clear_special_form()
+        for key, label, kind in self._special_field_specs(task):
+            if key == "condition_templates":
+                value = task.get("condition_templates")
+                if isinstance(value, (list, tuple)):
+                    value = ", ".join(str(item) for item in value)
+                else:
+                    value = str(value or task.get("condition_template") or "")
+                editor = QLineEdit(value)
+            elif key == "switch_cases":
+                value = ", ".join(f"{k}:{v}" for k, v in (task.get("switch_cases") or {}).items())
+                editor = QLineEdit(value)
+            elif key == "move_steps":
+                steps = task.get("move_steps") or []
+                value = "\n".join(
+                    f"{step.get('key', 'W')} {step.get('duration', 1.0)}"
+                    for step in steps
+                    if isinstance(step, dict)
+                )
+                editor = QPlainTextEdit()
+                editor.setPlaceholderText("每行一个：按键 时长(秒)，例如 W 1.2")
+                editor.setMaximumHeight(120)
+                editor.setPlainText(value)
+            elif kind == "bool":
+                editor = QCheckBox()
+                editor.setChecked(bool(task.get(key, False)))
+            else:
+                editor = QLineEdit(str(task.get(key, "")))
+            self.special_edits[key] = editor
+            self.special_form.addRow(label + ":", editor)
+
+    def _apply_special_fields(self, task):
+        specs = {spec[0]: spec[2] for spec in self._special_field_specs(task)}
+        for key, editor in self.special_edits.items():
+            kind = specs.get(key, "text")
+            if kind == "move_steps":
+                steps = []
+                for line in editor.toPlainText().splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = line.split()
+                    try:
+                        duration = float(parts[1].rstrip("sS")) if len(parts) > 1 else 1.0
+                    except ValueError:
+                        duration = 1.0
+                    steps.append({"key": parts[0], "duration": duration})
+                task["move_steps"] = steps
+                continue
+            if kind == "bool":
+                task[key] = editor.isChecked()
+                continue
+            text = editor.text().strip()
+            if kind == "templates":
+                values = [item.strip() for item in text.replace("，", ",").split(",") if item.strip()]
+                task["condition_templates"] = values
+                task["condition_template"] = values[0] if values else ""
+                if values:
+                    task["template"] = values[0]
+                continue
+            if kind == "cases":
+                cases = {}
+                for item in text.replace("，", ",").split(","):
+                    if ":" not in item:
+                        continue
+                    case_value, target = item.split(":", 1)
+                    if case_value.strip() and target.strip():
+                        try:
+                            cases[case_value.strip()] = int(target.strip())
+                        except ValueError:
+                            continue
+                task["switch_cases"] = cases
+                continue
+            if kind == "float":
+                if text == "" and self._special_empty_input_pops():
+                    task.pop(key, None)
+                else:
+                    task[key] = self._float(text, self._special_float_fallback(key, task))
+                continue
+            if kind == "int":
+                if text == "":
+                    task.pop(key, None)
+                else:
+                    parsed = self._int(text)
+                    if parsed is not None:
+                        task[key] = parsed
+                continue
+            if text == "" and self._special_empty_input_pops():
+                task.pop(key, None)
+            else:
+                task[key] = text
+        # 事件 / 按键步骤的 template 与专用字段保持同步（两个窗口一致）
+        if task.get("type") == "event" and task.get("event_template"):
+            task["template"] = task["event_template"]
+        if task.get("type") == "key_press" and task.get("key"):
+            task["template"] = task["key"]
+
     # ---------- 编辑器面板「任务 -> 控件 / 控件 -> 任务」的公共核心 ----------
     #
     # 两个窗口此前各写一份加载与回写，并且已经出现过**无声漂移**：

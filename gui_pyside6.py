@@ -252,11 +252,27 @@ class CaptureOverlayMixin:
         """把「下一模板」同步到编辑控件（两个窗口的等待方式下拉框内容不同）。"""
         self.next_template_edit.setText(image_name)
 
+    # ---------- 共享的取值辅助 ----------
+    #
+    # 这两个方法必须放在 mixin 里，不能只挂在某一个窗口上：迂回子步骤对话框
+    # （open_detour_editor / _configure_detour_step）是两个窗口共用的一份实现，
+    # 一旦它调用只定义在单个窗口上的辅助方法，另一个窗口点「保存」就是
+    # AttributeError，而且异常发生在 Qt 槽里、只打到隐藏的 stderr，用户看到的是
+    # 「按了保存没反应」。（36da50b 把两份对话框合成一份时踩过这个坑。）
+
+    @staticmethod
+    def _int(value):
+        return _to_int(value)
+
+    @staticmethod
+    def _float(value, fallback):
+        return _to_float(value, fallback)
+
     # ---------- 识别区域列表（一个步骤可以有多条） ----------
     #
     # 引擎按 `match_rects` 的条数走不同策略（main.match_task_templates）：
     #   0 条 -> 全屏匹配；1 条 -> 先在该区域内找、未命中再逐次扩大到全屏；
-    #   N 条 -> 逐条尝试并取每张模板的最高分，**不走扩容兜底**。
+    #   N 条 -> 逐条尝试取最高分；全都没命中，同样从第 1 条起逐次扩大到全屏。
     # 所以区域的条数是有语义的，不能被静默压缩。
 
     @staticmethod
@@ -265,11 +281,16 @@ class CaptureOverlayMixin:
 
         这里**有意不做 right>left 校验**：它只用于显示与回写已存数据，退化矩形也
         应该照原样显示出来让用户改，而不是被悄悄丢掉。
+
+        文本形式额外容忍一层方括号/圆括号：界面曾经把矩形按 Python 列表的
+        repr 显示成 `[30, 28, 89, 81]`，若不剥掉括号就解析失败，用户只是打开
+        对话框再点保存，识别区域就会被静默删掉。
         """
         if isinstance(value, (list, tuple)) and len(value) >= 4:
             numbers = [_to_int(item) for item in value[:4]]
         elif isinstance(value, str):
-            parts = [item.strip() for item in value.replace("，", ",").split(",") if item.strip()]
+            text = value.strip().strip("[](){}")
+            parts = [item.strip() for item in text.replace("，", ",").split(",") if item.strip()]
             numbers = [_to_int(item) for item in parts] if len(parts) == 4 else []
         else:
             return None
@@ -962,6 +983,48 @@ class CaptureOverlayMixin:
         description_edit = QLineEdit(str(detour_task.get("description", "")))
         form.addRow("描述:", description_edit)
 
+        # ── 普通/高级步骤专属：这 5 个键此前的对话框完全不显示 ──
+        # 引擎一直在读它们（main.execute_task 的 timeout / click_requires_match /
+        # optional / wait_for，以及每次点击用的 offset），而这份对话框两边的窗口
+        # 都用得到。字段顺序与两个窗口的步骤面板保持一致：超时 -> 偏移 -> 等待方式
+        # -> 两个复选框。只在普通/高级类型下显示并回写，避免给拖拽、按键等类型
+        # 塞进引擎根本不读的键。
+        normal_group = QGroupBox("识别与点击（仅普通/高级步骤生效）")
+        normal_form = QFormLayout(normal_group)
+        timeout_edit = QLineEdit(str(detour_task.get("timeout", detour_task.get("wait_timeout", 5))))
+        normal_form.addRow("超时(秒，0为不限制):", timeout_edit)
+        offset_value = detour_task.get("offset")
+        if not isinstance(offset_value, (list, tuple)) or len(offset_value) < 2:
+            offset_value = (0, 0)
+        offset_x_edit = QLineEdit(str(detour_task.get("offset_x", offset_value[0])))
+        offset_y_edit = QLineEdit(str(detour_task.get("offset_y", offset_value[1])))
+        offset_widget = QWidget()
+        offset_row = QHBoxLayout(offset_widget)
+        offset_row.setContentsMargins(0, 0, 0, 0)
+        offset_row.addWidget(QLabel("X"))
+        offset_row.addWidget(offset_x_edit, 1)
+        offset_row.addWidget(QLabel("Y"))
+        offset_row.addWidget(offset_y_edit, 1)
+        normal_form.addRow("偏移:", offset_widget)
+        wait_for_combo = QComboBox()
+        wait_for_combo.addItems(["1. 画面结果变化", "2. 等待目标模板出现", "3. 画面变化后目标结果出现"])
+        saved_wait_for = str(detour_task.get("wait_for", "time"))
+        wait_for_combo.setCurrentIndex(
+            2 if saved_wait_for == "change_then_appear" else 1 if saved_wait_for == "next_appear" else 0
+        )
+        normal_form.addRow("等待方式:", wait_for_combo)
+        match_required_checkbox = QCheckBox("必须识别到图片再点击")
+        match_required_checkbox.setChecked(bool(detour_task.get("click_requires_match", True)))
+        normal_form.addRow(match_required_checkbox)
+        optional_checkbox = QCheckBox("可选步骤（跳过）")
+        optional_checkbox.setChecked(bool(detour_task.get("optional", not bool(detour_task.get("required", True)))))
+        normal_form.addRow(optional_checkbox)
+
+        def sync_normal_group_visibility():
+            normal_group.setVisible(type_combo.currentText() in ("normal", "advanced"))
+
+        type_combo.currentTextChanged.connect(lambda _text: sync_normal_group_visibility())
+
         def hide_dialogs():
             dialog.hide()
             if isinstance(parent, QDialog):
@@ -1005,6 +1068,9 @@ class CaptureOverlayMixin:
         capture_template_button.clicked.connect(capture_template)
         template_row.addWidget(capture_template_button)
         form.addRow("模板:", template_widget)
+        # 5 个新字段紧跟在模板之后，位置与两个窗口的步骤面板一致
+        form.addRow(normal_group)
+        sync_normal_group_visibility()
 
         click_x_edit = QLineEdit(str(detour_task.get("click_x", "")))
         click_y_edit = QLineEdit(str(detour_task.get("click_y", "")))
@@ -1038,7 +1104,11 @@ class CaptureOverlayMixin:
         key_edit = QLineEdit(str(detour_task.get("key", "")))
         form.addRow("按键:", key_edit)
 
-        match_rect_edit = QLineEdit(str(detour_task.get("match_rect", "") or ""))
+        # 显示的是引擎实际会用的那条区域（match_rects 优先，兼容旧的单矩形字段），
+        # 并且**不带方括号**——此前直接 str() 一个列表，显示成 `[30, 28, 89, 81]`，
+        # 保存时解析不出来就把区域整个删掉了。
+        region_rects = self._region_rects_of(detour_task)
+        match_rect_edit = QLineEdit(", ".join(str(value) for value in region_rects[0]) if region_rects else "")
         match_rect_widget = QWidget()
         match_rect_row = QHBoxLayout(match_rect_widget)
         match_rect_row.setContentsMargins(0, 0, 0, 0)
@@ -1097,7 +1167,19 @@ class CaptureOverlayMixin:
             key = key_edit.text().strip()
             if key:
                 detour_task["key"] = key
-            rect = self._parse_rect_text(match_rect_edit.text())
+            rect_text = match_rect_edit.text().strip()
+            rect = self._normalize_region(rect_text)
+            if rect_text and rect is None:
+                # 解析不了就**不能**当成"清空区域"：那会在用户毫无察觉的情况下把
+                # 识别区域删掉，匹配范围从"某个区域"变成全屏。这里明确拒绝保存。
+                QMessageBox.warning(
+                    dialog,
+                    "识别区域填得不对",
+                    "识别区域需要 4 个数字（左, 上, 右, 下），例如：30, 28, 89, 81。\n"
+                    "留空表示这一步不使用识别区域。\n\n"
+                    f"当前内容：{match_rect_edit.text().strip()}",
+                )
+                return
             if rect is not None:
                 detour_task["match_rect"] = rect
                 detour_task["search_rect"] = rect
@@ -1106,6 +1188,20 @@ class CaptureOverlayMixin:
                 detour_task.pop("match_rect", None)
                 detour_task.pop("search_rect", None)
                 detour_task.pop("match_rects", None)
+            if type_combo.currentText() in ("normal", "advanced"):
+                detour_task["timeout"] = self._float(timeout_edit.text(), detour_task.get("timeout", 5))
+                detour_task["offset_x"] = self._float(offset_x_edit.text(), 0.0)
+                detour_task["offset_y"] = self._float(offset_y_edit.text(), 0.0)
+                detour_task["offset"] = (detour_task["offset_x"], detour_task["offset_y"])
+                wait_mode = wait_for_combo.currentText()
+                detour_task["wait_for"] = (
+                    "next_appear" if wait_mode.startswith("2")
+                    else "change_then_appear" if wait_mode.startswith("3")
+                    else "time"
+                )
+                detour_task["click_requires_match"] = match_required_checkbox.isChecked()
+                detour_task["optional"] = optional_checkbox.isChecked()
+                detour_task["required"] = not detour_task["optional"]
             steps = []
             for line in move_steps_edit.toPlainText().splitlines():
                 line = line.strip()
@@ -3282,23 +3378,9 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
         self._select_node(self.current_index)
         self.save_layout()
 
-    @staticmethod
-    def _float(value, fallback):
-        # 与主窗口共用同一实现（此前 _float / _float_value 两份完全相同）
-        return _to_float(value, fallback)
-
-    @staticmethod
-    def _int(value):
-        # 与主窗口共用同一实现（此前 _int / _int_value 两份完全相同）
-        return _to_int(value)
-
-    @classmethod
-    def _parse_rect_text(cls, value):
-        parts = [item.strip() for item in value.replace("，", ",").split(",") if item.strip()]
-        if len(parts) != 4:
-            return None
-        numbers = [cls._int(item) for item in parts]
-        return tuple(numbers) if all(item is not None for item in numbers) else None
+    # _int / _float / _normalize_region 已上移到 CaptureOverlayMixin：
+    # 迂回子步骤对话框由两个窗口共用，以前这三个只挂在蓝图窗口上，主窗口点
+    # 「保存」就抛 AttributeError。
 
     # ---------- 命中测试 ----------
 

@@ -100,6 +100,16 @@ class RegionHelperTests(_IsolatedTestCase):
         self.assertEqual(self.mixin._normalize_region("1, 2, 3, 4"), (1, 2, 3, 4))
         self.assertEqual(self.mixin._normalize_region("1，2，3，4"), (1, 2, 3, 4))
 
+    def test_normalize_region_accepts_bracket_wrapped_text(self):
+        """界面曾把矩形按 Python 列表的 repr 显示成 '[30, 28, 89, 81]'。
+
+        这类文本（以及用户从 JSON 里粘回来的同类内容）必须仍能解析：解析不了就会
+        被当成"清空识别区域"，把匹配范围从某个区域悄悄放大成全屏。
+        """
+        self.assertEqual(self.mixin._normalize_region("[30, 28, 89, 81]"), (30, 28, 89, 81))
+        self.assertEqual(self.mixin._normalize_region("(30, 28, 89, 81)"), (30, 28, 89, 81))
+        self.assertEqual(self.mixin._normalize_region(" [30，28，89，81] "), (30, 28, 89, 81))
+
     def test_normalize_region_keeps_degenerate_rects(self):
         """列出已存数据时不做 right>left 校验，退化矩形也要能列出来让用户删掉。"""
         self.assertEqual(self.mixin._normalize_region([500, 10, 100, 100]), (500, 10, 100, 100))

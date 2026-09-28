@@ -502,34 +502,292 @@ class CaptureMixinContractTests(unittest.TestCase):
             self.window.open_detour_editor()
         self.assertIsInstance(g.TASKS[0]["detour_steps"], list)
 
-    def test_configure_detour_step_builds_dialog_and_saves(self):
-        from PySide6.QtWidgets import QPushButton
+    def _blueprint_window(self):
+        mode = self.window.mode_combo.currentText() or "custom"
+        return g.BlueprintWindow(
+            copy.deepcopy(g.TASKS), {},
+            lambda *a: None,
+            copy.deepcopy(self.window.mode_group_metadata.get(mode, {})),
+            self.window, {},
+        )
 
-        step = {
-            "type": "normal",
-            "description": "子步骤",
-            "template": "auto",
-            "click_x": 11,
-            "click_y": 22,
-            "match_rect": (1, 2, 3, 4),
-        }
+    def _drive_detour_dialog(self, owner, step, prepare=None):
+        """打开迂回子步骤对话框并点「保存」，返回 (是否走完保存, 弹窗警告列表)。
+
+        必须断言 dialog.accept() 是否被调用：保存过程中若抛异常（例如 mixin 调用了
+        只存在于另一个窗口的辅助方法），PySide6 只把 traceback 打到 stderr，槽里
+        静默失败、对话框不关闭。此时**只看字段是否被写入会假通过**——崩溃点之前的
+        字段照样会被写进去。
+        """
+        from PySide6.QtWidgets import QDialog, QPushButton
+
+        accepted = []
+        warnings = []
+        real_accept = QDialog.accept
+
+        def spy_accept(dialog_self):
+            accepted.append(True)
+            return real_accept(dialog_self)
 
         def fake_exec(dialog_self):
+            if prepare is not None:
+                prepare(dialog_self)
             for button in dialog_self.findChildren(QPushButton):
                 if button.text() == "保存":
                     button.click()
                     break
             return 0
 
-        with mock.patch.object(g.QDialog, "exec", fake_exec):
-            self.window._configure_detour_step(step, None)
+        def record_warning(*args, **_kwargs):
+            warnings.append(args[1] if len(args) > 1 else "")
+            return None
 
+        with mock.patch.object(g.QDialog, "exec", fake_exec), \
+                mock.patch.object(QDialog, "accept", spy_accept), \
+                mock.patch.object(g.QMessageBox, "warning", side_effect=record_warning):
+            owner._configure_detour_step(step, None)
+        return bool(accepted), warnings
+
+    def test_configure_detour_step_saves_in_main_window(self):
+        """主窗口也必须能走完保存。
+
+        回归：36da50b 把两份对话框合成一份 mixin 实现时，保留了蓝图窗口的辅助
+        函数名（_int/_float/_parse_rect_text），主窗口没有这三个方法，点「保存」
+        在 Qt 槽里抛 AttributeError，对话框不关闭、界面上看起来什么都没发生。
+        """
+        step = {
+            "type": "normal",
+            "description": "子步骤",
+            "template": "auto",
+            "click_x": 11,
+            "click_y": 22,
+            "match_rect": [1, 2, 3, 4],
+        }
+
+        accepted, warnings = self._drive_detour_dialog(self.window, step)
+
+        self.assertTrue(accepted, "保存应走完 dialog.accept()；没有走完说明槽里抛异常被静默吞掉")
+        self.assertEqual(warnings, [])
         self.assertEqual(step["type"], "normal")
         self.assertEqual(step["description"], "子步骤")
         self.assertEqual(step["template"], "auto")
-        self.assertEqual(step["click_x"], 11)
-        self.assertEqual(step["click_y"], 22)
+        self.assertEqual((step["click_x"], step["click_y"]), (11, 22))
+        self.assertEqual(step["click_position"], (11, 22))
         self.assertEqual(step["match_rect"], (1, 2, 3, 4))
+
+    def test_detour_dialog_keeps_region_for_both_windows(self):
+        """打开对话框什么都不改直接保存，不能把识别区域弄丢。
+
+        回归：区域曾按 Python 列表的 repr 显示成 '[30, 28, 89, 81]'，解析失败后
+        走了"清空区域"分支，识别范围从某个区域变成全屏。
+        """
+        blueprint = self._blueprint_window()
+        try:
+            for label, owner in (("主窗口", self.window), ("蓝图窗口", blueprint)):
+                with self.subTest(owner=label):
+                    step = {
+                        "type": "normal",
+                        "description": "退出茶吧",
+                        "match_rect": [30, 28, 89, 81],
+                        "search_rect": [30, 28, 89, 81],
+                    }
+                    accepted, warnings = self._drive_detour_dialog(owner, step)
+                    self.assertTrue(accepted)
+                    self.assertEqual(warnings, [])
+                    self.assertEqual(step["match_rect"], (30, 28, 89, 81))
+                    self.assertEqual(step["search_rect"], (30, 28, 89, 81))
+                    self.assertEqual(step["match_rects"], [(30, 28, 89, 81)])
+        finally:
+            blueprint.close()
+
+    def test_detour_dialog_shows_region_without_brackets(self):
+        from PySide6.QtWidgets import QLineEdit
+
+        shown = []
+
+        def prepare(dialog_self):
+            for box in dialog_self.findChildren(QLineEdit):
+                if box.text().count(",") == 3:
+                    shown.append(box.text())
+
+        self._drive_detour_dialog(self.window, {"type": "normal", "match_rect": [30, 28, 89, 81]},
+                                 prepare=prepare)
+
+        self.assertEqual(shown, ["30, 28, 89, 81"], "区域应显示成可再次解析的 4 个数字")
+
+    def test_detour_dialog_refuses_invalid_region_and_keeps_it(self):
+        from PySide6.QtWidgets import QLineEdit
+
+        def prepare(dialog_self):
+            for box in dialog_self.findChildren(QLineEdit):
+                if box.text().count(",") == 3:
+                    box.setText("乱七八糟")
+
+        step = {"type": "normal", "description": "退出茶吧", "match_rect": [30, 28, 89, 81]}
+        accepted, warnings = self._drive_detour_dialog(self.window, step, prepare=prepare)
+
+        self.assertFalse(accepted, "区域解析不了时不应关闭对话框")
+        self.assertEqual(len(warnings), 1, "应弹出一次明确提示")
+        self.assertEqual(step["match_rect"], [30, 28, 89, 81], "非法输入绝不能把已有区域删掉")
+
+    def test_detour_dialog_loads_the_five_fields(self):
+        """这 5 个键引擎一直在用，此前对话框既不显示也不回写。"""
+        from PySide6.QtWidgets import QCheckBox, QComboBox, QLineEdit
+
+        seen = {}
+
+        def prepare(dialog_self):
+            for box in dialog_self.findChildren(QLineEdit):
+                if box.text() == "12.5":
+                    seen["timeout"] = True
+            for combo in dialog_self.findChildren(QComboBox):
+                if combo.count() == 3 and "等待目标模板出现" in combo.itemText(1):
+                    seen["wait_for_index"] = combo.currentIndex()
+            for box in dialog_self.findChildren(QCheckBox):
+                if box.text() == "可选步骤（跳过）":
+                    seen["optional"] = box.isChecked()
+                if box.text() == "必须识别到图片再点击":
+                    seen["match_required"] = box.isChecked()
+
+        step = {
+            "type": "normal",
+            "timeout": 12.5,
+            "wait_for": "next_appear",
+            "click_requires_match": False,
+            "optional": True,
+        }
+        accepted, warnings = self._drive_detour_dialog(self.window, step, prepare=prepare)
+
+        self.assertTrue(accepted)
+        self.assertEqual(warnings, [])
+        self.assertTrue(seen.get("timeout"), "超时输入框应显示已存的 12.5")
+        self.assertEqual(seen.get("wait_for_index"), 1, "等待方式应显示已存的 next_appear")
+        self.assertTrue(seen.get("optional"))
+        self.assertFalse(seen.get("match_required"))
+
+    def test_detour_dialog_saves_the_five_fields(self):
+        from PySide6.QtWidgets import QCheckBox, QComboBox, QLineEdit
+
+        def prepare(dialog_self):
+            for box in dialog_self.findChildren(QLineEdit):
+                if box.text() == "5.0":
+                    box.setText("9.5")
+            for combo in dialog_self.findChildren(QComboBox):
+                if combo.count() == 3 and "等待目标模板出现" in combo.itemText(1):
+                    combo.setCurrentIndex(1)
+            for box in dialog_self.findChildren(QCheckBox):
+                if box.text() == "可选步骤（跳过）":
+                    box.setChecked(True)
+
+        step = {
+            "type": "normal",
+            "timeout": 5.0,
+            "offset": [0, 0],
+            "wait_for": "time",
+            "click_requires_match": True,
+            "optional": False,
+            "required": True,
+        }
+        accepted, warnings = self._drive_detour_dialog(self.window, step, prepare=prepare)
+
+        self.assertTrue(accepted)
+        self.assertEqual(warnings, [])
+        self.assertEqual(step["timeout"], 9.5)
+        self.assertEqual(step["wait_for"], "next_appear")
+        self.assertEqual(step["offset"], (0.0, 0.0))
+        self.assertTrue(step["optional"])
+        self.assertFalse(step["required"], "required 必须跟着 optional 一起翻")
+        self.assertTrue(step["click_requires_match"])
+
+    def test_detour_dialog_hides_normal_only_fields_for_other_types(self):
+        """非普通/高级类型的子步骤不该显示、也不该被写入这 5 个键。"""
+        from PySide6.QtWidgets import QGroupBox
+
+        visibility = []
+
+        def prepare(dialog_self):
+            for box in dialog_self.findChildren(QGroupBox):
+                if "识别与点击" in box.title():
+                    visibility.append(box.isVisibleTo(dialog_self))
+
+        step = {
+            "type": "drag",
+            "description": "向左拖曳画面",
+            "template": "drag",
+            "start_x": 500, "start_y": 300, "end_x": 100, "end_y": 300,
+            "duration": 0.25,
+        }
+        accepted, warnings = self._drive_detour_dialog(self.window, step, prepare=prepare)
+
+        self.assertTrue(accepted)
+        self.assertEqual(warnings, [])
+        self.assertEqual(visibility, [False], "拖拽类型不应显示普通/高级专属字段")
+        for key in ("timeout", "offset", "offset_x", "offset_y", "wait_for",
+                    "click_requires_match", "optional", "required"):
+            self.assertNotIn(key, step, f"{key} 不应写进非普通/高级类型的子步骤")
+        self.assertEqual((step["start_x"], step["end_x"]), (500, 100), "拖拽坐标应原样保留")
+
+    def test_detour_dialog_shows_normal_only_fields_for_normal_type(self):
+        from PySide6.QtWidgets import QGroupBox
+
+        visibility = []
+
+        def prepare(dialog_self):
+            for box in dialog_self.findChildren(QGroupBox):
+                if "识别与点击" in box.title():
+                    visibility.append(box.isVisibleTo(dialog_self))
+
+        self._drive_detour_dialog(self.window, {"type": "normal"}, prepare=prepare)
+
+        self.assertEqual(visibility, [True])
+
+    def test_mixin_methods_only_read_attributes_both_windows_provide(self):
+        """mixin 的方法不得依赖「只存在于某一个窗口」的属性。
+
+        这正是上面那条 AttributeError 的成因，只是因为没人在两个窗口上都点过保存，
+        所以只断言字段值的测试抓不到。这里用 AST 取出每个 mixin 方法读到的 self.X，
+        再到两个真实窗口实例上查验。
+        """
+        import ast
+
+        with open(g.__file__, encoding="utf-8") as source_file:
+            tree = ast.parse(source_file.read())
+        mixin = next(
+            node for node in tree.body
+            if isinstance(node, ast.ClassDef) and node.name == "CaptureOverlayMixin"
+        )
+        blueprint = self._blueprint_window()
+        try:
+            offenders = []
+            for node in mixin.body:
+                if not isinstance(node, ast.FunctionDef):
+                    continue
+                assigned = set()
+                for inner in ast.walk(node):
+                    if isinstance(inner, ast.Assign):
+                        assigned |= {
+                            target.attr for target in inner.targets
+                            if isinstance(target, ast.Attribute)
+                            and isinstance(target.value, ast.Name) and target.value.id == "self"
+                        }
+                reads = {
+                    inner.attr for inner in ast.walk(node)
+                    if isinstance(inner, ast.Attribute) and isinstance(inner.value, ast.Name)
+                    and inner.value.id == "self" and isinstance(inner.ctx, ast.Load)
+                }
+                for name in sorted(reads - assigned):
+                    missing = [
+                        label for label, owner in (("主窗口", self.window), ("蓝图窗口", blueprint))
+                        if not hasattr(owner, name)
+                    ]
+                    if missing:
+                        offenders.append(f"{node.name}() 读了 self.{name}，{'/'.join(missing)}没有")
+            self.assertEqual(
+                offenders, [],
+                "CaptureOverlayMixin 不得依赖只存在于单个窗口的属性：\n  " + "\n  ".join(offenders),
+            )
+        finally:
+            blueprint.close()
 
 
 if __name__ == "__main__":

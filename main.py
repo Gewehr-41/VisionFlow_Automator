@@ -475,7 +475,13 @@ def match_task_templates(task, screen_img, template_names=None, stop_flag=None):
                 current = merged_results.get(name)
                 if current is None or result[1] > current[1]:
                     merged_results[name] = result
-        if merged_results:
+        # 命中判据必须是"真的有区域给出了位置"，**不能**写成 `if merged_results:`。
+        # match_all_templates 对每张模板都会返回一条记录（未命中是 (None, 最高分)），
+        # 所以 merged_results 永远非空 —— 用字典本身当判据会让下面的扩容兜底变成
+        # 死代码：只要目标不在记录的区域里就永远识别不到。这是 2026-09-28 引入并
+        # 修复的回归（见 §8.1 #68），测试之所以没抓到是因为替身未命中时返回 {}，
+        # 而真实实现返回 {name: (None, 分数)}。
+        if any(center is not None for center, _ in merged_results.values()):
             return merged_results
         # 所有区域都没命中 -> 统一退回"从第 1 个区域起逐次扩大到全屏"
         #

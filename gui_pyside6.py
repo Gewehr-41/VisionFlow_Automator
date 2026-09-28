@@ -2726,13 +2726,8 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         """主窗口：「超时(秒)」初值会回退到旧的 wait_timeout 字段（历史差异）。"""
         return str(task.get("timeout", task.get("wait_timeout", 5)))
 
-    def _editor_apply_optional(self, task):
-        """主窗口历史上**不回写**「可选步骤（跳过）」（勾选框点了等于没勾）。
-
-        本次重构要求零行为变化，所以保留现状；这是已知缺口，
-        要不要对齐蓝图窗口的行为（写 optional/required）待所有者决定。
-        """
-        return
+    # 「可选步骤（跳过）」的回写：以前主窗口这里有一个空实现，导致勾选框点了等于没勾
+    # （§8.2 #7）。2026-09-28 按所有者要求对齐蓝图窗口，直接沿用 mixin 的实现。
 
 
     def _on_group_expanded_changed(self, item):
@@ -3173,7 +3168,7 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
                 task["required"] = True
             else:
                 self._apply_common_editor_fields(task)
-                # 「可选步骤（跳过）」：主窗口历史上不回写（见 _editor_apply_optional）
+                # 「可选步骤（跳过）」：与蓝图窗口一致地回写（§8.2 #7 已在 2026-09-28 修复）
                 self._editor_apply_optional(task)
         task["enabled"] = self.enabled_checkbox.isChecked()
         for key, editor in self.special_edits.items():

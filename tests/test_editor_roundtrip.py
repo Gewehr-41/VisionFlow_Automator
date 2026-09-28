@@ -181,7 +181,9 @@ class EditorRoundTripTests(unittest.TestCase):
                                   f"{owner.__name__}.{name} 应直接复用 mixin 实现，不要另抄一份")
 
         # 钩子：差异必须写成覆盖，而不是在窗口里复制整段逻辑
-        overridden_by_main = ("_editor_timeout_text", "_editor_apply_optional")
+        # （`_editor_apply_optional` 曾在主窗口被覆盖成空实现，导致「可选步骤」勾了没
+        #   效果；2026-09-28 已对齐，所以现在只剩超时初值这一处显式差异）
+        overridden_by_main = ("_editor_timeout_text",)
         for name in overridden_by_main:
             with self.subTest(hook=name):
                 self.assertIsNot(getattr(g.PySide6ScriptWindow, name),
@@ -190,6 +192,13 @@ class EditorRoundTripTests(unittest.TestCase):
                 self.assertIs(getattr(g.BlueprintWindow, name),
                               getattr(g.CaptureOverlayMixin, name),
                               f"{name} 蓝图窗口应沿用 mixin 的默认实现")
+        for name in ("_editor_apply_optional",):
+            with self.subTest(hook=name):
+                self.assertIs(getattr(g.PySide6ScriptWindow, name),
+                              getattr(g.CaptureOverlayMixin, name),
+                              f"{name} 两个窗口都应沿用 mixin 实现（不要再覆盖成空操作）")
+                self.assertIs(getattr(g.BlueprintWindow, name),
+                              getattr(g.CaptureOverlayMixin, name))
         self.assertIsNot(g.BlueprintWindow._editor_float_fallback,
                          g.CaptureOverlayMixin._editor_float_fallback,
                          "_editor_float_fallback 是蓝图窗口的显式差异，应覆盖")
@@ -245,11 +254,7 @@ class EditorRoundTripTests(unittest.TestCase):
             blueprint.close()
 
     def test_both_windows_write_the_same_common_fields(self):
-        """同一份面板输入，两个窗口回写出的公共字段必须一致。
-
-        `optional`/`required` 是**已知缺口**：主窗口历史上不回写它们
-        （勾选框点了等于没勾），本次重构要求零行为变化、暂未对齐，所以这里排除。
-        """
+        """同一份面板输入，两个窗口回写出的公共字段必须一致（含 optional/required）。"""
         task = {"id": "consistency", "type": "normal", "template": "tpl_a"}
         g.TASKS[:] = [dict(task)]
         self.window.refresh_task_list()
@@ -279,8 +284,6 @@ class EditorRoundTripTests(unittest.TestCase):
             blueprint.close()
 
         for key in sorted(set(mine) | set(theirs)):
-            if key in ("optional", "required"):
-                continue                      # 见 docstring：已知缺口
             with self.subTest(key=key):
                 self.assertEqual(mine.get(key), theirs.get(key),
                                  f"{key} 在两个窗口里的回写结果不一致")
@@ -316,6 +319,7 @@ class EditorRoundTripTests(unittest.TestCase):
                     owner.next_template_edit.setText("tpl_next")
                     owner.click_checkbox.setChecked(True)
                     owner.match_required_checkbox.setChecked(False)
+                    owner.optional_checkbox.setChecked(True)
                     owner.wait_for_combo.setCurrentIndex(2)
 
                     if label == "主窗口":
@@ -331,6 +335,8 @@ class EditorRoundTripTests(unittest.TestCase):
                     self.assertEqual(task["after_wait"], 0.33)
                     self.assertIs(task["click"], True)
                     self.assertIs(task["click_requires_match"], False)
+                    self.assertIs(task["optional"], True, "「可选步骤（跳过）」必须真的回写")
+                    self.assertIs(task["required"], False, "required 必须跟着 optional 翻")
                     self.assertEqual(task["click_position"], (12, 34))
                     self.assertEqual((task["click_x"], task["click_y"]), (12, 34))
                     self.assertEqual(task["next_template"], "tpl_next")

@@ -92,6 +92,48 @@ class HelperUnitTests(unittest.TestCase):
         g._add_form_row(self.layout, "二:", QLineEdit())
         self.assertEqual(self.layout.count(), 2)
 
+    def test_every_gui_attribute_used_by_tests_still_exists(self):
+        """测试里所有 `gui_pyside6.<名字>` 的引用都必须仍然可解析。
+
+        这条守卫是模块外移时踩坑后补的：清理"未使用导入"时把 `QDialog` 删了，
+        生产代码毫无影响，但 16 个测试因为 `mock.patch.object(g.QDialog, ...)`
+        全部报错。`gui_pyside6.<名字>` 是一层事实上的兼容面，删除前必须先确认
+        没有人在用。
+        """
+        import re
+        from pathlib import Path
+
+        referenced = set()
+        for path in Path(__file__).resolve().parent.glob("*.py"):
+            referenced |= set(re.findall(r"\bg\.([A-Za-z_][A-Za-z0-9_]*)",
+                                         path.read_text(encoding="utf-8")))
+        missing = sorted(name for name in referenced if not hasattr(g, name))
+        self.assertEqual(missing, [], f"这些名字测试在用，但 gui_pyside6 已不提供：{missing}")
+
+    def test_extracted_classes_live_in_their_own_modules(self):
+        """外移的类必须**定义在**新模块里，而不是复制回 gui_pyside6。"""
+        import blueprint_canvas
+        import capture_overlay
+        import task_widgets
+
+        expected = {
+            g.CaptureOverlayMixin: capture_overlay,
+            g.CaptureOverlay: capture_overlay,
+            g.BlueprintNodeItem: blueprint_canvas,
+            g.BlueprintWireItem: blueprint_canvas,
+            g.BendHandleItem: blueprint_canvas,
+            g.BlueprintScene: blueprint_canvas,
+            g.BlueprintGroupItem: blueprint_canvas,
+            g.BlueprintView: blueprint_canvas,
+            g.TaskItemDelegate: task_widgets,
+            g.TaskListWidget: task_widgets,
+            g.TaskWorker: task_widgets,
+        }
+        for obj, module in expected.items():
+            with self.subTest(name=obj.__name__):
+                self.assertIs(obj.__module__, module.__name__,
+                              f"{obj.__name__} 应在 {module.__name__} 里定义")
+
     def test_shared_helpers_are_reexported_from_the_gui_module(self):
         """这些辅助函数已外移到 ui_common，但仍须能从 gui_pyside6 取到。
 

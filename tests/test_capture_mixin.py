@@ -750,10 +750,15 @@ class CaptureMixinContractTests(unittest.TestCase):
         这正是上面那条 AttributeError 的成因，只是因为没人在两个窗口上都点过保存，
         所以只断言字段值的测试抓不到。这里用 AST 取出每个 mixin 方法读到的 self.X，
         再到两个真实窗口实例上查验。
+
+        源码位置**跟着类走**（`CaptureOverlayMixin.__module__`）：mixin 已从
+        gui_pyside6.py 外移到 capture_overlay.py，写死文件路径的测试会失效。
         """
         import ast
+        import sys
 
-        with open(g.__file__, encoding="utf-8") as source_file:
+        owner = sys.modules[g.CaptureOverlayMixin.__module__]
+        with open(owner.__file__, encoding="utf-8") as source_file:
             tree = ast.parse(source_file.read())
         mixin = next(
             node for node in tree.body

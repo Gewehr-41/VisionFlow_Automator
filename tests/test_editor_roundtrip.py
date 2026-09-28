@@ -43,26 +43,35 @@ import tasks
 _APP = QApplication.instance() or QApplication([])
 
 import gui_pyside6 as g
+import blueprint_canvas
+import capture_overlay
+import task_widgets
 
-_GUI_SOURCE = pathlib.Path(g.__file__).resolve()
+# 界面代码已拆成 4 个模块（gui_pyside6 只留两个窗口类与入口），
+# 静态守卫必须扫全部，否则代码一搬家守卫就静默失效。
+_GUI_SOURCES = [
+    pathlib.Path(module.__file__).resolve()
+    for module in (g, capture_overlay, blueprint_canvas, task_widgets)
+]
 
 
 def _iter_class_methods():
     """产出 (类名, 方法名, 函数节点, 装饰器名集合)。"""
-    tree = ast.parse(_GUI_SOURCE.read_text(encoding="utf-8"))
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ClassDef):
-            continue
-        for item in node.body:
-            if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+    for source in _GUI_SOURCES:
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
                 continue
-            decorators = set()
-            for deco in item.decorator_list:
-                if isinstance(deco, ast.Name):
-                    decorators.add(deco.id)
-                elif isinstance(deco, ast.Attribute):
-                    decorators.add(deco.attr)
-            yield node.name, item.name, item, decorators
+            for item in node.body:
+                if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                decorators = set()
+                for deco in item.decorator_list:
+                    if isinstance(deco, ast.Name):
+                        decorators.add(deco.id)
+                    elif isinstance(deco, ast.Attribute):
+                        decorators.add(deco.attr)
+                yield node.name, item.name, item, decorators
 
 
 class StaticMethodGuardTests(unittest.TestCase):

@@ -92,6 +92,24 @@ class HelperUnitTests(unittest.TestCase):
         g._add_form_row(self.layout, "二:", QLineEdit())
         self.assertEqual(self.layout.count(), 2)
 
+    def test_shared_helpers_are_reexported_from_the_gui_module(self):
+        """这些辅助函数已外移到 ui_common，但仍须能从 gui_pyside6 取到。
+
+        兼容面：测试与外部脚本都用 `gui_pyside6.<名字>`；同时断言它们**确实**
+        定义在 ui_common（而不是被复制回 gui_pyside6 —— 那就又变成两份了）。
+        """
+        import ui_common
+
+        for name in ("_to_float", "_to_int", "_add_form_row", "_add_coordinate_row",
+                     "_add_click_until_row", "_add_region_selector_row", "_jump_index_map",
+                     "_load_template_pixmap", "_first_available_template_pixmap", "_capture_rect"):
+            with self.subTest(name=name):
+                self.assertTrue(hasattr(g, name), f"gui_pyside6 缺少重新导出的 {name}")
+                self.assertIs(getattr(g, name), getattr(ui_common, name),
+                              f"{name} 应是 ui_common 里的同一个对象")
+                self.assertEqual(getattr(g, name).__module__, "ui_common",
+                                 f"{name} 应实际定义在 ui_common，而不是复制回 gui_pyside6")
+
 
 class WindowLayoutTests(unittest.TestCase):
     """两个窗口的字段必须真的进了同一行布局。"""

@@ -267,6 +267,35 @@ class BlueprintInteractionSharingTests(unittest.TestCase):
                               f"{name} 应由 BlueprintInteractionMixin 提供")
 
 
+class BlueprintGroupSharingTests(unittest.TestCase):
+    """蓝图窗口的分组（23 个方法）必须由 blueprint_groups 提供。"""
+
+    METHODS = ["_add_group_menu", "_add_group_menu_item", "_collapsed_group_for", "_delete_group",
+               "_edit_group", "_group_after_editor_applied", "_group_all_node_indices",
+               "_group_color_button_text_color", "_group_color_dialog_title",
+               "_group_default_color", "_group_descendants", "_group_hide_editor_groups",
+               "_group_metadata_for_current_mode", "_group_node_indices", "_load_collapsed_groups",
+               "_on_empty_group_moved", "_render_groups", "_sync_group_bounds", "add_group",
+               "remove_from_group", "set_selection_group", "show_group_context_menu",
+               "toggle_group"]
+
+    def test_group_methods_come_from_the_mixin(self):
+        import blueprint_groups
+
+        for name in self.METHODS:
+            with self.subTest(method=name):
+                self.assertNotIn(name, g.BlueprintWindow.__dict__,
+                                 f"{name} 不该在蓝图窗口类里再定义一份")
+                self.assertIs(getattr(g.BlueprintWindow, name),
+                              getattr(blueprint_groups.BlueprintGroupMixin, name),
+                              f"{name} 应由 BlueprintGroupMixin 提供")
+
+    def test_group_mixin_precedes_the_overlay_mixin(self):
+        """`_group_*` 那几个钩子由采集 mixin 调用，必须在它之前解析到实现。"""
+        mro = [klass.__name__ for klass in g.BlueprintWindow.__mro__]
+        self.assertLess(mro.index("BlueprintGroupMixin"), mro.index("CaptureOverlayMixin"))
+
+
 class DataIsolationSeamTests(unittest.TestCase):
     """元守卫：测试的数据隔离必须**同时**替换路径常量，不能只替换函数名。
 

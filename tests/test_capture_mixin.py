@@ -181,15 +181,30 @@ class CaptureMixinContractTests(unittest.TestCase):
 
         注意：主窗口的可见框在 `_capture_after_task_changed()` 之后也会被重载填上，
         所以只断言框的内容**无法**证明这个钩子被调用过 —— 必须直接盯住调用。
+        钩子带 index（新框的区域在 match_rects 里的下标）。
         """
         seen = []
         self.window.current_task_index = 0
         self.window._capture_target = "match"
-        self.window._capture_show_region_widgets = lambda rect: seen.append(rect)
+        self.window._capture_show_region_widgets = lambda rect, index=0: seen.append((rect, index))
 
         self.window.finish_region_capture(10, 20, 30, 40)
 
-        self.assertEqual(seen, [(10, 20, 30, 40)])
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen[0][0], (10, 20, 30, 40))
+        self.assertEqual(seen[0][1], 0, "第 1 条区域的下标应为 0")
+
+    def test_finish_region_capture_passes_the_index_of_the_new_region(self):
+        """框第 2 条时，钩子收到的下标必须是 1（新框的那条），而不是 0。"""
+        seen = []
+        self.window.current_task_index = 0
+        self.window._capture_target = "match"
+        self.window._capture_show_region_widgets = lambda rect, index=0: seen.append(index)
+
+        self.window.finish_region_capture(10, 20, 30, 40)
+        self.window.finish_region_capture(50, 60, 70, 80)
+
+        self.assertEqual(seen, [0, 1])
 
     def test_clear_match_region_calls_the_clear_region_hook(self):
         """清空识别区域时同样必须调用 _capture_clear_region_widgets。"""
@@ -206,7 +221,7 @@ class CaptureMixinContractTests(unittest.TestCase):
         seen = []
         self.window.current_task_index = 0
         self.window._capture_target = "next"
-        self.window._capture_show_region_widgets = lambda rect: seen.append(rect)
+        self.window._capture_show_region_widgets = lambda rect, index=0: seen.append(rect)
 
         self.window.finish_region_capture(1, 2, 3, 4)
 

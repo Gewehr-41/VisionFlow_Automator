@@ -154,6 +154,21 @@ def _add_click_until_row(layout, label, widget):
     layout.addLayout(row)
 
 
+def _add_region_selector_row(layout, selector, status_label, delete_button):
+    """识别区域的选择行：「区域选择」下拉 + 共 N 个 + 删除本区域。
+
+    一个步骤可以配置多条识别区域（引擎会逐条尝试），所以除了当前正在编辑的那条
+    之外，还需要一个地方看到"一共几条、现在编辑的是第几条"。
+    """
+    row = QHBoxLayout()
+    row.setContentsMargins(0, 0, 0, 0)
+    row.addWidget(QLabel("区域选择:"), 0)
+    row.addWidget(selector, 1)
+    row.addWidget(status_label, 0)
+    row.addWidget(delete_button, 0)
+    layout.addLayout(row)
+
+
 def _to_float(value, fallback):
     """把输入解析为 float，失败时返回 fallback。
 
@@ -237,19 +252,20 @@ class CaptureOverlayMixin:
         """把「下一模板」同步到编辑控件（两个窗口的等待方式下拉框内容不同）。"""
         self.next_template_edit.setText(image_name)
 
-    def _capture_show_region_widgets(self, rect):
-        """把刚框好的识别区域显示到本窗口的"识别区域"控件上。
+    def _capture_show_region_widgets(self, rect, index=0):
+        """把识别区域显示到本窗口的"区域"控件上。
 
         两个窗口展示同一份数据的方式不同，所以这里只留接口：
           - 蓝图窗口：一个可见的文本框（"左上,右下" 形式）
           - 主窗口：6 个可见输入框（左上/右下/中心 各一对 X/Y）
-        默认什么都不做，子类各自覆盖。
+        `index` 是它在 `match_rects` 里的下标 —— 一个步骤可以有多条识别区域，
+        这里显示的是"当前正在编辑的那一条"。
 
         背景：此前 mixin 直接 `self.match_rect_edit.setText(...)`，而主窗口的那个
         match_rect_edit 从来没有被放进任何布局 —— 它是个无父控件的隐形顶层窗口，
         于是"框选识别区域"的结果在主窗口里根本没有可见反馈。
         """
-        return rect
+        self._region_index = index
 
     def _capture_clear_region_widgets(self):
         """清空识别区域时一并清理本窗口的区域控件（与上面成对）。
@@ -257,6 +273,170 @@ class CaptureOverlayMixin:
         背景：此前 mixin 直接 `self.match_rect_edit.clear()`，对主窗口同样是写进
         那个隐形控件。
         """
+
+    # ---------- 识别区域列表（一个步骤可以有多条） ----------
+    #
+    # 引擎按 `match_rects` 的条数走不同策略（main.match_task_templates）：
+    #   0 条 -> 全屏匹配；1 条 -> 先在该区域内找、未命中再逐次扩大到全屏；
+    #   N 条 -> 逐条尝试并取每张模板的最高分，**不走扩容兜底**。
+    # 所以区域的条数是有语义的，不能被静默压缩。
+
+    @staticmethod
+    def _normalize_region(value):
+        """把 match_rects 里的一项规范化为 (l, t, r, b) 整数元组；无法解析返回 None。
+
+        这里**有意不做 right>left 校验**：它只用于显示与回写已存数据，退化矩形也
+        应该照原样显示出来让用户改，而不是被悄悄丢掉。
+        """
+        if isinstance(value, (list, tuple)) and len(value) >= 4:
+            numbers = [_to_int(item) for item in value[:4]]
+        elif isinstance(value, str):
+            parts = [item.strip() for item in value.replace("，", ",").split(",") if item.strip()]
+            numbers = [_to_int(item) for item in parts] if len(parts) == 4 else []
+        else:
+            return None
+        if len(numbers) != 4 or any(item is None for item in numbers):
+            return None
+        return tuple(numbers)
+
+    def _region_rects_of(self, task):
+        """返回任务里配置的识别区域列表（规范化后的元组列表，兼容旧的单矩形字段）。"""
+        if not isinstance(task, dict):
+            return []
+        rects = task.get("match_rects")
+        if isinstance(rects, list):
+            normalized = [self._normalize_region(rect) for rect in rects]
+            normalized = [rect for rect in normalized if rect is not None]
+            if normalized:
+                return normalized
+        for key in ("match_rect", "search_rect"):
+            parsed = self._normalize_region(task.get(key))
+            if parsed is not None:
+                return [parsed]
+        return []
+
+    @staticmethod
+    def _store_region_rects(task, rects):
+        """把区域列表写回任务；空列表表示"没有识别区域"（三个字段一起清理）。"""
+        if not isinstance(task, dict):
+            return
+        cleaned = [tuple(int(value) for value in rect[:4]) for rect in rects]
+        if cleaned:
+            task["match_rects"] = cleaned
+            task["match_rect"] = cleaned[0]
+            task["search_rect"] = cleaned[0]
+        else:
+            for key in ("match_rects", "match_rect", "search_rect"):
+                task.pop(key, None)
+
+    def _region_widgets_for_selector(self):
+        """返回 (选择框, 状态标签, 删除按钮)；未构建则返回 (None, None, None)。"""
+        return (
+            getattr(self, "region_selector", None),
+            getattr(self, "region_status_label", None),
+            getattr(self, "region_delete_button", None),
+        )
+
+    def _refresh_region_selector(self, task):
+        """按任务当前的区域列表重建"区域选择"控件，返回规范化后的区域列表。"""
+        rects = self._region_rects_of(task)
+        if self._region_index >= len(rects):
+            self._region_index = max(0, len(rects) - 1)
+        selector, status_label, delete_button = self._region_widgets_for_selector()
+        if selector is None:
+            return rects
+        selector.blockSignals(True)
+        selector.clear()
+        for position, rect in enumerate(rects):
+            selector.addItem(f"区域 {position + 1}（{rect[0]}, {rect[1]}, {rect[2]}, {rect[3]}）")
+        selector.setCurrentIndex(self._region_index if rects else -1)
+        selector.blockSignals(False)
+        selector.setEnabled(bool(rects))
+        if status_label is not None:
+            status_label.setText(f"共 {len(rects)} 个" if rects else "未设置")
+        if delete_button is not None:
+            delete_button.setEnabled(bool(rects))
+        return rects
+
+    def _on_region_selector_changed(self, index):
+        """切换"正在编辑的区域"：把该区域载入本窗口的区域控件。"""
+        if index is None or index < 0:
+            return
+        task = self._capture_current_task()
+        rects = self._region_rects_of(task)
+        if not 0 <= index < len(rects):
+            return
+        self._region_index = index
+        self._capture_show_region_widgets(rects[index], index)
+
+    def delete_current_region(self):
+        """删除"正在编辑的那一条"识别区域，其余区域原样保留。"""
+        task = self._capture_current_task()
+        if task is None:
+            return
+        rects = self._region_rects_of(task)
+        if not 0 <= self._region_index < len(rects):
+            return
+        removed = rects.pop(self._region_index)
+        self._store_region_rects(task, rects)
+        self._region_index = max(0, min(self._region_index, len(rects) - 1))
+        self._capture_log(f"已删除识别区域 {tuple(removed)}，剩余 {len(rects)} 个")
+        self._capture_after_task_changed()
+
+    def _capture_region_entry_is_blank(self):
+        """区域控件是否**完全为空**（默认无法判断，一律当作空）。"""
+        return True
+
+    def _capture_region_entry_state(self):
+        """判断"正在编辑的区域"控件里的输入状态，返回 "valid" / "empty" / "invalid"。"""
+        if self._current_match_rect() is not None:
+            return "valid"
+        return "empty" if self._capture_region_entry_is_blank() else "invalid"
+
+    def _capture_apply_current_region(self, task):
+        """把"正在编辑的区域"写回任务，**其余区域原样保留**。
+
+        三种输入状态分别处理：
+          - valid   合法矩形 -> 覆盖当前下标那一条（下标不存在则追加）；
+          - empty   四个框全空 -> 只删掉当前那一条（其余区域不受影响）；
+          - invalid 填了一半 / 右下小于左上 -> **什么都不改**，只提示一句。
+            这是刻意的：打字打错不该静默删掉用户的区域，也不该像以前那样拿一个
+            看不见的旧值把输入顶掉。
+
+        背景：此前这里写死 `task["match_rects"] = [match_rect]`，于是 `normal` /
+        `advanced` 步骤只要点一次「应用修改」，多条区域就被压成 1 条。
+        """
+        rects = self._region_rects_of(task)
+        state = self._capture_region_entry_state()
+        if state == "valid":
+            current = self._current_match_rect()
+            if 0 <= self._region_index < len(rects):
+                rects[self._region_index] = current
+            else:
+                rects.append(current)
+                self._region_index = len(rects) - 1
+            self._store_region_rects(task, rects)
+        elif state == "empty":
+            if 0 <= self._region_index < len(rects):
+                removed = rects.pop(self._region_index)
+                self._capture_log(f"已清除识别区域 {tuple(removed)}（当前区域的输入为空）")
+            self._region_index = max(0, min(self._region_index, len(rects) - 1))
+            self._store_region_rects(task, rects)
+        else:
+            self._capture_log("识别区域填写不完整或不合法（需 4 个数字，且右下大于左上），本次未修改该区域。")
+        return rects
+
+    def _capture_sync_region_index(self, task):
+        """换到另一个步骤时把"正在编辑的区域"重置回第 1 条。
+
+        用任务的稳定 `id` 判断是否换了步骤：同一步骤因刷新而重新载入时不会重置，
+        所以"刚框好的那条区域"能一直留在视图里。
+        """
+        key = task.get("id") if isinstance(task, dict) and task.get("id") is not None else id(task)
+        key = str(key)
+        if key != getattr(self, "_region_task_key", None):
+            self._region_task_key = key
+            self._region_index = 0
 
     # ---------- 分组编辑：子类必须覆盖的数据访问 ----------
 
@@ -503,12 +683,16 @@ class CaptureOverlayMixin:
             match_rects = []
             task["match_rects"] = match_rects
         match_rects.append((left, top, right, bottom))
-        task["match_rect"] = match_rects[0]
-        task["search_rect"] = match_rects[0]
-        self._capture_show_region_widgets((left, top, right, bottom))
+        # 新框的这一条就是用户此刻想看、想改的区域：把它设为当前选中项。
+        # 此前只把结果写进控件、随后又被重载覆盖回第 1 条，于是"框第 2 个区域"
+        # 在界面上毫无反馈（看上去像没框上）。
+        self._region_index = len(match_rects) - 1
+        self._store_region_rects(task, match_rects)
+        self._capture_show_region_widgets((left, top, right, bottom), self._region_index)
         self._capture_after_task_changed()
 
     def clear_match_region(self):
+        self._region_index = 0
         self._capture_clear_region_widgets()
         task = self._capture_current_task()
         if task is None:
@@ -1823,6 +2007,9 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
         self.current_index = -1
         self.current_group_id = None
         self._pending_group_color = None
+        # 正在编辑的识别区域下标（一个步骤可以有多条区域）与它所属步骤的标识
+        self._region_index = 0
+        self._region_task_key = None
         self.selected_edge = None
         self._refreshing = False
         self._scene_rect_pending = False
@@ -1970,6 +2157,11 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
         self.click_x_edit = QLineEdit()
         self.click_y_edit = QLineEdit()
         self.match_rect_edit = QLineEdit()
+        self.region_selector = QComboBox()
+        self.region_status_label = QLabel("未设置")
+        self.region_delete_button = QPushButton("删除本区域")
+        self.region_delete_button.clicked.connect(self.delete_current_region)
+        self.region_selector.currentIndexChanged.connect(self._on_region_selector_changed)
         self.next_template_edit = QLineEdit()
         self.wait_for_combo = QComboBox()
         self.wait_for_combo.addItems(["1. 画面结果变化", "2. 等待目标模板出现", "3. 画面变化后目标结果出现"])
@@ -1988,6 +2180,11 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
         # X/Y 成对并排（此前 4 个坐标各占一行，输入框 529px 却只填一个短数字）
         add_coordinate_row("偏移:", self.offset_x_edit, self.offset_y_edit)
         add_coordinate_row("点击:", self.click_x_edit, self.click_y_edit)
+        # 一个步骤可以有多条识别区域（引擎逐条尝试），这一行用于查看/切换/删除
+        _add_region_selector_row(
+            recognition_layout, self.region_selector,
+            self.region_status_label, self.region_delete_button,
+        )
         add_row("识别区域(左上,右下):", self.match_rect_edit)
 
         next_row = QHBoxLayout()
@@ -2090,16 +2287,30 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
 
     def _capture_after_task_changed(self):
         self._push_history()
+        # 必须在 refresh() **之前**记住当前步骤：refresh() 会重建整个场景、丢掉
+        # 选中项，进而触发 _refresh_editor_from_selection() 把 current_index 置为
+        # -1。此前这里是在 refresh() 之后才读 self.current_index，于是拿到 -1，
+        # `_select_node(-1)` 直接把编辑面板清空 —— 表现为"在蓝图窗口框选图片/
+        # 记录点击点/框选识别区域之后，右侧面板整个空掉"。
+        index = self.current_index
         self.refresh()
-        self._select_node(self.current_index)
+        self._select_node(index)
         self.save_layout()
 
-    def _capture_show_region_widgets(self, rect):
+    def _capture_show_region_widgets(self, rect, index=0):
         """蓝图窗口用一个可见文本框展示识别区域（"左上,右下" 形式）。"""
+        self._region_index = index
         self.match_rect_edit.setText(f"{rect[0]}, {rect[1]}, {rect[2]}, {rect[3]}")
 
     def _capture_clear_region_widgets(self):
         self.match_rect_edit.clear()
+
+    def _current_match_rect(self):
+        """返回识别区域文本框里所填的矩形；不是合法 4 个数字时返回 None。"""
+        return self._parse_rect_text(self.match_rect_edit.text())
+
+    def _capture_region_entry_is_blank(self):
+        return not self.match_rect_edit.text().strip()
 
     def _capture_show_parent(self):
         parent = self.parent()
@@ -2843,6 +3054,10 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
         self.click_y_edit.setText(str(task.get("click_y", click_position[1] if isinstance(click_position, (list, tuple)) and len(click_position) >= 2 else "")))
         rects = task.get("match_rects")
         rect = (rects[0] if isinstance(rects, list) and rects else None) or task.get("match_rect") or task.get("search_rect")
+        self._capture_sync_region_index(task)
+        region_rects = self._refresh_region_selector(task)
+        if 0 <= self._region_index < len(region_rects):
+            rect = region_rects[self._region_index]
         self.match_rect_edit.setText(", ".join(str(v) for v in rect[:4]) if isinstance(rect, (list, tuple)) and len(rect) >= 4 else "")
         self.next_template_edit.setText(str(task.get("next_template") or ""))
         wait_for = task.get("wait_for", "time")
@@ -3108,15 +3323,9 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
                 task.pop("click_x", None)
                 task.pop("click_y", None)
                 task.pop("click_position", None)
-            rect = self._parse_rect_text(self.match_rect_edit.text())
-            if rect is not None:
-                task["match_rect"] = rect
-                task["search_rect"] = rect
-                task["match_rects"] = [rect]
-            else:
-                task.pop("match_rect", None)
-                task.pop("search_rect", None)
-                task.pop("match_rects", None)
+            # 只更新"正在编辑的那一条"区域，其余区域原样保留
+            # （此前写死 match_rects=[rect]，会把多区域压成 1 条）
+            self._capture_apply_current_region(task)
             next_template = self.next_template_edit.text().strip()
             if next_template:
                 task["next_template"] = next_template
@@ -3643,6 +3852,9 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         self.completion_notified = False
         # 运行前 config 的快照，收尾时用它还原（见 _restore_config_after_run）
         self._saved_config = None
+        # 正在编辑的识别区域下标（一个步骤可以有多条区域）与它所属步骤的标识
+        self._region_index = 0
+        self._region_task_key = None
         self.capture_overlay = None
         self.blueprint_window = None
         self._hotkey = None
@@ -3900,6 +4112,11 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         self.region_bottom_edit = QLineEdit()
         self.region_center_x_edit = QLineEdit()
         self.region_center_y_edit = QLineEdit()
+        self.region_selector = QComboBox()
+        self.region_status_label = QLabel("未设置")
+        self.region_delete_button = QPushButton("删除本区域")
+        self.region_delete_button.clicked.connect(self.delete_current_region)
+        self.region_selector.currentIndexChanged.connect(self._on_region_selector_changed)
         self.next_template_edit = QLineEdit()
         self.wait_for_combo = QComboBox()
         self.wait_for_combo.addItems(["1. 画面结果变化", "2. 等待目标模板出现", "3. 画面变化后目标结果出现"])
@@ -3918,6 +4135,11 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         # X/Y 成对并排（此前 4 个坐标各占一行，输入框 529px 却只填一个短数字）
         add_coordinate_row("偏移:", self.offset_x_edit, self.offset_y_edit)
         add_coordinate_row("点击:", self.click_x_edit, self.click_y_edit)
+        # 一个步骤可以有多条识别区域（引擎逐条尝试），这一行用于查看/切换/删除
+        _add_region_selector_row(
+            recognition_layout, self.region_selector,
+            self.region_status_label, self.region_delete_button,
+        )
         add_coordinate_row("左上:", self.region_left_edit, self.region_top_edit)
         add_coordinate_row("右下:", self.region_right_edit, self.region_bottom_edit)
         add_coordinate_row("中心:", self.region_center_x_edit, self.region_center_y_edit)
@@ -4545,6 +4767,10 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         self.click_y_edit.setText(str(task.get("click_y", click_position[1] if isinstance(click_position, (list, tuple)) and len(click_position) >= 2 else "")))
         rects = task.get("match_rects")
         rect = (rects[0] if isinstance(rects, list) and rects else None) or task.get("match_rect") or task.get("search_rect")
+        self._capture_sync_region_index(task)
+        region_rects = self._refresh_region_selector(task)
+        if 0 <= self._region_index < len(region_rects):
+            rect = region_rects[self._region_index]
         region_values = list(rect[:4]) if isinstance(rect, (list, tuple)) and len(rect) >= 4 else ["", "", "", ""]
         self.region_left_edit.setText(str(region_values[0]))
         self.region_top_edit.setText(str(region_values[1]))
@@ -4835,8 +5061,9 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
             self.region_center_x_edit, self.region_center_y_edit,
         )
 
-    def _capture_show_region_widgets(self, rect):
+    def _capture_show_region_widgets(self, rect, index=0):
         """主窗口用 6 个可见输入框展示识别区域（中心取左上/右下的中点）。"""
+        self._region_index = index
         left, top, right, bottom = (int(value) for value in rect[:4])
         self.region_left_edit.setText(str(left))
         self.region_top_edit.setText(str(top))
@@ -4848,6 +5075,10 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
     def _capture_clear_region_widgets(self):
         for editor in self._region_widgets():
             editor.clear()
+
+    def _capture_region_entry_is_blank(self):
+        """主窗口的"全空"＝左上/右下四个框都没有内容（中心是算出来的，不参与判断）。"""
+        return all(not editor.text().strip() for editor in self._region_widgets()[:4])
 
     # ---------- 分组编辑钩子（组编辑的共享实现在 CaptureOverlayMixin 中）----------
 
@@ -5056,15 +5287,9 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
                     task.pop("click_x", None)
                     task.pop("click_y", None)
                     task.pop("click_position", None)
-                match_rect = self._current_match_rect()
-                if match_rect is not None:
-                    task["match_rect"] = match_rect
-                    task["search_rect"] = match_rect
-                    task["match_rects"] = [match_rect]
-                else:
-                    task.pop("match_rect", None)
-                    task.pop("search_rect", None)
-                    task.pop("match_rects", None)
+                # 只更新"正在编辑的那一条"区域，其余区域原样保留
+                # （此前写死 match_rects=[match_rect]，会把多区域压成 1 条）
+                self._capture_apply_current_region(task)
                 next_template = self.next_template_edit.text().strip()
                 if next_template:
                     task["next_template"] = next_template

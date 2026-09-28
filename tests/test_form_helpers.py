@@ -208,6 +208,9 @@ def canonical_field(label):
         return label.rstrip(":")
     if label in ("左上:", "右下:", "中心:") or label.startswith("识别区域"):
         return "<区域>"
+    if label.startswith("区域选择"):
+        # 「区域选择」下拉行（一个步骤可有多条识别区域）与区域输入行同属一组
+        return "<区域>"
     if label.startswith("下一模板"):
         return "下一模板"
     if label.startswith("等待方式"):

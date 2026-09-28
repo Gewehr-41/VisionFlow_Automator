@@ -158,6 +158,25 @@ class StaticMethodGuardTests(unittest.TestCase):
             blueprint.close()
 
 
+class PresetManagerSharingTests(unittest.TestCase):
+    """预设管理（8 个方法）必须由 preset_manager 提供，不得再抄回窗口类。"""
+
+    METHODS = ["_save_presets", "_refresh_mode_combo", "create_preset", "rename_current_preset",
+               "copy_current_preset", "delete_current_preset", "export_current_preset",
+               "import_preset"]
+
+    def test_preset_methods_come_from_the_manager_mixin(self):
+        import preset_manager
+
+        for name in self.METHODS:
+            with self.subTest(method=name):
+                self.assertNotIn(name, g.PySide6ScriptWindow.__dict__,
+                                 f"{name} 不该在窗口类里再定义一份")
+                self.assertIs(getattr(g.PySide6ScriptWindow, name),
+                              getattr(preset_manager.PresetManagerMixin, name),
+                              f"{name} 应由 PresetManagerMixin 提供")
+
+
 class DataIsolationSeamTests(unittest.TestCase):
     """元守卫：测试的数据隔离必须**同时**替换路径常量，不能只替换函数名。
 

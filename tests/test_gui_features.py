@@ -391,6 +391,166 @@ class GuiFeatureTests(unittest.TestCase):
         self.assertEqual(self.window.template_preview.maximumHeight(), 110)
 
 
+class BlueprintGroupHeaderTests(unittest.TestCase):
+    """蓝图组头显示的「组名 · N 步骤」。
+
+    这段能力一度被项目接手文档误记为"渲染分支不可达、组头永远不显示 info"——
+    实际构造点（refresh() 里建组框处）会传 info=f"{step_count} 步骤"，组头一直在
+    显示它。真正没用的是 set_info() 这个 0 调用点的 setter，已删除。
+    本测试锁住"能力确实在工作"与"setter 确实不在"两件事。
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._orig_presets_file = tasks.PRESETS_FILE
+        self._orig_tasks_file = tasks.TASKS_FILE
+        self._orig_save_presets = g.save_presets
+        self._orig_save_tasks = g.save_tasks
+        tasks.PRESETS_FILE = os.path.join(self._tmp.name, "saved_presets.json")
+        tasks.TASKS_FILE = os.path.join(self._tmp.name, "saved_tasks.json")
+        g.save_presets = tasks.save_presets
+        g.save_tasks = tasks.save_tasks
+        self.window = g.PySide6ScriptWindow()
+
+    def tearDown(self):
+        self.window.close()
+        tasks.PRESETS_FILE = self._orig_presets_file
+        tasks.TASKS_FILE = self._orig_tasks_file
+        g.save_presets = self._orig_save_presets
+        g.save_tasks = self._orig_save_tasks
+        self._tmp.cleanup()
+
+    def _tasks(self):
+        return [
+            {"id": "a", "type": "normal", "enabled": True, "description": "一",
+             "template": "t", "group_id": "gr"},
+            {"id": "b", "type": "normal", "enabled": True, "description": "二",
+             "template": "t", "group_id": "gr"},
+            {"id": "c", "type": "normal", "enabled": True, "description": "三",
+             "template": "t"},
+        ]
+
+    def _metadata(self):
+        return {
+            "names": {"gr": "外层"},
+            "colors": {"gr": "#eab308"},
+            "expanded": {},
+            "order": ["gr"],
+            "parents": {"gr": None},
+            "children": {"gr": []},
+        }
+
+    def _make(self, tasks=None, metadata=None):
+        blueprint = g.BlueprintWindow(
+            tasks if tasks is not None else self._tasks(),
+            {},
+            lambda *args, **kwargs: None,
+            metadata if metadata is not None else self._metadata(),
+            self.window,
+            {},
+        )
+        blueprint.refresh()
+        return blueprint
+
+    def _boxes_by_group(self, blueprint):
+        return {
+            item.group_id: item
+            for item in blueprint.scene.items()
+            if isinstance(item, g.BlueprintGroupItem)
+        }
+
+    # ---------- 能力仍然在工作 ----------
+
+    def test_group_header_carries_the_step_count(self):
+        blueprint = self._make()
+        try:
+            boxes = self._boxes_by_group(blueprint)
+            self.assertIn("gr", boxes, "组图元没有被创建")
+            self.assertEqual(boxes["gr"]._name, "外层")
+            self.assertEqual(boxes["gr"]._info, "2 步骤",
+                             "组头应当带上该组的步骤数")
+        finally:
+            blueprint.close()
+
+    def test_step_count_refreshes_after_adding_a_step(self):
+        blueprint = self._make()
+        try:
+            blueprint.tasks.append({"id": "d", "type": "normal", "enabled": True,
+                                    "description": "四", "template": "t", "group_id": "gr"})
+            blueprint.refresh()
+            self.assertEqual(self._boxes_by_group(blueprint)["gr"]._info, "3 步骤")
+        finally:
+            blueprint.close()
+
+    def test_constructor_stores_the_info_argument(self):
+        box = g.BlueprintGroupItem("g", (0, 0, 10, 10), [], name="组", info="5 步骤")
+        self.assertEqual(box._name, "组")
+        self.assertEqual(box._info, "5 步骤")
+
+    def test_painting_a_group_header_with_info_succeeds(self):
+        """真正走一遍 paint()：确认「组名 · N 步骤」那条分支能画出来。
+
+        只断言 _info 的值会与实现耦合，所以这里用 scene.render 让 paint 真正执行
+        （source 矩形取所有图元的包围盒，保证组头落在渲染范围内）。
+        """
+        from PySide6.QtCore import QRectF
+        from PySide6.QtGui import QImage, QPainter
+
+        blueprint = self._make()
+        try:
+            source = blueprint.scene.itemsBoundingRect()
+            self.assertFalse(source.isEmpty(), "场景里没有任何图元")
+            image = QImage(240, 180, QImage.Format.Format_ARGB32)
+            image.fill(0)
+            painter = QPainter(image)
+            try:
+                blueprint.scene.render(painter, QRectF(0, 0, 240, 180), source)
+            finally:
+                painter.end()
+        finally:
+            blueprint.close()
+
+    def test_info_text_actually_changes_what_is_painted(self):
+        """对比 info 有值/无值两次渲染的像素。
+
+        这条才真正验证"渲染分支可达且生效"：如果把 paint 里的
+        `text = self._name if not self._info else f"{self._name} · {self._info}"`
+        改成永远只画 `self._name`，两次渲染就会完全相同，本测试失败。
+        （只断言 `_info` 的值是抓不到这种回归的。）
+        """
+        with_info = self._render_group("9 步骤")
+        without_info = self._render_group("")
+        self.assertNotEqual(
+            bytes(with_info.constBits()), bytes(without_info.constBits()),
+            "info 没有影响绘制结果 —— 组头的「组名 · N 步骤」渲染分支失效了",
+        )
+
+    def _render_group(self, info):
+        from PySide6.QtCore import QRectF
+        from PySide6.QtGui import QImage, QPainter
+        from PySide6.QtWidgets import QGraphicsScene
+
+        box = g.BlueprintGroupItem("g", (0, 0, 160, 40), [], name="外层", info=info)
+        scene = QGraphicsScene()
+        scene.addItem(box)
+        image = QImage(200, 60, QImage.Format.Format_ARGB32)
+        image.fill(0)
+        painter = QPainter(image)
+        try:
+            scene.render(painter, QRectF(0, 0, 200, 60), QRectF(0, 0, 160, 40))
+        finally:
+            painter.end()
+        return image
+
+    # ---------- setter 确实已删除 ----------
+
+    def test_set_info_is_gone(self):
+        self.assertFalse(
+            hasattr(g.BlueprintGroupItem, "set_info"),
+            "set_info 是 0 调用点的冗余 setter；改步骤数请走 refresh()（组图元会重建）",
+        )
+
+
 class PreviewSuppressionTests(unittest.TestCase):
     """构建期标志在未设置时不应误伤（蓝图窗口等其它 QWidget 子类）。"""
 

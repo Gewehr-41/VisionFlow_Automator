@@ -1541,10 +1541,6 @@ class BlueprintGroupItem(QGraphicsRectItem):
     def set_move_callback(self, callback):
         self._move_callback = callback
 
-    def set_info(self, info):
-        self._info = info
-        self.update()
-
     def itemChange(self, change, value):
         if change == QGraphicsItem.GraphicsItemChange.ItemSelectedHasChanged:
             # 选中组时置顶，取消选中后回到节点之下

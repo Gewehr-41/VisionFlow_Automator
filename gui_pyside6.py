@@ -983,29 +983,16 @@ class CaptureOverlayMixin:
         description_edit = QLineEdit(str(detour_task.get("description", "")))
         form.addRow("描述:", description_edit)
 
-        # ── 普通/高级步骤专属：这 5 个键此前的对话框完全不显示 ──
+        # ── 普通/高级步骤专属：这些键此前的对话框完全不显示 ──
         # 引擎一直在读它们（main.execute_task 的 timeout / click_requires_match /
-        # optional / wait_for，以及每次点击用的 offset），而这份对话框两边的窗口
-        # 都用得到。字段顺序与两个窗口的步骤面板保持一致：超时 -> 偏移 -> 等待方式
-        # -> 两个复选框。只在普通/高级类型下显示并回写，避免给拖拽、按键等类型
-        # 塞进引擎根本不读的键。
+        # optional / wait_for），而这份对话框两边的窗口都用得到。字段顺序与两个
+        # 窗口的步骤面板保持一致：超时 -> 等待方式 -> 两个复选框。只在普通/高级
+        # 类型下显示并回写，避免给拖拽、按键等类型塞进引擎根本不读的键。
+        # （原来的「偏移」一行已于 2026-09-28 按所有者要求一并删除。）
         normal_group = QGroupBox("识别与点击（仅普通/高级步骤生效）")
         normal_form = QFormLayout(normal_group)
         timeout_edit = QLineEdit(str(detour_task.get("timeout", detour_task.get("wait_timeout", 5))))
         normal_form.addRow("超时(秒，0为不限制):", timeout_edit)
-        offset_value = detour_task.get("offset")
-        if not isinstance(offset_value, (list, tuple)) or len(offset_value) < 2:
-            offset_value = (0, 0)
-        offset_x_edit = QLineEdit(str(detour_task.get("offset_x", offset_value[0])))
-        offset_y_edit = QLineEdit(str(detour_task.get("offset_y", offset_value[1])))
-        offset_widget = QWidget()
-        offset_row = QHBoxLayout(offset_widget)
-        offset_row.setContentsMargins(0, 0, 0, 0)
-        offset_row.addWidget(QLabel("X"))
-        offset_row.addWidget(offset_x_edit, 1)
-        offset_row.addWidget(QLabel("Y"))
-        offset_row.addWidget(offset_y_edit, 1)
-        normal_form.addRow("偏移:", offset_widget)
         wait_for_combo = QComboBox()
         wait_for_combo.addItems(["1. 画面结果变化", "2. 等待目标模板出现", "3. 画面变化后目标结果出现"])
         saved_wait_for = str(detour_task.get("wait_for", "time"))
@@ -1190,9 +1177,6 @@ class CaptureOverlayMixin:
                 detour_task.pop("match_rects", None)
             if type_combo.currentText() in ("normal", "advanced"):
                 detour_task["timeout"] = self._float(timeout_edit.text(), detour_task.get("timeout", 5))
-                detour_task["offset_x"] = self._float(offset_x_edit.text(), 0.0)
-                detour_task["offset_y"] = self._float(offset_y_edit.text(), 0.0)
-                detour_task["offset"] = (detour_task["offset_x"], detour_task["offset_y"])
                 wait_mode = wait_for_combo.currentText()
                 detour_task["wait_for"] = (
                     "next_appear" if wait_mode.startswith("2")
@@ -2200,8 +2184,6 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
         self.threshold_edit = QLineEdit()
         self.timeout_edit = QLineEdit()
         self.after_wait_edit = QLineEdit()
-        self.offset_x_edit = QLineEdit()
-        self.offset_y_edit = QLineEdit()
         self.click_x_edit = QLineEdit()
         self.click_y_edit = QLineEdit()
         self.region_selector = QComboBox()
@@ -2225,7 +2207,7 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
         add_row("超时(秒):", self.timeout_edit)
         add_row("完成后等待(秒):", self.after_wait_edit)
         # X/Y 成对并排（此前 4 个坐标各占一行，输入框 529px 却只填一个短数字）
-        add_coordinate_row("偏移:", self.offset_x_edit, self.offset_y_edit)
+        # 「偏移」一行已于 2026-09-28 按所有者要求删除（与主窗口一致）。
         add_coordinate_row("点击:", self.click_x_edit, self.click_y_edit)
 
         # 「识别区域」组：一个步骤可以有多条区域（引擎逐条尝试）。
@@ -3084,9 +3066,6 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
         self.timeout_edit.setText(str(task.get("timeout", 5)))
         self.after_wait_edit.setText(str(task.get("after_wait", 0.25)))
         self.match_required_checkbox.setChecked(bool(task.get("click_requires_match", True)))
-        offset = task.get("offset", (0, 0))
-        self.offset_x_edit.setText(str(task.get("offset_x", offset[0] if isinstance(offset, (list, tuple)) else 0)))
-        self.offset_y_edit.setText(str(task.get("offset_y", offset[1] if isinstance(offset, (list, tuple)) else 0)))
         click_position = task.get("click_position")
         self.click_x_edit.setText(str(task.get("click_x", click_position[0] if isinstance(click_position, (list, tuple)) and len(click_position) >= 2 else "")))
         self.click_y_edit.setText(str(task.get("click_y", click_position[1] if isinstance(click_position, (list, tuple)) and len(click_position) >= 2 else "")))
@@ -3279,7 +3258,7 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
 
     def _clear_editor(self):
         self.selected_label.setText("未选择步骤")
-        for edit in (self.template_edit, self.description_edit, self.threshold_edit, self.timeout_edit, self.after_wait_edit, self.offset_x_edit, self.offset_y_edit, self.click_x_edit, self.click_y_edit, self.next_template_edit):
+        for edit in (self.template_edit, self.description_edit, self.threshold_edit, self.timeout_edit, self.after_wait_edit, self.click_x_edit, self.click_y_edit, self.next_template_edit):
             edit.clear()
         self.click_checkbox.setChecked(False)
         self.match_required_checkbox.setChecked(False)
@@ -3345,9 +3324,7 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
             task["click_requires_match"] = self.match_required_checkbox.isChecked()
             task["optional"] = self.optional_checkbox.isChecked()
             task["required"] = not task["optional"]
-            task["offset_x"] = self._float(self.offset_x_edit.text(), 0.0)
-            task["offset_y"] = self._float(self.offset_y_edit.text(), 0.0)
-            task["offset"] = (task["offset_x"], task["offset_y"])
+            # 「偏移」不再由界面回写：控件已删除（2026-09-28，与主窗口一致）。
             click_x = self._int(self.click_x_edit.text())
             click_y = self._int(self.click_y_edit.text())
             if click_x is not None and click_y is not None:
@@ -4140,8 +4117,6 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         self.click_checkbox = QCheckBox("执行点击")
         self.match_required_checkbox = QCheckBox("必须识别到图片再点击")
         self.optional_checkbox = QCheckBox("可选步骤（跳过）")
-        self.offset_x_edit = QLineEdit()
-        self.offset_y_edit = QLineEdit()
         self.click_x_edit = QLineEdit()
         self.click_y_edit = QLineEdit()
         self.region_selector = QComboBox()
@@ -4165,7 +4140,8 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         add_row("超时(秒，0为不限制):", self.timeout_edit)
         add_row("完成后等待(秒):", self.after_wait_edit)
         # X/Y 成对并排（此前 4 个坐标各占一行，输入框 529px 却只填一个短数字）
-        add_coordinate_row("偏移:", self.offset_x_edit, self.offset_y_edit)
+        # 「偏移」一行已于 2026-09-28 按所有者要求删除：界面不再提供偏移输入，
+        # 引擎仍读 task["offset"]（缺省 (0, 0)），已有数据里的值原样保留。
         add_coordinate_row("点击:", self.click_x_edit, self.click_y_edit)
 
         # 「识别区域」组：一个步骤可以有多条区域（引擎逐条尝试）。
@@ -4793,8 +4769,6 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         # 「可选步骤（跳过）」此前从不加载，导致界面显示与实际值不一致（切换步骤时残留上一步的勾选）。
         # 回写逻辑（_apply_editor）本来就读取该控件，这里补上加载。
         self.optional_checkbox.setChecked(bool(task.get("optional", not bool(task.get("required", True)))))
-        self.offset_x_edit.setText(str(task.get("offset_x", task.get("offset", (0, 0))[0] if isinstance(task.get("offset"), (list, tuple)) else 0)))
-        self.offset_y_edit.setText(str(task.get("offset_y", task.get("offset", (0, 0))[1] if isinstance(task.get("offset"), (list, tuple)) else 0)))
         click_position = task.get("click_position")
         self.click_x_edit.setText(str(task.get("click_x", click_position[0] if isinstance(click_position, (list, tuple)) and len(click_position) >= 2 else "")))
         self.click_y_edit.setText(str(task.get("click_y", click_position[1] if isinstance(click_position, (list, tuple)) and len(click_position) >= 2 else "")))
@@ -4900,8 +4874,6 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         self.match_required_checkbox.setChecked(False)
         self.optional_checkbox.setChecked(False)
         self.enabled_checkbox.setChecked(False)
-        self.offset_x_edit.clear()
-        self.offset_y_edit.clear()
         self.click_x_edit.clear()
         self.click_y_edit.clear()
         self.next_template_edit.clear()
@@ -5267,9 +5239,8 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
                 task["after_wait"] = self._float_value(self.after_wait_edit.text(), 0.25)
                 task["click"] = self.click_checkbox.isChecked()
                 task["click_requires_match"] = self.match_required_checkbox.isChecked()
-                task["offset_x"] = self._float_value(self.offset_x_edit.text(), 0.0)
-                task["offset_y"] = self._float_value(self.offset_y_edit.text(), 0.0)
-                task["offset"] = (task["offset_x"], task["offset_y"])
+                # 「偏移」不再由界面回写：控件已删除（2026-09-28），
+                # task["offset"] 保持数据里的原值，引擎缺省按 (0, 0) 使用。
                 click_x = self._int_value(self.click_x_edit.text())
                 click_y = self._int_value(self.click_y_edit.text())
                 if click_x is not None and click_y is not None:

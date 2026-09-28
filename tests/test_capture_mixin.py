@@ -665,7 +665,7 @@ class CaptureMixinContractTests(unittest.TestCase):
         self.assertTrue(seen.get("optional"))
         self.assertFalse(seen.get("match_required"))
 
-    def test_detour_dialog_saves_the_five_fields(self):
+    def test_detour_dialog_saves_the_four_fields(self):
         from PySide6.QtWidgets import QCheckBox, QComboBox, QLineEdit
 
         def prepare(dialog_self):
@@ -694,13 +694,16 @@ class CaptureMixinContractTests(unittest.TestCase):
         self.assertEqual(warnings, [])
         self.assertEqual(step["timeout"], 9.5)
         self.assertEqual(step["wait_for"], "next_appear")
-        self.assertEqual(step["offset"], (0.0, 0.0))
+        # 原来的「偏移」一行已按所有者要求删除，对话框不再碰 offset
+        self.assertEqual(step["offset"], [0, 0], "对话框不该改动 offset")
+        self.assertNotIn("offset_x", step)
+        self.assertNotIn("offset_y", step)
         self.assertTrue(step["optional"])
         self.assertFalse(step["required"], "required 必须跟着 optional 一起翻")
         self.assertTrue(step["click_requires_match"])
 
     def test_detour_dialog_hides_normal_only_fields_for_other_types(self):
-        """非普通/高级类型的子步骤不该显示、也不该被写入这 5 个键。"""
+        """非普通/高级类型的子步骤不该显示、也不该被写入这几个键。"""
         from PySide6.QtWidgets import QGroupBox
 
         visibility = []

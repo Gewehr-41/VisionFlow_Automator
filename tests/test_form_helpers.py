@@ -122,12 +122,11 @@ class WindowLayoutTests(unittest.TestCase):
     def _windows(self):
         return (("主窗口", self.main_window), ("蓝图窗口", self.blueprint))
 
-    def test_offset_and_click_fields_share_a_row_in_both_windows(self):
+    def test_click_fields_share_a_row_in_both_windows(self):
         for name, window in self._windows():
             layout = window.recognition_group.layout()
             with self.subTest(window=name):
                 for x_edit, y_edit, field in (
-                    (window.offset_x_edit, window.offset_y_edit, "偏移"),
                     (window.click_x_edit, window.click_y_edit, "点击"),
                 ):
                     x_row = find_row_layout_containing(layout, x_edit)
@@ -137,6 +136,24 @@ class WindowLayoutTests(unittest.TestCase):
                         x_row, y_row,
                         f"{name} 的{field} X/Y 应在同一行（否则 partial 绑定错了）",
                     )
+
+    def test_offset_row_is_gone_from_both_windows(self):
+        """「偏移」一行已按所有者要求删掉：两个窗口都不该再有它的控件。
+
+        引擎仍读 `task["offset"]`（缺省 (0, 0)），只是界面不再提供输入。
+        """
+        for name, window in self._windows():
+            with self.subTest(window=name):
+                layout = window.recognition_group.layout()
+                for attr in ("offset_x_edit", "offset_y_edit"):
+                    self.assertFalse(hasattr(window, attr), f"{name} 不该再有 {attr}")
+                labels = [
+                    layout.itemAt(i).widget().text()
+                    for i in range(layout.count())
+                    if layout.itemAt(i) is not None and layout.itemAt(i).widget() is not None
+                    and hasattr(layout.itemAt(i).widget(), "text")
+                ]
+                self.assertNotIn("偏移:", labels, f"{name} 不该再有「偏移」这一行")
 
     def test_region_group_has_no_coordinate_inputs(self):
         """识别区域不再提供手工坐标输入（区域只能靠框选产生）。"""
@@ -206,7 +223,7 @@ def canonical_field(label):
         return "超时"
     if label.startswith("完成后等待"):
         return "完成后等待"
-    if label in ("偏移:", "点击:"):
+    if label == "点击:":
         return label.rstrip(":")
     if label in ("左上:", "右下:", "中心:") or label.startswith("识别区域"):
         return "<区域>"
@@ -256,7 +273,7 @@ class FormOrderParityTests(unittest.TestCase):
     """
 
     EXPECTED = ["模板名", "匹配阈值", "超时", "完成后等待",
-                "偏移", "点击", "下一模板", "等待方式"]
+                "点击", "下一模板", "等待方式"]
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()

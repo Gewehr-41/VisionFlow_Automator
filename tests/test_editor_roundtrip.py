@@ -157,30 +157,43 @@ class EditorRoundTripTests(unittest.TestCase):
         self.window.load_selected_task(item, None)
         return task
 
-    def test_apply_writes_paired_offset_and_click(self):
+    def test_apply_writes_paired_click(self):
         task = self._load_first_task()
-        task["offset_x"], task["offset_y"] = 11.0, -22.0
-        task["offset"] = (11.0, -22.0)
         task["click_x"], task["click_y"] = 333, 444
         task["click_position"] = (333, 444)
         self.window.load_selected_task(self.window._find_task_item(0), None)
 
         # 显示格式走统一格式化，这里按数值比对而不是比对字面量
-        self.assertEqual(g._to_float(self.window.offset_x_edit.text(), None), 11.0)
-        self.assertEqual(g._to_float(self.window.offset_y_edit.text(), None), -22.0)
         self.assertEqual(g._to_int(self.window.click_x_edit.text()), 333)
         self.assertEqual(g._to_int(self.window.click_y_edit.text()), 444)
 
-        self.window.offset_x_edit.setText("7")
-        self.window.offset_y_edit.setText("8")
         self.window.click_x_edit.setText("99")
         self.window.click_y_edit.setText("100")
         self.window.apply_selected_task()
 
-        self.assertEqual(task["offset"], (7.0, 8.0))
-        self.assertEqual(task["offset_x"], 7.0)
-        self.assertEqual(task["offset_y"], 8.0)
         self.assertEqual(task["click_position"], (99, 100))
+
+    def test_offset_is_no_longer_edited_by_the_panel(self):
+        """「偏移」一行已按所有者要求从界面删除（2026-09-28）。
+
+        控件不存在，加载与回写也一并删掉：任务里的 offset 值**原样保留**，
+        「应用修改」不再碰它（引擎仍按缺省 (0, 0) 使用）。
+        """
+        task = self._load_first_task()
+        task["offset_x"], task["offset_y"] = 11.0, -22.0
+        task["offset"] = (11.0, -22.0)
+        self.window.load_selected_task(self.window._find_task_item(0), None)
+
+        self.assertFalse(hasattr(self.window, "offset_x_edit"), "偏移输入框应已删除")
+        self.assertFalse(hasattr(self.window, "offset_y_edit"), "偏移输入框应已删除")
+
+        self.window.description_edit.setText("改个描述")
+        self.window.apply_selected_task()
+
+        self.assertEqual(task["offset"], (11.0, -22.0), "「应用修改」不该改动 offset")
+        self.assertEqual(task["offset_x"], 11.0)
+        self.assertEqual(task["offset_y"], -22.0)
+        self.assertEqual(task["description"], "改个描述")
 
     def test_apply_clears_click_when_both_boxes_empty(self):
         task = self._load_first_task()
@@ -273,14 +286,19 @@ class EditorRoundTripTests(unittest.TestCase):
 
     # ---------- 蓝图窗口 ----------
 
-    def test_blueprint_apply_editor_writes_offset(self):
+    def test_blueprint_apply_editor_leaves_offset_alone(self):
+        """蓝图窗口的「偏移」一行也删了（2026-09-28），回写逻辑随之移除。
+
+        这条同时是原来那个"曾经在这里崩溃"的回归测试的替代：`_apply_editor`
+        仍必须能完整跑完并只写它真正拥有的字段。
+        """
         own_task = {
             "type": "normal",
             "template": "new_step",
             "description": "蓝图往返",
-            "offset_x": 0.0,
-            "offset_y": 0.0,
-            "offset": (0.0, 0.0),
+            "offset_x": 5.0,
+            "offset_y": 6.0,
+            "offset": (5.0, 6.0),
         }
         own_tasks = [own_task]
         # save_callback 传空实现，确保 save_layout() 不会写真实布局文件
@@ -288,16 +306,17 @@ class EditorRoundTripTests(unittest.TestCase):
         try:
             blueprint.current_index = 0
             blueprint._load_editor_for_task(own_task)
-            blueprint.offset_x_edit.setText("1")
-            blueprint.offset_y_edit.setText("2")
+            self.assertFalse(hasattr(blueprint, "offset_x_edit"), "蓝图窗口的偏移输入框应已删除")
+            self.assertFalse(hasattr(blueprint, "offset_y_edit"), "蓝图窗口的偏移输入框应已删除")
+            blueprint.description_edit.setText("蓝图往返已改")
             blueprint._apply_editor()  # 曾经在这里崩溃
         finally:
             blueprint.close()
 
-        self.assertEqual(own_task["offset"], (1.0, 2.0))
-        self.assertEqual(own_task["offset_x"], 1.0)
-        self.assertEqual(own_task["offset_y"], 2.0)
-        self.assertEqual(own_task["description"], "蓝图往返")
+        self.assertEqual(own_task["offset"], (5.0, 6.0), "_apply_editor 不该改动 offset")
+        self.assertEqual(own_task["offset_x"], 5.0)
+        self.assertEqual(own_task["offset_y"], 6.0)
+        self.assertEqual(own_task["description"], "蓝图往返已改")
 
     def test_blueprint_apply_editor_round_trips_special_fields(self):
         own_task = {"type": "key_press", "key": "W"}

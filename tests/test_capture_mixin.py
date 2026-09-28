@@ -789,9 +789,9 @@ class CaptureMixinContractTests(unittest.TestCase):
 
     # ---------- 多模板选择策略下拉（所有者 2026-09-28 决定）----------
 
-    def test_match_strategy_combo_sits_after_enabled_with_five_options(self):
-        """策略下拉必须紧跟在「启用步骤」之后，并提供 5 个选项、默认"置信度最高"。"""
-        from PySide6.QtWidgets import QFormLayout
+    def test_match_strategy_combo_sits_in_the_same_row_as_enabled(self):
+        """「多模板时」下拉必须与「启用步骤」在**同一栏**（且在它右侧），5 个选项、默认置信度最高。"""
+        from PySide6.QtWidgets import QLabel
 
         import main as engine
 
@@ -806,26 +806,19 @@ class CaptureMixinContractTests(unittest.TestCase):
                     )
                     self.assertEqual(combo.currentData(), "confidence", "默认应是置信度最高")
 
-                    layout = next(
-                        lay for lay in window.findChildren(QFormLayout)
-                        if any(
-                            (lay.itemAt(row, QFormLayout.FieldRole) or None) is not None
-                            and lay.itemAt(row, QFormLayout.FieldRole).widget() is window.enabled_checkbox
-                            for row in range(lay.rowCount())
-                        )
-                    )
-
-                    def row_of(widget):
-                        for row in range(layout.rowCount()):
-                            item = layout.itemAt(row, QFormLayout.FieldRole)
-                            if item is not None and item.widget() is widget:
-                                return row
-                        return None
-
-                    enabled_row = row_of(window.enabled_checkbox)
-                    strategy_row = row_of(combo)
-                    self.assertIsNotNone(strategy_row, "策略下拉应与「启用步骤」在同一张表单里")
-                    self.assertGreater(strategy_row, enabled_row, "策略下拉应排在「启用步骤」之后")
+                    # 同一栏：勾选框与下拉框必须挂在同一个容器里，且下拉在勾选框右侧
+                    container = window.enabled_checkbox.parentWidget()
+                    self.assertIsNotNone(container, "「启用步骤」应在一个行容器里")
+                    self.assertIs(combo.parentWidget(), container,
+                                  "「多模板时」下拉应与「启用步骤」同栏（同一行容器）")
+                    row_layout = container.layout()
+                    widgets = [row_layout.itemAt(i).widget() for i in range(row_layout.count())]
+                    texts = [w.text() for w in widgets if isinstance(w, QLabel)]
+                    self.assertIn("多模板时:", texts, "同一栏里应有「多模板时:」标签")
+                    index_of = {id(w): i for i, w in enumerate(widgets) if w is not None}
+                    self.assertIn(id(combo), index_of)
+                    self.assertLess(index_of[id(window.enabled_checkbox)], index_of[id(combo)],
+                                    "下拉框应排在「启用步骤」右侧")
         finally:
             blueprint.close()
 

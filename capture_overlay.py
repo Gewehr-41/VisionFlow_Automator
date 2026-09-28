@@ -1320,12 +1320,19 @@ class CaptureOverlayMixin:
         self.description_edit = QLineEdit()
         self.enabled_checkbox = QCheckBox("启用步骤")
         name_form.addRow("步骤名称:", self.description_edit)
-        name_form.addRow(labels["status"], self.enabled_checkbox)
-        # 绑定了多张候选模板时按哪种策略挑一张（选项取自引擎的单一来源）
+        # 「多模板时」与「启用状态」同一栏（所有者 2026-09-28 指定）：只有在绑了多张
+        # 候选模板时它才有意义，放在勾选框右边既醒目又不额外占一行。
+        # 选项取自引擎的单一来源 MATCH_STRATEGIES。
         self.match_strategy_combo = QComboBox()
         for strategy_key, strategy_label in MATCH_STRATEGIES:
             self.match_strategy_combo.addItem(strategy_label, strategy_key)
-        name_form.addRow("多模板时:", self.match_strategy_combo)
+        status_row = QWidget()
+        status_layout = QHBoxLayout(status_row)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        status_layout.addWidget(self.enabled_checkbox)
+        status_layout.addWidget(QLabel("多模板时:"))
+        status_layout.addWidget(self.match_strategy_combo, 1)
+        name_form.addRow(labels["status"], status_row)
         layout.addLayout(name_form)
 
         self.recognition_group = QWidget()

@@ -54,6 +54,7 @@ CONNECTION_OUTPUT_FIELDS = {
     "success": "detour_success_jump_to",
     "failure": "detour_jump_to",
     "timeout": "timeout_jump_to",
+    "wait_timeout": "wait_timeout_jump_to",
     "body": "loop_target",
     "exit": "loop_exit_target",
     "triggered": "event_trigger_target",
@@ -140,18 +141,21 @@ class NodeGraph:
 
     def to_payload(self):
         connections = []
-        for index, node in enumerate(self.nodes):
-            target_index = self.resolve_id(node.task.get("flow_next"))
-            if target_index is not None:
-                connections.append({"source": node.node_id, "output": "output", "target": self.nodes[target_index].node_id})
-            for key, output in (("condition_true_jump_to", "true"), ("condition_false_jump_to", "false"), ("detour_success_jump_to", "success"), ("detour_jump_to", "failure"), ("timeout_jump_to", "timeout")):
-                target_index = self.resolve_number(node.task.get(key))
-                if target_index is not None:
-                    connections.append({"source": node.node_id, "output": output, "target": self.nodes[target_index].node_id})
-            for key, output in (("loop_target", "body"), ("loop_exit_target", "exit"), ("event_trigger_target", "triggered")):
-                target_index = self.resolve_number(node.task.get(key))
-                if target_index is not None:
-                    connections.append({"source": node.node_id, "output": output, "target": self.nodes[target_index].node_id})
+        for node in self.nodes:
+            # 端口 → 字段只认 CONNECTION_OUTPUT_FIELDS 这一份，避免与
+            # from_payload / fill_missing_connections 漂移。
+            for output, field in CONNECTION_OUTPUT_FIELDS.items():
+                if field == "flow_next":
+                    target_index = self.resolve_id(node.task.get(field))
+                else:
+                    target_index = self.resolve_number(node.task.get(field))
+                if target_index is None:
+                    continue
+                connections.append({
+                    "source": node.node_id,
+                    "output": output,
+                    "target": self.nodes[target_index].node_id,
+                })
         return {
             "version": 1,
             "nodes": [{"id": node.node_id, "type": node.node_type, "task": deepcopy(node.task)} for node in self.nodes],
@@ -191,7 +195,8 @@ class NodeGraph:
             "detour_jump_to", "detour_success_jump_to",
             "condition_true_jump_to", "condition_false_jump_to",
             "switch_default_jump_to", "loop_target", "loop_exit_target",
-            "event_timeout_target", "timeout_jump_to",
+            "event_timeout_target", "event_trigger_target",
+            "timeout_jump_to", "wait_timeout_jump_to",
         ):
             target = self.resolve_number(task.get(key))
             if target is not None:

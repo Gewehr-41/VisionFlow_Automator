@@ -239,5 +239,64 @@ class FillMissingConnectionsTests(unittest.TestCase):
                 )
 
 
+class JumpFieldCoverageTests(unittest.TestCase):
+    """跳转字段的各个维护点必须覆盖同一批字段。
+
+    背景：`wait_timeout_jump_to` 曾被漏掉两处 —— 引擎（`main.py`）在读它、
+    `JUMP_TARGET_FIELDS` 也含它（所以重编号是对的），但 `outgoing_targets`
+    （校验与可达性）和 `CONNECTION_OUTPUT_FIELDS`（图数据）都没有它。
+    漏字段不会报错，只会让校验/图数据静默看不见这条跳转，所以这里用不变量锁住。
+    """
+
+    # 图数据目前**有意不表达**的两个字段：它们只属于所有者要求"暂不修改"的
+    # 节点类型（switch / event）。显式列在这里，是为了让缺口可见而不是被忘记。
+    GRAPH_NOT_EXPRESSED = {"switch_default_jump_to", "event_timeout_target"}
+
+    def test_outgoing_targets_covers_every_declared_jump_field(self):
+        for field in nodes.JUMP_TARGET_FIELDS:
+            with self.subTest(field=field):
+                tasks = [{"id": "a", "type": "normal"},
+                         {"id": "b", "type": "normal"},
+                         {"id": "c", "type": "normal"}]
+                tasks[0][field] = 3  # 指向第 3 步（下标 2）
+                graph = nodes.NodeGraph(tasks)
+                self.assertIn(
+                    2, graph.outgoing_targets(0),
+                    f"{field} 被 JUMP_TARGET_FIELDS 收录，却没被 outgoing_targets 计入",
+                )
+
+    def test_outgoing_targets_covers_flow_next_and_switch_cases(self):
+        tasks = [{"id": "a", "type": "normal"}, {"id": "b", "type": "normal"}]
+        tasks[0]["flow_next"] = "b"
+        self.assertIn(1, nodes.NodeGraph(tasks).outgoing_targets(0))
+
+        tasks = [{"id": "a", "type": "switch"}, {"id": "b", "type": "normal"}]
+        tasks[0]["switch_cases"] = {"case1": 2}
+        self.assertIn(1, nodes.NodeGraph(tasks).outgoing_targets(0))
+
+    def test_connection_ports_cover_all_graph_expressed_fields(self):
+        expected = (set(nodes.JUMP_TARGET_FIELDS) - self.GRAPH_NOT_EXPRESSED) | {"flow_next"}
+        self.assertEqual(
+            set(nodes.CONNECTION_OUTPUT_FIELDS.values()), expected,
+            "端口映射与 JUMP_TARGET_FIELDS 不再一致（新增/漏掉字段时请同步更新）",
+        )
+
+    def test_every_expressed_field_round_trips_through_the_graph(self):
+        for output, field in nodes.CONNECTION_OUTPUT_FIELDS.items():
+            with self.subTest(field=field):
+                tasks = [{"id": "a", "type": "normal"},
+                         {"id": "b", "type": "normal"},
+                         {"id": "c", "type": "normal"}]
+                tasks[0][field] = "c" if field == "flow_next" else 3
+                payload = nodes.NodeGraph(tasks).to_payload()
+                tasks[0].pop(field, None)
+                self.assertEqual(
+                    nodes.fill_missing_connections(tasks, payload), 1,
+                    f"{field}（端口 {output}）应能由图数据补回",
+                )
+                expected = "c" if field == "flow_next" else 3
+                self.assertEqual(tasks[0][field], expected)
+
+
 if __name__ == "__main__":
     unittest.main()

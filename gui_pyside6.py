@@ -8,6 +8,7 @@ import traceback
 import uuid
 import zipfile
 from copy import deepcopy
+from functools import partial
 
 os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.window=false")
 
@@ -112,6 +113,45 @@ def _first_available_template_pixmap(templates, limit=12):
         if pixmap is not None:
             return name, pixmap
     return (names[0] if names else None), None
+
+
+# ---------------------------------------------------------------------------
+# 表单行的共享构造器
+#
+# 两个窗口此前各自在 _build_ui 里定义了同名的局部闭包（add_row /
+# add_coordinate_row / add_click_until_row），三对函数体逐字节相同、只是闭包
+# 变量不同，共 6 份。抽到模块级后由 partial 绑定各自的布局，调用点不变。
+# ---------------------------------------------------------------------------
+
+
+def _add_form_row(layout, label, widget):
+    """一行「标签 + 控件」。"""
+    row = QHBoxLayout()
+    row.setContentsMargins(0, 0, 0, 0)
+    row.addWidget(QLabel(label), 0)
+    row.addWidget(widget, 1)
+    layout.addLayout(row)
+
+
+def _add_coordinate_row(layout, label, x_edit, y_edit):
+    """一行「标签 + X + Y」：两个短输入并排，避免每个数字独占一整行。"""
+    row = QHBoxLayout()
+    row.setContentsMargins(0, 0, 0, 0)
+    row.addWidget(QLabel(label), 0)
+    row.addWidget(QLabel("X"), 0)
+    row.addWidget(x_edit, 1)
+    row.addWidget(QLabel("Y"), 0)
+    row.addWidget(y_edit, 1)
+    layout.addLayout(row)
+
+
+def _add_click_until_row(layout, label, widget):
+    """持续点击设置区的一行「标签 + 控件」。"""
+    row = QHBoxLayout()
+    row.setContentsMargins(0, 0, 0, 0)
+    row.addWidget(QLabel(label), 0)
+    row.addWidget(widget, 1)
+    layout.addLayout(row)
 
 
 def _to_float(value, fallback):
@@ -489,7 +529,10 @@ class CaptureOverlayMixin:
         QTimer.singleShot(120, lambda: self._save_captured_image(left, top, right, bottom, callback))
 
     def _save_captured_image(self, left, top, right, bottom, callback=None):
-        icons_dir = os.path.join(os.path.dirname(__file__), "icons")
+        # 必须与加载侧用同一个目录：此前这里硬编码 <脚本目录>/icons，而模板加载
+        # 走 config.ICON_DIR —— 一旦 ICON_DIR 被改过，截图存到 A 而加载读 B，
+        # 新绑定的图片就会"存了却找不到"。
+        icons_dir = config.ICON_DIR
         os.makedirs(icons_dir, exist_ok=True)
         image_name = f"captured_{uuid.uuid4().hex[:10]}"
         image_path = os.path.join(icons_dir, f"{image_name}.png")
@@ -1921,23 +1964,9 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
         self.match_required_checkbox = QCheckBox("必须识别到图片再点击")
         self.optional_checkbox = QCheckBox("可选步骤（跳过）")
 
-        def add_row(label, widget):
-            row = QHBoxLayout()
-            row.setContentsMargins(0, 0, 0, 0)
-            row.addWidget(QLabel(label), 0)
-            row.addWidget(widget, 1)
-            recognition_layout.addLayout(row)
+        add_row = partial(_add_form_row, recognition_layout)
 
-        def add_coordinate_row(label, x_edit, y_edit):
-            """把 X/Y 两个短输入并排放在同一行，避免每个数字独占一整行。"""
-            row = QHBoxLayout()
-            row.setContentsMargins(0, 0, 0, 0)
-            row.addWidget(QLabel(label), 0)
-            row.addWidget(QLabel("X"), 0)
-            row.addWidget(x_edit, 1)
-            row.addWidget(QLabel("Y"), 0)
-            row.addWidget(y_edit, 1)
-            recognition_layout.addLayout(row)
+        add_coordinate_row = partial(_add_coordinate_row, recognition_layout)
 
         add_row("模板名:", self.template_edit)
         add_row("匹配阈值:", self.threshold_edit)
@@ -1992,12 +2021,7 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
         self.click_until_continue_checkbox = QCheckBox("超时后继续执行")
         self.click_until_stop_on_change_checkbox = QCheckBox("画面变化视为成功")
 
-        def add_click_until_row(label, widget):
-            row = QHBoxLayout()
-            row.setContentsMargins(0, 0, 0, 0)
-            row.addWidget(QLabel(label), 0)
-            row.addWidget(widget, 1)
-            click_until_layout.addLayout(row)
+        add_click_until_row = partial(_add_click_until_row, click_until_layout)
 
         add_click_until_row("模板名(逗号分隔):", self.click_until_template_edit)
         add_click_until_row("点击间隔(秒):", self.click_until_interval_edit)
@@ -3597,6 +3621,8 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         self.worker_thread = None
         self.worker = None
         self.completion_notified = False
+        # 运行前 config 的快照，收尾时用它还原（见 _restore_config_after_run）
+        self._saved_config = None
         self.capture_overlay = None
         self.blueprint_window = None
         self._hotkey = None
@@ -3826,12 +3852,7 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         self.click_until_continue_checkbox = QCheckBox("超时后继续执行")
         self.click_until_stop_on_change_checkbox = QCheckBox("画面变化视为成功")
 
-        def add_click_until_row(label, widget):
-            row = QHBoxLayout()
-            row.setContentsMargins(0, 0, 0, 0)
-            row.addWidget(QLabel(label), 0)
-            row.addWidget(widget, 1)
-            click_until_layout.addLayout(row)
+        add_click_until_row = partial(_add_click_until_row, click_until_layout)
 
         add_click_until_row("模板名(逗号分隔):", self.click_until_template_edit)
         add_click_until_row("点击间隔(秒):", self.click_until_interval_edit)
@@ -3864,23 +3885,9 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         self.wait_for_combo = QComboBox()
         self.wait_for_combo.addItems(["1. 画面结果变化", "2. 等待目标模板出现", "3. 画面变化后目标结果出现"])
 
-        def add_row(label, widget):
-            row = QHBoxLayout()
-            row.setContentsMargins(0, 0, 0, 0)
-            row.addWidget(QLabel(label), 0)
-            row.addWidget(widget, 1)
-            recognition_layout.addLayout(row)
+        add_row = partial(_add_form_row, recognition_layout)
 
-        def add_coordinate_row(label, x_edit, y_edit):
-            """把 X/Y 两个短输入并排放在同一行，避免每个数字独占一整行。"""
-            row = QHBoxLayout()
-            row.setContentsMargins(0, 0, 0, 0)
-            row.addWidget(QLabel(label), 0)
-            row.addWidget(QLabel("X"), 0)
-            row.addWidget(x_edit, 1)
-            row.addWidget(QLabel("Y"), 0)
-            row.addWidget(y_edit, 1)
-            recognition_layout.addLayout(row)
+        add_coordinate_row = partial(_add_coordinate_row, recognition_layout)
 
         add_row("模板名:", self.template_edit)
         # X/Y 成对并排（此前 4 个坐标各占一行，输入框 529px 却只填一个短数字）
@@ -3970,6 +3977,9 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         content_splitter.setSizes([650, 170])
         root_layout.addWidget(content_splitter, 1)
 
+        # 这两个 SVG 是**程序自带的界面资源**（复选框指示器），不是用户模板。
+        # 它们有意固定在 <脚本目录>/icons，不跟随 config.ICON_DIR —— 用户把
+        # ICON_DIR 指向自己的模板目录时，界面样式仍应正常。
         checked_indicator = os.path.join(os.path.dirname(__file__), "icons", "checkbox_checked.svg").replace("\\", "/")
         indeterminate_indicator = os.path.join(os.path.dirname(__file__), "icons", "checkbox_indeterminate.svg").replace("\\", "/")
         self.setStyleSheet(
@@ -5225,6 +5235,11 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         if self.blueprint_window is not None:
             self.blueprint_window.reset_execution_states()
         window_title = self.window_combo.currentText().strip()
+        # 运行期改写 config 是为了让引擎按指定窗口识别；但这两个字段是模块级
+        # 全局，此前改完就不管了 —— 脚本停止后 config 仍指向上次的目标窗口，
+        # 影响所有在此之后读取它的代码。这里记下原值，收尾时还原
+        # （见 _restore_config_after_run，正常运行/异常/停止都会经过）。
+        self._saved_config = (config.TARGET_WINDOW_TITLE, config.USE_WINDOW_MODE)
         config.TARGET_WINDOW_TITLE = window_title or None
         config.USE_WINDOW_MODE = bool(window_title)
         self.stop_event.clear()
@@ -5355,8 +5370,21 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
             QMessageBox.information(self, "脚本执行完成", "所有步骤已完成，脚本已停止运行。")
 
     @Slot()
+    def _restore_config_after_run(self):
+        """还原 _start_worker 改写的 config 字段。
+
+        正常结束、脚本异常、用户点停止都会走到 on_worker_finished，所以它是
+        唯一的收尾点。没有运行过的窗口调用它是安全的（_saved_config 为 None）。
+        """
+        saved = getattr(self, "_saved_config", None)
+        if saved is None:
+            return
+        config.TARGET_WINDOW_TITLE, config.USE_WINDOW_MODE = saved
+        self._saved_config = None
+
     def on_worker_finished(self):
         self._set_running_state(False)
+        self._restore_config_after_run()
         self.pause_button.setText("暂停")
         if self.stop_event.is_set():
             self.status_text = "已停止"

@@ -196,75 +196,27 @@ class EditorRoundTripTests(unittest.TestCase):
         self.assertNotIn("click_x", task)
         self.assertNotIn("click_y", task)
 
-    def test_apply_round_trips_match_rect(self):
-        task = self._load_first_task()
-        # 主窗口的区域来源是可见的 4 个输入框（此前测试写的是一个从未进布局的
-        # 隐形 match_rect_edit —— 那条断言在无意中给隐形控件上了锁）
-        for editor, value in ((self.window.region_left_edit, "10"),
-                              (self.window.region_top_edit, "20"),
-                              (self.window.region_right_edit, "30"),
-                              (self.window.region_bottom_edit, "40")):
-            editor.setText(value)
-        self.window.apply_selected_task()
+    def test_apply_does_not_touch_the_recognition_regions(self):
+        """识别区域不再由「应用修改」写回。
 
-        self.assertEqual(task["match_rect"], (10, 20, 30, 40))
-        self.assertEqual(task["search_rect"], (10, 20, 30, 40))
-        self.assertEqual(task["match_rects"], [(10, 20, 30, 40)])
-
-    def test_apply_clears_region_when_boxes_are_empty(self):
-        task = self._load_first_task()
-        task["match_rect"] = (10, 20, 30, 40)
-        task["search_rect"] = (10, 20, 30, 40)
-        task["match_rects"] = [(10, 20, 30, 40)]
-        self.window.load_selected_task(self.window._find_task_item(0), None)
-
-        for editor in (self.window.region_left_edit, self.window.region_top_edit,
-                       self.window.region_right_edit, self.window.region_bottom_edit):
-            editor.clear()
-        self.window.apply_selected_task()
-
-        self.assertNotIn("match_rect", task)
-        self.assertNotIn("search_rect", task)
-        self.assertNotIn("match_rects", task)
-
-    def test_apply_keeps_the_region_when_boxes_are_incomplete(self):
-        """4 框填一半时不改动该区域。
-
-        此前这里会读一个**不可见的** match_rect_edit 把旧值悄悄写回（用户的输入被
-        静默忽略）；短暂的一版实现又改成"删除该区域"。现在的规则是：填一半属于
-        打错字，什么都不改，并在日志里说明。
+        区域**只能靠框选产生**（`finish_region_capture` 直接写任务并立即落盘），
+        界面也不再提供手工输入坐标的控件。所以「应用修改」必须让区域字段原封不动
+        —— 此前它写死 `match_rects = [match_rect]`，会把多条区域压成 1 条。
         """
         task = self._load_first_task()
+        task["match_rects"] = [(10, 20, 30, 40), (50, 60, 70, 80)]
         task["match_rect"] = (10, 20, 30, 40)
         task["search_rect"] = (10, 20, 30, 40)
-        task["match_rects"] = [(10, 20, 30, 40)]
         self.window.load_selected_task(self.window._find_task_item(0), None)
 
-        self.window.region_right_edit.clear()
-        self.window.region_bottom_edit.clear()
+        self.window.description_edit.setText("改个描述")
         self.window.apply_selected_task()
 
-        self.assertEqual(task["match_rect"], (10, 20, 30, 40), "填一半不该丢掉区域")
-        self.assertEqual(task["match_rects"], [(10, 20, 30, 40)])
-        self.assertIn("未修改该区域", self.window.log_box.toPlainText())
+        self.assertEqual(task["match_rects"], [(10, 20, 30, 40), (50, 60, 70, 80)],
+                         "「应用修改」不该改动识别区域")
+        self.assertEqual(task["search_rect"], (10, 20, 30, 40))
+        self.assertEqual(task["description"], "改个描述")
 
-    def test_apply_keeps_the_region_when_the_rect_is_inverted(self):
-        """右下小于左上（退化矩形）同样不改动该区域，只提示。"""
-        task = self._load_first_task()
-        task["match_rect"] = (10, 20, 30, 40)
-        task["search_rect"] = (10, 20, 30, 40)
-        task["match_rects"] = [(10, 20, 30, 40)]
-        self.window.load_selected_task(self.window._find_task_item(0), None)
-
-        for editor, value in ((self.window.region_left_edit, "300"),
-                              (self.window.region_top_edit, "20"),
-                              (self.window.region_right_edit, "100"),
-                              (self.window.region_bottom_edit, "40")):
-            editor.setText(value)
-        self.window.apply_selected_task()
-
-        self.assertEqual(task["match_rect"], (10, 20, 30, 40), "退化矩形不该丢掉区域")
-        self.assertIn("未修改该区域", self.window.log_box.toPlainText())
 
     def test_main_window_has_no_hidden_match_rect_widget(self):
         """主窗口不该再有那个从未进布局的隐形 match_rect_edit。"""

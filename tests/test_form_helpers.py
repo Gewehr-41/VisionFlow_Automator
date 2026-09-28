@@ -138,18 +138,19 @@ class WindowLayoutTests(unittest.TestCase):
                         f"{name} 的{field} X/Y 应在同一行（否则 partial 绑定错了）",
                     )
 
-    def test_region_fields_share_a_row_in_main_window(self):
-        # 区域行已移入独立的「识别区域」组（对 click_until_gone 也可见）
-        layout = self.main_window.region_group.layout()
-        for x_edit, y_edit, field in (
-            (self.main_window.region_left_edit, self.main_window.region_top_edit, "左上"),
-            (self.main_window.region_right_edit, self.main_window.region_bottom_edit, "右下"),
-            (self.main_window.region_center_x_edit, self.main_window.region_center_y_edit, "中心"),
-        ):
-            with self.subTest(field=field):
-                x_row = find_row_layout_containing(layout, x_edit)
-                self.assertIsNotNone(x_row, f"{field} 没进任何行布局")
-                self.assertIs(x_row, find_row_layout_containing(layout, y_edit))
+    def test_region_group_has_no_coordinate_inputs(self):
+        """识别区域不再提供手工坐标输入（区域只能靠框选产生）。"""
+        for name, window in self._windows():
+            with self.subTest(window=name):
+                layout = window.region_group.layout()
+                for attr in ("region_left_edit", "region_top_edit", "region_right_edit",
+                             "region_bottom_edit", "region_center_x_edit", "region_center_y_edit",
+                             "match_rect_edit"):
+                    self.assertFalse(hasattr(window, attr),
+                                     f"{name} 不该再有 {attr}（手工坐标输入已移除）")
+                self.assertIsNotNone(
+                    find_row_layout_containing(layout, window.region_selector),
+                    f"{name} 的区域选择器不在识别区域组里")
 
     def test_template_name_field_is_laid_out_in_both_windows(self):
         for name, window in self._windows():
@@ -319,48 +320,31 @@ class RegionDisplayWidgetTests(unittest.TestCase):
         g.save_tasks = self._orig_save_tasks
         self._tmp.cleanup()
 
-    def test_main_window_has_no_hidden_match_rect_widget(self):
-        """那个从未进布局、isWindow()=True 的隐形控件必须已经不存在。"""
-        self.assertFalse(hasattr(self.main_window, "match_rect_edit"))
-
-    def test_blueprint_keeps_its_visible_match_rect_widget(self):
-        # 识别区域文本框现在挂在独立的「识别区域」组里
-        layout = self.blueprint.region_group.layout()
-        self.assertIsNotNone(
-            find_row_layout_containing(layout, self.blueprint.match_rect_edit),
-            "蓝图窗口的识别区域文本框应当是可见控件",
-        )
-        self.assertFalse(self.blueprint.match_rect_edit.isWindow())
-
-    def test_main_window_show_region_widgets_fills_six_boxes(self):
-        self.main_window._capture_show_region_widgets((10, 20, 300, 400))
-        self.assertEqual(
-            [self.main_window.region_left_edit.text(), self.main_window.region_top_edit.text(),
-             self.main_window.region_right_edit.text(), self.main_window.region_bottom_edit.text(),
-             self.main_window.region_center_x_edit.text(), self.main_window.region_center_y_edit.text()],
-            ["10", "20", "300", "400", "155", "210"],
-        )
-
-    def test_main_window_clear_region_widgets_empties_six_boxes(self):
-        self.main_window._capture_show_region_widgets((10, 20, 300, 400))
-        self.main_window._capture_clear_region_widgets()
-        for editor in self.main_window._region_widgets():
-            self.assertEqual(editor.text(), "")
-
-    def test_blueprint_show_region_widgets_writes_text_field(self):
-        self.blueprint._capture_show_region_widgets((10, 20, 300, 400))
-        self.assertEqual(self.blueprint.match_rect_edit.text(), "10, 20, 300, 400")
-
-    def test_blueprint_clear_region_widgets_empties_text_field(self):
-        self.blueprint._capture_show_region_widgets((10, 20, 300, 400))
-        self.blueprint._capture_clear_region_widgets()
-        self.assertEqual(self.blueprint.match_rect_edit.text(), "")
-
-    def test_region_display_hooks_exist_on_both_windows(self):
+    def test_no_region_coordinate_input_exists_in_either_window(self):
+        """两个窗口都不该再有区域坐标输入控件（区域只能靠框选产生）。"""
         for name, window in (("主窗口", self.main_window), ("蓝图窗口", self.blueprint)):
             with self.subTest(window=name):
-                self.assertTrue(callable(getattr(window, "_capture_show_region_widgets", None)))
-                self.assertTrue(callable(getattr(window, "_capture_clear_region_widgets", None)))
+                for attr in ("match_rect_edit", "region_left_edit", "region_top_edit",
+                             "region_right_edit", "region_bottom_edit",
+                             "region_center_x_edit", "region_center_y_edit"):
+                    self.assertFalse(hasattr(window, attr), f"{name} 仍存在 {attr}")
+
+    def test_region_selector_and_delete_button_exist(self):
+        for name, window in (("主窗口", self.main_window), ("蓝图窗口", self.blueprint)):
+            with self.subTest(window=name):
+                self.assertTrue(hasattr(window, "region_selector"))
+                self.assertTrue(hasattr(window, "region_delete_button"))
+                self.assertTrue(hasattr(window, "region_status_label"))
+
+    def test_region_display_hooks_are_gone(self):
+        """那两个只为"更新输入框"而存在的钩子应当一并移除。"""
+        for name, window in (("主窗口", self.main_window), ("蓝图窗口", self.blueprint)):
+            with self.subTest(window=name):
+                for hook in ("_capture_show_region_widgets",
+                             "_capture_clear_region_widgets",
+                             "_capture_apply_current_region",
+                             "_current_match_rect"):
+                    self.assertFalse(hasattr(window, hook), f"{name} 仍有 {hook}")
 
 
 class RegionGroupOrderTests(unittest.TestCase):
@@ -400,30 +384,12 @@ class RegionGroupOrderTests(unittest.TestCase):
                 self.assertTrue(hasattr(window, "region_group"), f"{name} 没有 region_group")
                 self.assertIsNotNone(window.region_group.layout())
 
-    def test_region_inputs_are_not_in_the_recognition_group(self):
-        """区域输入控件不该再留在 recognition_group 里（那正是旧 bug 的来源）。"""
-        main_recognition = self.main_window.recognition_group.layout()
-        for widget in (self.main_window.region_left_edit, self.main_window.region_top_edit,
-                       self.main_window.region_right_edit, self.main_window.region_bottom_edit):
-            self.assertIsNone(
-                find_row_layout_containing(main_recognition, widget),
-                "主窗口的区域输入框仍留在识别设置组里",
-            )
-        blueprint_recognition = self.blueprint.recognition_group.layout()
-        self.assertIsNone(
-            find_row_layout_containing(blueprint_recognition, self.blueprint.match_rect_edit),
-            "蓝图窗口的区域文本框仍留在识别设置组里",
-        )
-
-    def test_region_inputs_are_in_the_region_group(self):
-        main_region = self.main_window.region_group.layout()
-        for widget in (self.main_window.region_left_edit, self.main_window.region_top_edit,
-                       self.main_window.region_right_edit, self.main_window.region_bottom_edit,
-                       self.main_window.region_center_x_edit, self.main_window.region_center_y_edit):
-            self.assertIsNotNone(find_row_layout_containing(main_region, widget))
-        blueprint_region = self.blueprint.region_group.layout()
-        self.assertIsNotNone(
-            find_row_layout_containing(blueprint_region, self.blueprint.match_rect_edit))
+    def test_recognition_group_has_no_region_row(self):
+        """识别设置组里不该再有"识别区域"这一行（那正是旧 bug 的来源）。"""
+        for name, window in (("主窗口", self.main_window), ("蓝图窗口", self.blueprint)):
+            with self.subTest(window=name):
+                fields = canonical_field_order(window.recognition_group)
+                self.assertNotIn("<区域>", fields, f"{name} 的识别设置组里还有区域行")
 
     def test_selector_row_is_in_the_region_group_in_both_windows(self):
         for name, window in (("主窗口", self.main_window), ("蓝图窗口", self.blueprint)):

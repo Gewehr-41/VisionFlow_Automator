@@ -1392,11 +1392,16 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         expanded[group_id] = state
         self._save_presets()
 
-    def _rebuild_special_form(self, task):
-        """主窗口多一步：整组「类型专用字段」的显隐（蓝图窗口没有这个 GroupBox）。"""
-        super()._rebuild_special_form(task)
-        self.special_group.setVisible(bool(self.special_edits)
-                                      and str(task.get("type", "normal")) != "click_until_gone")
+    def _rebuild_special_form(self, task, form=None):
+        """主窗口多一步：整组「类型专用字段」的显隐（蓝图窗口没有这个 GroupBox）。
+
+        `form` 非空表示调用方只是借用同一份规格在别处摆字段（例如迂回子步骤对话框），
+        此时不去动本窗口的 GroupBox。
+        """
+        super()._rebuild_special_form(task, form)
+        if form is None:
+            self.special_group.setVisible(bool(self.special_edits)
+                                          and str(task.get("type", "normal")) != "click_until_gone")
 
     def _special_field_specs(self, task):
         """主窗口的类型专用字段表。

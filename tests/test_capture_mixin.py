@@ -661,35 +661,180 @@ class CaptureMixinContractTests(unittest.TestCase):
         finally:
             blueprint.close()
 
-    def test_detour_dialog_shows_region_without_brackets(self):
-        from PySide6.QtWidgets import QLineEdit
+    def test_detour_dialog_shows_region_in_the_selector_without_brackets(self):
+        """区域在"区域选择"里显示成 `30, 28, 89, 81`（不带方括号），与主界面一致。"""
+        from PySide6.QtWidgets import QComboBox
 
         shown = []
 
         def prepare(dialog_self):
-            for box in dialog_self.findChildren(QLineEdit):
-                if box.text().count(",") == 3:
-                    shown.append(box.text())
+            for combo in dialog_self.findChildren(QComboBox):
+                for index in range(combo.count()):
+                    text = combo.itemText(index)
+                    if text.count(",") == 3:
+                        shown.append(text)
 
         self._drive_detour_dialog(self.window, {"type": "normal", "match_rect": [30, 28, 89, 81]},
-                                 prepare=prepare)
+                                  prepare=prepare)
 
-        self.assertEqual(shown, ["30, 28, 89, 81"], "区域应显示成可再次解析的 4 个数字")
+        self.assertEqual(shown, ["30, 28, 89, 81"], "区域应显示成可核对、可再解析的 4 个数字")
 
-    def test_detour_dialog_refuses_invalid_region_and_keeps_it(self):
-        from PySide6.QtWidgets import QLineEdit
+    # ---------- 迂回子步骤对话框：字段与主界面同类型面板一致（所有者 2026-09-28 要求）----------
+
+    @staticmethod
+    def _dialog_field(dialog, label_text):
+        """按 QFormLayout 的行标签取字段控件（嵌套行返回该行的容器控件）。"""
+        from PySide6.QtWidgets import QFormLayout
+
+        for layout in dialog.findChildren(QFormLayout):
+            for row in range(layout.rowCount()):
+                label_item = layout.itemAt(row, QFormLayout.LabelRole)
+                field_item = layout.itemAt(row, QFormLayout.FieldRole)
+                if label_item is None or field_item is None:
+                    continue
+                label_widget = label_item.widget()
+                if label_widget is not None and label_widget.text().strip() == label_text:
+                    return field_item.widget()
+        return None
+
+    @staticmethod
+    def _field_labels(widget):
+        from PySide6.QtWidgets import QCheckBox, QLabel
+
+        labels = {child.text().strip() for child in widget.findChildren(QLabel) if child.text().strip()}
+        labels |= {child.text().strip() for child in widget.findChildren(QCheckBox) if child.text().strip()}
+        return labels
+
+    def test_detour_dialog_covers_every_main_editor_field_label(self):
+        """主界面同类型步骤面板里的**字段标签**，子步骤对话框必须一个不少。
+
+        这是 ③ 的守卫：对话框不再自己手写一套字段，而是要覆盖主界面的字段集。
+        只比字段标签（QLabel / QCheckBox），不比：
+          · 按钮（「应用修改 / 迂回 / 保存」各界面自己的动作）；
+          · 组设置（组名称 / 组颜色 / 应用组设置）——那是"组"的属性，不是步骤类型的字段；
+          · 「启用步骤」——引擎执行迂回子步骤时**不看 enabled**，对话框刻意不提供，
+            免得给用户一个不起作用的勾选框。
+        """
+        main_window = self.window
+        for step_type in ("normal", "advanced", "click_until_gone",
+                          "key_press", "keyboard_move", "drag", "delay"):
+            with self.subTest(type=step_type):
+                main_window._rebuild_special_form({"type": step_type})
+                expected = set()
+                for group in (main_window.recognition_group, main_window.region_group,
+                              main_window.click_until_group, main_window.special_group):
+                    expected |= self._field_labels(group)
+                expected -= {"启用步骤", "未选择步骤", "未设置"}
+
+                captured = []
+                self._drive_detour_dialog(
+                    main_window, {"type": step_type},
+                    prepare=lambda dlg: captured.append(self._field_labels(dlg)),
+                )
+                missing = expected - captured[0]
+                self.assertEqual(missing, set(), f"{step_type}: 对话框缺少这些字段 {sorted(missing)}")
+
+    def test_detour_dialog_uses_the_shared_special_field_specs(self):
+        """类型专用字段走主界面**同一份规格**（key_press 的 4 个字段都能在对话框里改）。"""
+        spec = self.window._special_field_specs({"type": "key_press"})
+        self.assertTrue(spec, "前置：key_press 应有类型专用字段")
+        label_of = {key: label + ":" for key, label, _kind in spec}
 
         def prepare(dialog_self):
-            for box in dialog_self.findChildren(QLineEdit):
-                if box.text().count(",") == 3:
-                    box.setText("乱七八糟")
+            self._dialog_field(dialog_self, label_of["key"]).setText("F")
+            self._dialog_field(dialog_self, label_of["hold_time"]).setText("0.25")
 
-        step = {"type": "normal", "description": "退出茶吧", "match_rect": [30, 28, 89, 81]}
+        step = {"type": "key_press", "template": "F"}
         accepted, warnings = self._drive_detour_dialog(self.window, step, prepare=prepare)
 
-        self.assertFalse(accepted, "区域解析不了时不应关闭对话框")
-        self.assertEqual(len(warnings), 1, "应弹出一次明确提示")
-        self.assertEqual(step["match_rect"], [30, 28, 89, 81], "非法输入绝不能把已有区域删掉")
+        self.assertTrue(accepted)
+        self.assertEqual(warnings, [])
+        self.assertEqual(step["key"], "F")
+        self.assertEqual(step["hold_time"], 0.25)
+
+    def test_detour_dialog_round_trips_the_fields_the_main_editor_has(self):
+        """补齐的字段确实读写：阈值 / 完成后等待 / 执行点击 / 下一模板；清空点击点生效。"""
+        from PySide6.QtWidgets import QCheckBox, QLineEdit
+
+        def prepare(dialog_self):
+            self._dialog_field(dialog_self, "匹配阈值(0-1):").setText("0.66")
+            self._dialog_field(dialog_self, "完成后等待(秒):").setText("1.5")
+            next_row = self._dialog_field(dialog_self, "下一模板:")
+            next_row.findChildren(QLineEdit)[0].setText("auto")
+            click_row = self._dialog_field(dialog_self, "点击:")
+            for box in click_row.findChildren(QLineEdit):
+                box.setText("")
+            for box in dialog_self.findChildren(QCheckBox):
+                if box.text() == "执行点击":
+                    box.setChecked(False)
+
+        step = {
+            "type": "normal", "template": "t",
+            "next_match_rect": [1, 2, 3, 4],
+            "click_x": 11, "click_y": 22, "click_position": [11, 22],
+        }
+        accepted, warnings = self._drive_detour_dialog(self.window, step, prepare=prepare)
+
+        self.assertTrue(accepted)
+        self.assertEqual(warnings, [])
+        self.assertEqual(step["threshold"], 0.66)
+        self.assertEqual(step["after_wait"], 1.5)
+        self.assertFalse(step["click"])
+        self.assertEqual(step["next_template"], "auto")
+        self.assertEqual(step["next_templates"], ["auto"])
+        self.assertEqual(step["next_match_rect"], (1, 2, 3, 4),
+                         "「框选出现位置」的结果不能在保存时被丢掉")
+        for key in ("click_x", "click_y", "click_position"):
+            self.assertNotIn(key, step, "「清空点击点」后三个键都要消失")
+
+    def test_detour_dialog_writes_click_until_settings(self):
+        """click_until_gone 子步骤的「持续点击设置」与主界面写同样的键。"""
+        from PySide6.QtWidgets import QCheckBox
+
+        def prepare(dialog_self):
+            self._dialog_field(dialog_self, "点击间隔(秒):").setText("0.8")
+            self._dialog_field(dialog_self, "识别后停止延时(秒):").setText("1.25")
+            self._dialog_field(dialog_self, "超时(秒):").setText("9")
+            for box in dialog_self.findChildren(QCheckBox):
+                if box.text() == "超时后继续执行":
+                    box.setChecked(True)
+                if box.text() == "画面变化视为成功":
+                    box.setChecked(True)
+
+        step = {"type": "click_until_gone", "template": "captured_probe"}
+        accepted, warnings = self._drive_detour_dialog(self.window, step, prepare=prepare)
+
+        self.assertTrue(accepted)
+        self.assertEqual(warnings, [])
+        self.assertEqual(step["click_interval"], 0.8)
+        self.assertEqual(step["stop_delay"], 1.25)
+        self.assertEqual(step["timeout"], 9)
+        self.assertTrue(step["continue_after_timeout"])
+        self.assertTrue(step["stop_on_change"])
+        self.assertTrue(step["click"])
+        self.assertEqual(step["template"], "captured_probe")
+
+    def test_detour_dialog_has_no_manual_region_input(self):
+        """识别区域与主界面一致：只能框选，不再有手工坐标输入框。
+
+        （替换掉旧的 `test_detour_dialog_refuses_invalid_region_and_keeps_it`：那条守的是
+        "手工填的区域解析失败要拒绝保存"，而按所有者既定决策 + 主界面的形态，这个输入框
+        本身就不该存在——没有输入框，也就没有"填错"这条路径。）
+        """
+        from PySide6.QtWidgets import QLineEdit
+
+        captured = []
+
+        def prepare(dialog_self):
+            captured.append([box.text() for box in dialog_self.findChildren(QLineEdit)])
+
+        accepted, warnings = self._drive_detour_dialog(
+            self.window, {"type": "normal", "match_rect": [30, 28, 89, 81]}, prepare=prepare)
+
+        self.assertTrue(accepted)
+        self.assertEqual(warnings, [])
+        self.assertFalse([text for text in captured[0] if text.count(",") == 3],
+                         "不应再有「4 个数字」的手工识别区域输入框")
 
     def test_detour_dialog_loads_the_five_fields(self):
         """这 5 个键引擎一直在用，此前对话框既不显示也不回写。"""

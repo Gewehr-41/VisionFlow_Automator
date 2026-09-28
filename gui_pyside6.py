@@ -1141,52 +1141,13 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
 
     def _load_editor_for_task(self, task):
         self.selected_label.setText(f"第 {self.current_index + 1} 步 · 类型: {task.get('type', 'normal')}")
-        is_click_until = task.get("type") == "click_until_gone"
-        is_recognition = task.get("type", "normal") in ("normal", "advanced")
-        self.recognition_group.setVisible(is_recognition)
-        # 识别区域对「识别型」与「持续点击」都可见：后者同样会用到 match_rects
-        self._set_region_group_visible(is_recognition or is_click_until)
-        self.click_until_group.setVisible(is_click_until)
-        self.editor_actions.setVisible(is_recognition or is_click_until)
-        templates = task.get("templates") or task.get("template", "")
-        if isinstance(templates, (list, tuple)):
-            templates = ", ".join(str(item) for item in templates)
-        self.template_edit.setText(str(templates))
-        self._update_template_preview(templates)
-        self.description_edit.setText(str(task.get("description", "")))
-        self.enabled_checkbox.setChecked(bool(task.get("enabled", True)))
-        self.threshold_edit.setText(str(task.get("threshold", config.THRESHOLD)))
-        self.timeout_edit.setText(str(task.get("timeout", 5)))
-        self.after_wait_edit.setText(str(task.get("after_wait", 0.25)))
-        self.match_required_checkbox.setChecked(bool(task.get("click_requires_match", True)))
-        click_position = task.get("click_position")
-        self.click_x_edit.setText(str(task.get("click_x", click_position[0] if isinstance(click_position, (list, tuple)) and len(click_position) >= 2 else "")))
-        self.click_y_edit.setText(str(task.get("click_y", click_position[1] if isinstance(click_position, (list, tuple)) and len(click_position) >= 2 else "")))
-        # 识别区域只刷新"区域选择"（区域只能框选产生，没有手工输入的控件）
-        self._capture_sync_region_index(task)
-        self._refresh_region_selector(task)
-        self.next_template_edit.setText(str(task.get("next_template") or ""))
-        wait_for = task.get("wait_for", "time")
-        if wait_for == "next_appear":
-            self.wait_for_combo.setCurrentIndex(1)
-        elif wait_for == "change_then_appear":
-            self.wait_for_combo.setCurrentIndex(2)
-        else:
-            self.wait_for_combo.setCurrentIndex(0)
-        self.click_checkbox.setChecked(bool(task.get("click", True)))
-        self.optional_checkbox.setChecked(bool(task.get("optional", not bool(task.get("required", True)))))
+        self._update_editor_visibility(task)
+        self._load_common_editor_fields(task)
 
-        click_until_templates = task.get("templates") or task.get("template", "")
-        if isinstance(click_until_templates, (list, tuple)):
-            click_until_templates = ", ".join(str(item) for item in click_until_templates)
-        self.click_until_template_edit.setText(str(click_until_templates))
-        self.click_until_interval_edit.setText(str(task.get("click_interval", 0.5)))
-        self.click_until_stop_delay_edit.setText(str(task.get("stop_delay", 0.0)))
-        self.click_until_timeout_edit.setText(str(task.get("timeout", 30)))
-        self.click_until_continue_checkbox.setChecked(bool(task.get("continue_after_timeout", False)))
-        self.click_until_stop_on_change_checkbox.setChecked(bool(task.get("stop_on_change", False)))
+    def _editor_float_fallback(self, key, task, default):
+        """蓝图窗口：输入框解析失败时保留任务里的原值（历史差异，见 mixin 里的说明）。"""
+        return task.get(key, default)
 
-        self._rebuild_special_form(task)
 
     @staticmethod
     def _special_field_specs(task):
@@ -1403,45 +1364,8 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
                 self._select_node(self.current_index)
                 self.save_layout()
                 return
-            template_value = self.template_edit.text().strip() or "new_step"
-            if task.get("type") in ("advanced", "click_until_gone"):
-                templates = [item.strip() for item in template_value.replace("，", ",").split(",") if item.strip()]
-                task["templates"] = templates or ["new_step"]
-                task["template"] = task["templates"][0]
-            else:
-                task["template"] = template_value
-            task["threshold"] = self._float(self.threshold_edit.text(), task.get("threshold", config.THRESHOLD))
-            task["timeout"] = self._float(self.timeout_edit.text(), task.get("timeout", 5))
-            task["after_wait"] = self._float(self.after_wait_edit.text(), task.get("after_wait", 0.25))
-            task["click"] = self.click_checkbox.isChecked()
-            task["click_requires_match"] = self.match_required_checkbox.isChecked()
-            task["optional"] = self.optional_checkbox.isChecked()
-            task["required"] = not task["optional"]
-            # 「偏移」不再由界面回写：控件已删除（2026-09-28，与主窗口一致）。
-            click_x = self._int(self.click_x_edit.text())
-            click_y = self._int(self.click_y_edit.text())
-            if click_x is not None and click_y is not None:
-                task["click_x"] = click_x
-                task["click_y"] = click_y
-                task["click_position"] = (click_x, click_y)
-            else:
-                task.pop("click_x", None)
-                task.pop("click_y", None)
-                task.pop("click_position", None)
-            next_template = self.next_template_edit.text().strip()
-            if next_template:
-                task["next_template"] = next_template
-                task["next_templates"] = [next_template]
-            else:
-                task.pop("next_template", None)
-                task.pop("next_templates", None)
-            wait_mode = self.wait_for_combo.currentText()
-            if wait_mode.startswith("2"):
-                task["wait_for"] = "next_appear"
-            elif wait_mode.startswith("3"):
-                task["wait_for"] = "change_then_appear"
-            else:
-                task["wait_for"] = "time"
+            self._apply_common_editor_fields(task)
+            self._editor_apply_optional(task)
         self._apply_special_fields(task)
         self._push_history()
         self.refresh()
@@ -2794,55 +2718,21 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         self.selected_label.setText(f"类型: {task.get('type', 'normal')} | ID: {task.get('id', '')}")
         is_click_until = task.get("type") == "click_until_gone"
         is_recognition = task.get("type", "normal") in ("normal", "advanced")
-        self.editor_actions.setVisible(is_recognition or is_click_until)
-        self.recognition_group.setVisible(is_recognition)
-        # 识别区域对「识别型」与「持续点击」都可见：后者同样会用到 match_rects
-        self._set_region_group_visible(is_recognition or is_click_until)
-        self.click_until_group.setVisible(is_click_until)
+        self._update_editor_visibility(task)
         self.special_group.setTitle("持续点击设置" if is_click_until else "类型专用字段" if is_recognition else "步骤设置")
-        self.description_edit.setText(str(task.get("description", "")))
-        self.enabled_checkbox.setChecked(bool(task.get("enabled", True)))
-        templates = task.get("templates") or task.get("template", "")
-        if isinstance(templates, (list, tuple)):
-            templates = ", ".join(str(item) for item in templates)
-        self.template_edit.setText(str(templates))
-        self._update_template_preview(templates)
-        click_until_templates = task.get("templates") or task.get("template", "")
-        if isinstance(click_until_templates, (list, tuple)):
-            click_until_templates = ", ".join(str(item) for item in click_until_templates)
-        self.click_until_template_edit.setText(str(click_until_templates))
-        self.click_until_interval_edit.setText(str(task.get("click_interval", 0.5)))
-        self.click_until_stop_delay_edit.setText(str(task.get("stop_delay", 0.0)))
-        self.click_until_timeout_edit.setText(str(task.get("timeout", 30)))
-        self.click_until_continue_checkbox.setChecked(bool(task.get("continue_after_timeout", False)))
-        self.click_until_stop_on_change_checkbox.setChecked(bool(task.get("stop_on_change", False)))
-        self.threshold_edit.setText(str(task.get("threshold", config.THRESHOLD)))
-        self.timeout_edit.setText(str(task.get("timeout", task.get("wait_timeout", 5))))
-        self.after_wait_edit.setText(str(task.get("after_wait", 0.25)))
-        self.click_checkbox.setChecked(bool(task.get("click", True)))
-        self.match_required_checkbox.setChecked(bool(task.get("click_requires_match", True)))
-        # 「可选步骤（跳过）」此前从不加载，导致界面显示与实际值不一致（切换步骤时残留上一步的勾选）。
-        # 回写逻辑（_apply_editor）本来就读取该控件，这里补上加载。
-        self.optional_checkbox.setChecked(bool(task.get("optional", not bool(task.get("required", True)))))
-        click_position = task.get("click_position")
-        self.click_x_edit.setText(str(task.get("click_x", click_position[0] if isinstance(click_position, (list, tuple)) and len(click_position) >= 2 else "")))
-        self.click_y_edit.setText(str(task.get("click_y", click_position[1] if isinstance(click_position, (list, tuple)) and len(click_position) >= 2 else "")))
-        # 「下一模板」与「等待方式」也必须加载：apply_selected_task 会把这两个控件的
-        # 内容写回任务，此前只写不读 → 选中步骤后不改任何东西直接点「应用修改」，
-        # wait_for 会被改成默认的 time、next_template 会被删掉。
-        # （蓝图窗口的 _load_editor_for_task 一直是加载的，这里补齐对称。）
-        self.next_template_edit.setText(str(task.get("next_template") or ""))
-        wait_for = str(task.get("wait_for", "time"))
-        if wait_for == "next_appear":
-            self.wait_for_combo.setCurrentIndex(1)
-        elif wait_for == "change_then_appear":
-            self.wait_for_combo.setCurrentIndex(2)
-        else:
-            self.wait_for_combo.setCurrentIndex(0)
-        # 识别区域只刷新"区域选择"（区域只能框选产生，没有手工输入的控件）
-        self._capture_sync_region_index(task)
-        self._refresh_region_selector(task)
-        self._rebuild_special_form(task)
+        self._load_common_editor_fields(task)
+
+    def _editor_timeout_text(self, task):
+        """主窗口：「超时(秒)」初值会回退到旧的 wait_timeout 字段（历史差异）。"""
+        return str(task.get("timeout", task.get("wait_timeout", 5)))
+
+    def _editor_apply_optional(self, task):
+        """主窗口历史上**不回写**「可选步骤（跳过）」（勾选框点了等于没勾）。
+
+        本次重构要求零行为变化，所以保留现状；这是已知缺口，
+        要不要对齐蓝图窗口的行为（写 optional/required）待所有者决定。
+        """
+        return
 
 
     def _on_group_expanded_changed(self, item):
@@ -3282,39 +3172,9 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
                 task["click"] = True
                 task["required"] = True
             else:
-                template_value = self.template_edit.text().strip() or "new_step"
-                if task.get("type") == "advanced":
-                    templates = [item.strip() for item in template_value.replace("，", ",").split(",") if item.strip()]
-                    task["templates"] = templates or ["new_step"]
-                    task["template"] = task["templates"][0]
-                else:
-                    task["template"] = template_value
-                task["threshold"] = self._float(self.threshold_edit.text(), config.THRESHOLD)
-                task["timeout"] = self._float(self.timeout_edit.text(), 5.0)
-                task["after_wait"] = self._float(self.after_wait_edit.text(), 0.25)
-                task["click"] = self.click_checkbox.isChecked()
-                task["click_requires_match"] = self.match_required_checkbox.isChecked()
-                # 「偏移」不再由界面回写：控件已删除（2026-09-28），
-                # task["offset"] 保持数据里的原值，引擎缺省按 (0, 0) 使用。
-                click_x = self._int(self.click_x_edit.text())
-                click_y = self._int(self.click_y_edit.text())
-                if click_x is not None and click_y is not None:
-                    task["click_x"] = click_x
-                    task["click_y"] = click_y
-                    task["click_position"] = (click_x, click_y)
-                else:
-                    task.pop("click_x", None)
-                    task.pop("click_y", None)
-                    task.pop("click_position", None)
-                next_template = self.next_template_edit.text().strip()
-                if next_template:
-                    task["next_template"] = next_template
-                    task["next_templates"] = [next_template]
-                else:
-                    task.pop("next_template", None)
-                    task.pop("next_templates", None)
-                wait_mode = self.wait_for_combo.currentText()
-                task["wait_for"] = "next_appear" if wait_mode.startswith("2") else "change_then_appear" if wait_mode.startswith("3") else "time"
+                self._apply_common_editor_fields(task)
+                # 「可选步骤（跳过）」：主窗口历史上不回写（见 _editor_apply_optional）
+                self._editor_apply_optional(task)
         task["enabled"] = self.enabled_checkbox.isChecked()
         for key, editor in self.special_edits.items():
             if key == "move_steps":

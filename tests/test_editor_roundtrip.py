@@ -171,6 +171,174 @@ class EditorRoundTripTests(unittest.TestCase):
         self.window.load_selected_task(item, None)
         return task
 
+    def test_both_windows_share_the_editor_core(self):
+        """公共实现必须共享；两个窗口的差异只能通过显式钩子表达。"""
+        for name in ("_load_common_editor_fields", "_apply_common_editor_fields",
+                     "_update_editor_visibility"):
+            for owner in (g.PySide6ScriptWindow, g.BlueprintWindow):
+                with self.subTest(method=name, owner=owner.__name__):
+                    self.assertIs(getattr(owner, name), getattr(g.CaptureOverlayMixin, name),
+                                  f"{owner.__name__}.{name} 应直接复用 mixin 实现，不要另抄一份")
+
+        # 钩子：差异必须写成覆盖，而不是在窗口里复制整段逻辑
+        overridden_by_main = ("_editor_timeout_text", "_editor_apply_optional")
+        for name in overridden_by_main:
+            with self.subTest(hook=name):
+                self.assertIsNot(getattr(g.PySide6ScriptWindow, name),
+                                 getattr(g.CaptureOverlayMixin, name),
+                                 f"{name} 是主窗口的显式差异，应覆盖而不是消失")
+                self.assertIs(getattr(g.BlueprintWindow, name),
+                              getattr(g.CaptureOverlayMixin, name),
+                              f"{name} 蓝图窗口应沿用 mixin 的默认实现")
+        self.assertIsNot(g.BlueprintWindow._editor_float_fallback,
+                         g.CaptureOverlayMixin._editor_float_fallback,
+                         "_editor_float_fallback 是蓝图窗口的显式差异，应覆盖")
+
+    def test_both_windows_load_the_same_panel_state(self):
+        """同一个步骤在两个窗口里加载后，公共字段的控件状态必须一致。
+
+        这条不变量是 Bug C（主窗口漏加载 wait_for / next_template）的通用形式：
+        此前没有任何测试比较过两个窗口的加载结果，所以漂移了很久都没人发现。
+        """
+        task = {
+            "id": "consistency",
+            "type": "normal",
+            "template": "tpl_a",
+            "description": "一致性检查",
+            "threshold": 0.8,
+            "timeout": 7.5,
+            "after_wait": 0.4,
+            "click": False,
+            "click_requires_match": False,
+            "optional": True,
+            "required": False,
+            "click_x": 111,
+            "click_y": 222,
+            "next_template": "tpl_b",
+            "wait_for": "next_appear",
+        }
+        g.TASKS[:] = [dict(task)]
+        self.window.refresh_task_list()
+        self.window.select_task_index(0)
+
+        blueprint = g.BlueprintWindow([dict(task)], {}, lambda *a, **k: None, {}, None, {})
+        try:
+            blueprint.current_index = 0
+            blueprint._load_editor_for_task(blueprint.tasks[0])
+
+            for attr in ("description_edit", "template_edit", "threshold_edit", "timeout_edit",
+                         "after_wait_edit", "click_x_edit", "click_y_edit", "next_template_edit"):
+                with self.subTest(field=attr):
+                    self.assertEqual(getattr(self.window, attr).text(),
+                                     getattr(blueprint, attr).text(),
+                                     f"{attr} 在两个窗口里的显示不一致")
+            for attr in ("click_checkbox", "match_required_checkbox", "optional_checkbox",
+                         "enabled_checkbox"):
+                with self.subTest(field=attr):
+                    self.assertEqual(getattr(self.window, attr).isChecked(),
+                                     getattr(blueprint, attr).isChecked(),
+                                     f"{attr} 在两个窗口里的勾选状态不一致")
+            self.assertEqual(self.window.wait_for_combo.currentIndex(),
+                             blueprint.wait_for_combo.currentIndex(),
+                             "「等待方式」下拉框在两个窗口里的选中项不一致")
+        finally:
+            blueprint.close()
+
+    def test_both_windows_write_the_same_common_fields(self):
+        """同一份面板输入，两个窗口回写出的公共字段必须一致。
+
+        `optional`/`required` 是**已知缺口**：主窗口历史上不回写它们
+        （勾选框点了等于没勾），本次重构要求零行为变化、暂未对齐，所以这里排除。
+        """
+        task = {"id": "consistency", "type": "normal", "template": "tpl_a"}
+        g.TASKS[:] = [dict(task)]
+        self.window.refresh_task_list()
+        self.window.select_task_index(0)
+
+        blueprint = g.BlueprintWindow([dict(task)], {}, lambda *a, **k: None, {}, None, {})
+        try:
+            blueprint.current_index = 0
+            blueprint._load_editor_for_task(blueprint.tasks[0])
+            for owner in (self.window, blueprint):
+                owner.description_edit.setText("回写一致性")
+                owner.template_edit.setText("tpl_z")
+                owner.threshold_edit.setText("0.66")
+                owner.timeout_edit.setText("6.5")
+                owner.after_wait_edit.setText("0.33")
+                owner.click_x_edit.setText("12")
+                owner.click_y_edit.setText("34")
+                owner.next_template_edit.setText("tpl_next")
+                owner.click_checkbox.setChecked(True)
+                owner.match_required_checkbox.setChecked(False)
+                owner.wait_for_combo.setCurrentIndex(2)
+
+            self.window.apply_selected_task()
+            blueprint._apply_editor()
+            mine, theirs = g.TASKS[0], blueprint.tasks[0]
+        finally:
+            blueprint.close()
+
+        for key in sorted(set(mine) | set(theirs)):
+            if key in ("optional", "required"):
+                continue                      # 见 docstring：已知缺口
+            with self.subTest(key=key):
+                self.assertEqual(mine.get(key), theirs.get(key),
+                                 f"{key} 在两个窗口里的回写结果不一致")
+
+    def test_apply_writes_every_common_field(self):
+        """回写必须真的落进任务——逐字段的**绝对**断言。
+
+        上一条测试只比较"两个窗口是否一致"，两边一起改坏时它抓不到
+        （变异验证时确实漏掉过 `click_requires_match`）。这条补上绝对检查。
+        """
+        blueprint = g.BlueprintWindow([{"id": "abs", "type": "normal", "template": "tpl_a"}],
+                                      {}, lambda *a, **k: None, {}, None, {})
+        try:
+            blueprint.current_index = 0
+            blueprint._load_editor_for_task(blueprint.tasks[0])
+            for label, owner, container in (("主窗口", self.window, g.TASKS),
+                                            ("蓝图窗口", blueprint, blueprint.tasks)):
+                with self.subTest(owner=label):
+                    if label == "主窗口":
+                        g.TASKS[:] = [{"id": "abs", "type": "normal", "template": "tpl_a"}]
+                        self.window.refresh_task_list()
+                        self.window.select_task_index(0)
+                    owner._load_editor_for_task(container[0]) if label == "蓝图窗口" \
+                        else self.window.load_selected_task(self.window._find_task_item(0), None)
+
+                    owner.description_edit.setText("回写一致性")
+                    owner.template_edit.setText("tpl_z")
+                    owner.threshold_edit.setText("0.66")
+                    owner.timeout_edit.setText("6.5")
+                    owner.after_wait_edit.setText("0.33")
+                    owner.click_x_edit.setText("12")
+                    owner.click_y_edit.setText("34")
+                    owner.next_template_edit.setText("tpl_next")
+                    owner.click_checkbox.setChecked(True)
+                    owner.match_required_checkbox.setChecked(False)
+                    owner.wait_for_combo.setCurrentIndex(2)
+
+                    if label == "主窗口":
+                        owner.apply_selected_task()
+                    else:
+                        owner._apply_editor()
+                    task = container[0]
+
+                    self.assertEqual(task["description"], "回写一致性")
+                    self.assertEqual(task["template"], "tpl_z")
+                    self.assertEqual(task["threshold"], 0.66)
+                    self.assertEqual(task["timeout"], 6.5)
+                    self.assertEqual(task["after_wait"], 0.33)
+                    self.assertIs(task["click"], True)
+                    self.assertIs(task["click_requires_match"], False)
+                    self.assertEqual(task["click_position"], (12, 34))
+                    self.assertEqual((task["click_x"], task["click_y"]), (12, 34))
+                    self.assertEqual(task["next_template"], "tpl_next")
+                    self.assertEqual(task["next_templates"], ["tpl_next"])
+                    self.assertEqual(task["wait_for"], "change_then_appear")
+        finally:
+            blueprint.close()
+
     def test_apply_writes_paired_click(self):
         task = self._load_first_task()
         task["click_x"], task["click_y"] = 333, 444

@@ -448,6 +448,7 @@ VisionFlow_Automator/
 ├─ CHANGELOG.md            更新日志
 ├─ 项目接手文档.md         接手文档（现状/问题清单/设计/打包）
 ├─ 优化路线.md             决策记录与路线
+├─ 更新报告.md             更新报告（接手 → 可分发，含量化对比与验证方式）
 ├─ icons/                  模板 PNG（62 张）+ 2 个 Qt 复选框 SVG
 ├─ core/                   截屏、输入和模板匹配模块
 ├─ tests/                  单元测试（unittest，355 个用例）

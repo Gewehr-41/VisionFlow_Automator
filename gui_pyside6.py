@@ -4798,6 +4798,18 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         click_position = task.get("click_position")
         self.click_x_edit.setText(str(task.get("click_x", click_position[0] if isinstance(click_position, (list, tuple)) and len(click_position) >= 2 else "")))
         self.click_y_edit.setText(str(task.get("click_y", click_position[1] if isinstance(click_position, (list, tuple)) and len(click_position) >= 2 else "")))
+        # 「下一模板」与「等待方式」也必须加载：apply_selected_task 会把这两个控件的
+        # 内容写回任务，此前只写不读 → 选中步骤后不改任何东西直接点「应用修改」，
+        # wait_for 会被改成默认的 time、next_template 会被删掉。
+        # （蓝图窗口的 _load_editor_for_task 一直是加载的，这里补齐对称。）
+        self.next_template_edit.setText(str(task.get("next_template") or ""))
+        wait_for = str(task.get("wait_for", "time"))
+        if wait_for == "next_appear":
+            self.wait_for_combo.setCurrentIndex(1)
+        elif wait_for == "change_then_appear":
+            self.wait_for_combo.setCurrentIndex(2)
+        else:
+            self.wait_for_combo.setCurrentIndex(0)
         # 识别区域只刷新"区域选择"（区域只能框选产生，没有手工输入的控件）
         self._capture_sync_region_index(task)
         self._refresh_region_selector(task)

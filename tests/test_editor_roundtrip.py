@@ -196,6 +196,46 @@ class EditorRoundTripTests(unittest.TestCase):
         self.assertNotIn("click_x", task)
         self.assertNotIn("click_y", task)
 
+    def test_load_shows_wait_for_and_next_template(self):
+        """「下一模板」与「等待方式」必须从任务加载到控件。
+
+        回归：`apply_selected_task` 会把这两个控件的内容写回任务，而
+        `load_selected_task` 此前从不加载它们 —— 选中步骤后**不改任何控件**直接点
+        「应用修改」，`wait_for` 就会被改成默认的 `time`、`next_template` 会被删掉。
+        真实数据里 8 个步骤的 `wait_for≠time`、13 个步骤带真实 `next_template`。
+        """
+        task = self._load_first_task()
+        task["wait_for"] = "next_appear"
+        task["next_template"] = "next_probe"
+        self.window.load_selected_task(self.window._find_task_item(0), None)
+
+        self.assertEqual(self.window.next_template_edit.text(), "next_probe",
+                         "「下一模板」输入框应显示已存值")
+        self.assertEqual(self.window.wait_for_combo.currentIndex(), 1,
+                         "「等待方式」下拉框应选中「等待目标模板出现」")
+        self.assertIn("等待目标模板出现", self.window.wait_for_combo.currentText())
+
+    def test_load_maps_every_wait_mode_to_its_combo_item(self):
+        task = self._load_first_task()
+        for wait_for, expected_index in (("time", 0), ("next_appear", 1), ("change_then_appear", 2)):
+            with self.subTest(wait_for=wait_for):
+                task["wait_for"] = wait_for
+                self.window.load_selected_task(self.window._find_task_item(0), None)
+                self.assertEqual(self.window.wait_for_combo.currentIndex(), expected_index)
+
+    def test_apply_without_edits_keeps_wait_for_and_next_template(self):
+        """加载后不动任何控件直接「应用修改」，这两个字段必须原样保留。"""
+        task = self._load_first_task()
+        task["wait_for"] = "next_appear"
+        task["next_template"] = "next_probe"
+        task["next_templates"] = ["next_probe"]
+        self.window.load_selected_task(self.window._find_task_item(0), None)
+
+        self.window.apply_selected_task()
+
+        self.assertEqual(task["wait_for"], "next_appear", "未编辑的等待方式被改写了")
+        self.assertEqual(task["next_template"], "next_probe", "未编辑的下一模板被删掉了")
+
     def test_apply_does_not_touch_the_recognition_regions(self):
         """识别区域不再由「应用修改」写回。
 

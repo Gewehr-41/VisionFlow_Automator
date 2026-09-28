@@ -177,6 +177,41 @@ class PresetManagerSharingTests(unittest.TestCase):
                               f"{name} 应由 PresetManagerMixin 提供")
 
 
+class TaskListSharingTests(unittest.TestCase):
+    """任务列表（13 个方法）必须由 task_list_manager 提供，且 MRO 顺序不能错。"""
+
+    METHODS = ["_capture_task_list", "_copy_selected_entries", "_find_task_item",
+               "_run_task_list_commit", "_schedule_task_list_commit", "_selected_copy_entries",
+               "copy_selected_item", "delete_selected_item", "move_task_to_end",
+               "refresh_task_list", "select_task_index", "toggle_item", "toggle_selected_tasks"]
+
+    def test_task_list_methods_come_from_the_mixin(self):
+        import task_list_manager
+
+        for name in self.METHODS:
+            with self.subTest(method=name):
+                self.assertNotIn(name, g.PySide6ScriptWindow.__dict__,
+                                 f"{name} 不该在窗口类里再定义一份")
+                self.assertIs(getattr(g.PySide6ScriptWindow, name),
+                              getattr(task_list_manager.TaskListMixin, name),
+                              f"{name} 应由 TaskListMixin 提供")
+
+    def test_task_list_mixin_precedes_the_overlay_mixin(self):
+        """`_capture_task_list` 是采集 mixin 要求的访问器钩子。
+
+        它必须由 TaskListMixin 提供（我们在这里实现了它）。若窗口类的基类顺序被改成
+        `CaptureOverlayMixin` 在前，采集管线会拿到那个空实现（返回 None），
+        属于**静默失效**——所以这里把两件事都断言下来。
+        """
+        mro = [klass.__name__ for klass in g.PySide6ScriptWindow.__mro__]
+        self.assertIn("TaskListMixin", mro)
+        self.assertLess(mro.index("TaskListMixin"), mro.index("CaptureOverlayMixin"),
+                        "TaskListMixin 必须在 CaptureOverlayMixin 之前")
+        self.assertIsNot(g.PySide6ScriptWindow._capture_task_list,
+                         g.CaptureOverlayMixin.__dict__["_capture_task_list"],
+                         "_capture_task_list 不能被采集 mixin 的空实现盖住")
+
+
 class DataIsolationSeamTests(unittest.TestCase):
     """元守卫：测试的数据隔离必须**同时**替换路径常量，不能只替换函数名。
 

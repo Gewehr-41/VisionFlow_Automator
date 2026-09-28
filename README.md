@@ -454,7 +454,7 @@ VisionFlow_Automator/
 ├─ 更新报告.md             更新报告（接手 → 可分发，含量化对比与验证方式）
 ├─ icons/                  模板 PNG（62 张）+ 2 个 Qt 复选框 SVG
 ├─ core/                   截屏、输入和模板匹配模块
-├─ tests/                  单元测试（unittest，355 个用例）
+├─ tests/                  单元测试（unittest，383 个用例 / 17 个文件）
 └─ 启动新界面.bat         启动 PySide6 界面（静默）—— 唯一入口
 ```
 

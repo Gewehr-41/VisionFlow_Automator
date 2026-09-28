@@ -520,6 +520,24 @@ class CaptureOverlayMixin:
         self._capture_log("已清空当前步骤的全部识别区域")
         self._capture_after_task_changed()
 
+    def clear_click_point(self):
+        """清空当前步骤的备用点击点（与「记录点击点」对称：立即写入并落盘）。
+
+        引擎的 ``resolve_click_position`` 依次看 ``click_position`` 与
+        ``click_x``/``click_y``，所以三个键必须一起删——只清空两个输入框而不删
+        ``click_position`` 的话，旧坐标仍然会生效。删掉之后引擎回到"按识别到的位置点击"。
+        （同一套键的回写在 ``_apply_common_editor_fields`` 里也有一份，保持一致。）
+        """
+        task = self._capture_current_task()
+        if task is None:
+            return
+        self.click_x_edit.clear()
+        self.click_y_edit.clear()
+        for key in ("click_x", "click_y", "click_position"):
+            task.pop(key, None)
+        self._capture_log("已清空当前步骤的备用点击点（之后按识别位置点击）")
+        self._capture_after_task_changed()
+
     def finish_image_capture(self, left, top, right, bottom):
         # 保持窗口隐藏直到截图完成：关闭覆盖层前断开 destroyed 联动，并置位
         # _keep_window_hidden，防止覆盖层销毁时 clear_capture_overlay 提前显示窗口，
@@ -1169,6 +1187,10 @@ class CaptureOverlayMixin:
         self.optional_checkbox = QCheckBox("可选步骤（跳过）")
         self.click_x_edit = QLineEdit()
         self.click_y_edit = QLineEdit()
+        # 「清空点击点」：与「记录点击点」对称的入口。此前只能靠"把两个框清空再点应用修改"
+        # 达到同样效果，但没有任何可见按钮（所有者 2026-09-28 反馈缺失）。
+        self.click_clear_button = QPushButton("清空点击点")
+        self.click_clear_button.clicked.connect(self.clear_click_point)
         self.region_selector = QComboBox()
         self.region_status_label = QLabel("未设置")
         self.region_delete_button = QPushButton("删除本区域")
@@ -1190,7 +1212,7 @@ class CaptureOverlayMixin:
         # X/Y 成对并排（此前 4 个坐标各占一行，输入框 529px 却只填一个短数字）
         # 「偏移」一行已于 2026-09-28 按所有者要求删除：界面不再提供偏移输入，
         # 引擎仍读 task["offset"]（缺省 (0, 0)），已有数据里的值原样保留。
-        add_coordinate_row("点击:", self.click_x_edit, self.click_y_edit)
+        add_coordinate_row("点击:", self.click_x_edit, self.click_y_edit, self.click_clear_button)
 
         # 「识别区域」组：一个步骤可以有多条区域（引擎逐条尝试）。
         # 区域**只能靠框选产生**，这里只负责查看/切换/删除，不提供手工输入坐标。

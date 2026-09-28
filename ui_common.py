@@ -75,8 +75,12 @@ def _add_form_row(layout, label, widget):
     layout.addLayout(row)
 
 
-def _add_coordinate_row(layout, label, x_edit, y_edit):
-    """一行「标签 + X + Y」：两个短输入并排，避免每个数字独占一整行。"""
+def _add_coordinate_row(layout, label, x_edit, y_edit, extra=None):
+    """一行「标签 + X + Y（+ 可选按钮）」。
+
+    两个短输入并排，避免每个数字独占一整行。``extra`` 用于把与这组坐标配套的按钮
+    放在同一行末尾（「点击:」这一行放的是「清空点击点」）。
+    """
     row = QHBoxLayout()
     row.setContentsMargins(0, 0, 0, 0)
     row.addWidget(QLabel(label), 0)
@@ -84,6 +88,8 @@ def _add_coordinate_row(layout, label, x_edit, y_edit):
     row.addWidget(x_edit, 1)
     row.addWidget(QLabel("Y"), 0)
     row.addWidget(y_edit, 1)
+    if extra is not None:
+        row.addWidget(extra, 0)
     layout.addLayout(row)
 
 

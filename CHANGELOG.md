@@ -8,6 +8,17 @@
 
 ## 2026-09-28
 
+### 界面补充：清空点击点
+
+- 「点击: X/Y」一行末尾新增**「清空点击点」**按钮（主界面与蓝图窗口都有）。
+  此前只有「记录点击点」而没有清空入口——只能把两个输入框清空再点「应用修改」，
+  界面上看不出这条路径。点它 = 清空两个框 + 从任务里删掉
+  `click_x` / `click_y` / `click_position` + 立即落盘（与「记录点击点」完全对称），
+  之后该步骤按**识别到的位置**点击。
+- 实现复用同一套代码：`ui_common._add_coordinate_row` 增加可选的 `extra` 参数，
+  `CaptureOverlayMixin.clear_click_point` 与 `clear_match_region` 同构；
+  新增 3 条测试（键必须一起删、不碰其它字段、按钮与 X/Y 同一行且两窗口都有）。
+
 ### 分发打包（PyInstaller）与工程清理
 
 - **新增 `VisionFlow_Automator.spec`**：PyInstaller 打包规格（`onedir` + 无控制台窗口）。

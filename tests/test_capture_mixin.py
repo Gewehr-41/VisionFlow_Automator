@@ -21,6 +21,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication
 
 import tasks
+import main
 
 _APP = QApplication.instance() or QApplication([])
 
@@ -304,6 +305,66 @@ class CaptureMixinContractTests(unittest.TestCase):
             self.assertNotIn(key, task)
         self.assertEqual(self.window.region_selector.count(), 0)
         self.assertEqual(self.window.region_status_label.text(), "未设置")
+
+    # ---------- 清空点击点 ----------
+    #
+    # 所有者 2026-09-28 反馈：界面上只有「记录点击点」，没有一个可见的"清空"入口
+    # （此前只能把 X/Y 两个框清空再点「应用修改」）。按钮放在「点击: X/Y」同一行末尾。
+
+    def _task_for_click_tests(self):
+        """保证 TASKS 里至少一项并让下标指向它——不依赖本地真实数据的条数。"""
+        if not g.TASKS:
+            g.TASKS.append({"id": "probe", "type": "normal", "description": "探针"})
+        self.window.current_task_index = 0
+        return g.TASKS[0]
+
+    def test_clear_click_point_removes_all_click_keys(self):
+        task = self._task_for_click_tests()
+        task.update({"click_x": 1779, "click_y": 463, "click_position": (1779, 463)})
+        self.window.click_x_edit.setText("1779")
+        self.window.click_y_edit.setText("463")
+
+        self.window.clear_click_point()
+
+        for key in ("click_x", "click_y", "click_position"):
+            self.assertNotIn(key, task, "三个键必须一起删：只删 click_x/y 时 click_position 仍会生效")
+        self.assertEqual(self.window.click_x_edit.text(), "")
+        self.assertEqual(self.window.click_y_edit.text(), "")
+        self.assertIsNone(main.resolve_click_position(task), "引擎视角：已没有备用点击点")
+
+    def test_clear_click_point_keeps_the_rest_of_the_task(self):
+        task = self._task_for_click_tests()
+        task.update({"click_x": 10, "click_y": 20, "click_position": (10, 20),
+                     "match_rects": [[1, 2, 3, 4]], "threshold": 0.8, "wait_for": "time"})
+        self.window.clear_click_point()
+        self.assertEqual(task["match_rects"], [[1, 2, 3, 4]], "只清点击点，不能动识别区域")
+        self.assertEqual(task["threshold"], 0.8)
+        self.assertEqual(task["wait_for"], "time")
+
+    def test_click_clear_button_sits_in_the_same_row_as_xy_in_both_windows(self):
+        """按钮必须与 X/Y 同一行（所有者指定放在"点击 xy 设置栏后面"），两个窗口都要有。"""
+        def row_containing(layout, *widgets):
+            for index in range(layout.count()):
+                sub = layout.itemAt(index).layout()
+                if sub is None:
+                    continue
+                items = {sub.itemAt(i).widget() for i in range(sub.count())}
+                if all(widget in items for widget in widgets):
+                    return sub
+                deeper = row_containing(sub, *widgets)
+                if deeper is not None:
+                    return deeper
+            return None
+
+        blueprint = g.BlueprintWindow([], {}, lambda *a: None, {}, self.window, {})
+        for window in (self.window, blueprint):
+            button = window.click_clear_button
+            self.assertEqual(button.text(), "清空点击点")
+            layout = window.click_x_edit.parentWidget().layout()
+            self.assertIsNotNone(
+                row_containing(layout, window.click_x_edit, window.click_y_edit, button),
+                "「清空点击点」应与 X/Y 在同一行",
+            )
 
     # ---------- 取消 / 太小 ----------
 

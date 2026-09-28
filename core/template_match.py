@@ -6,6 +6,7 @@ import cv2
 import numpy as np
 
 from config import THRESHOLD, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP
+from diagnostics import warn
 
 
 class StopExecution(Exception):
@@ -26,9 +27,11 @@ def load_templates(icon_dir):
         img = cv2.imdecode(file_data, cv2.IMREAD_COLOR)
         if img is not None:
             templates[name] = img
-            print(f"加载模板: {name} ({img.shape[1]}x{img.shape[0]})")
         else:
-            print(f"警告: 无法读取 {file}")
+            # 走可见告警通道：启动器是隐藏窗口，裸 print 用户看不到。
+            # （此前每加载一张还打印一行"加载模板: …"，绑定图片后每次都刷 60 多行，
+            #   在隐藏窗口下毫无意义，已去掉。）
+            warn(f"警告: 无法读取模板文件 {file.name}（该模板本次不可用）")
 
     if not templates:
         raise ValueError(f"没有在 {icon_dir} 中找到模板图，请检查目录和文件名。")

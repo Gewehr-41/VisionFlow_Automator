@@ -1,30 +1,17 @@
 # 任务与预设数据层：定义任务结构并负责 JSON 数据的加载、迁移和保存。
 import json
 import os
-import sys
 import tempfile
 import uuid
 from copy import deepcopy
+
+from diagnostics import warn
 from nodes import normalize_task
 
 
-# 读取阶段的警告集中存放。
-#
-# 启动脚本（启动新界面.bat）用**隐藏窗口**运行 python，stderr 用户根本看不到，
-# 所以"打印一行警告"并不等于"用户会知道"。界面在启动时会把这里的内容写进
-# 日志框（gui_pyside6 的 _log_load_warnings），这才是真正可见的那条路径。
-LOAD_WARNINGS = []
-
-
-def _warn(message):
-    """读取失败时给出可见提示，避免静默回退默认值导致用户数据"无声消失"。
-
-    同时写入 stderr 并追加到 LOAD_WARNINGS，由界面在启动时显示。
-    """
-    print(message, file=sys.stderr)
-    LOAD_WARNINGS.append(message)
-    return message
-
+# 读取失败的提示统一走 diagnostics.warn（写 stderr + 收集起来给界面日志框）。
+# 启动脚本用隐藏窗口跑 python，stderr 用户看不到，所以"打印一行"不等于"用户会知道"；
+# 真正可见的那条路径是 gui_pyside6 的 _log_pending_warnings。
 
 def make_normal_task(task_id, mode, description, template, *, timeout=5, after_wait=0.25, wait_for="time", wait_timeout=2.5, offset=(0, 0), click=True, required=True):
     return {
@@ -158,9 +145,9 @@ def load_tasks():
             tasks = _extract_task_list(data)
             if tasks is not None:
                 return normalize_task_list(tasks)
-            _warn(f"警告: {TASKS_FILE} 内容不是任务列表，将使用内置默认任务。")
+            warn(f"警告: {TASKS_FILE} 内容不是任务列表，将使用内置默认任务。")
         except Exception as exc:
-            _warn(f"警告: 读取 {TASKS_FILE} 失败（{exc}），将使用内置默认任务。")
+            warn(f"警告: 读取 {TASKS_FILE} 失败（{exc}），将使用内置默认任务。")
     return deepcopy(DEFAULT_TASKS)
 
 
@@ -235,7 +222,7 @@ def load_deleted_preset_names():
     except Exception as exc:
         # 静默返回空集合的后果不只是"少了个名单"：删除名单一旦为空，保存时
         # __deleted__ 会被写成 []，此前删掉的预设会重新出现在界面上。
-        _warn(f"警告: 读取 {PRESETS_FILE} 的删除名单失败（{exc}），已删除的预设可能会重新出现。")
+        warn(f"警告: 读取 {PRESETS_FILE} 的删除名单失败（{exc}），已删除的预设可能会重新出现。")
         return set()
 
 
@@ -262,7 +249,7 @@ def load_presets():
                         if task_list is not None:
                             presets[str(name)] = normalize_task_list(task_list)
         except Exception as exc:
-            _warn(f"警告: 读取 {PRESETS_FILE} 失败（{exc}），用户预设将不会加载。")
+            warn(f"警告: 读取 {PRESETS_FILE} 失败（{exc}），用户预设将不会加载。")
     return presets
 
 
@@ -279,7 +266,7 @@ def load_preset_metadata():
         metadata = data.get("__group_metadata__", {}) if isinstance(data, dict) else {}
         return metadata if isinstance(metadata, dict) else {}
     except Exception as exc:
-        _warn(f"警告: 读取 {PRESETS_FILE} 的分组元数据失败（{exc}），分组名称与颜色将回退为默认值。")
+        warn(f"警告: 读取 {PRESETS_FILE} 的分组元数据失败（{exc}），分组名称与颜色将回退为默认值。")
         return {}
 
 
@@ -291,7 +278,7 @@ def load_blueprint_layouts():
             data = json.load(f)
         return data if isinstance(data, dict) else {}
     except Exception as exc:
-        _warn(f"警告: 读取 {BLUEPRINT_LAYOUT_FILE} 失败（{exc}），蓝图的节点位置与缩放将不会恢复。")
+        warn(f"警告: 读取 {BLUEPRINT_LAYOUT_FILE} 失败（{exc}），蓝图的节点位置与缩放将不会恢复。")
         return {}
 
 
@@ -307,7 +294,7 @@ def load_blueprint_graphs():
             data = json.load(f)
         return data if isinstance(data, dict) else {}
     except Exception as exc:
-        _warn(f"警告: 读取 {BLUEPRINT_GRAPH_FILE} 失败（{exc}），蓝图图数据将不会加载。")
+        warn(f"警告: 读取 {BLUEPRINT_GRAPH_FILE} 失败（{exc}），蓝图图数据将不会加载。")
         return {}
 
 

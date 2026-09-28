@@ -54,10 +54,10 @@ from PySide6.QtWidgets import (
 )
 
 import config
+import diagnostics
 from main import reload_templates, run_task_queue
 from tasks import (
     DELETED_PRESET_NAMES,
-    LOAD_WARNINGS,
     PRESET_METADATA,
     TASKS,
     USER_PRESETS,
@@ -3818,15 +3818,28 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         # refresh_task_list() 会自动选中第一个步骤并触发 _update_template_preview，
         # 若不设此标志，启动瞬间编辑面板就会显示第一张模板缩略图。
         self._initializing = False
-        # 数据文件读取阶段的警告必须落到日志框。启动脚本用隐藏窗口运行 python，
-        # stderr 用户看不到；不落日志就等于"数据静默消失"。
-        self._log_load_warnings()
+        # 诊断信息（数据文件读取失败、全局热键注册失败、模板文件读不了…）必须落到
+        # 日志框。启动脚本用隐藏窗口运行 python，stdout/stderr 用户看不到；
+        # 不落日志就等于"问题静默消失"。
+        self._warning_cursor = 0
+        self._log_pending_warnings()
+        # 运行期也会产生诊断信息，其中热键那条来自后台线程、模板那条来自 worker 线程。
+        # 只在 GUI 线程里搬运，所以用一个定时器轮询（而不是让 worker 直接碰控件）。
+        self._warning_timer = QTimer(self)
+        self._warning_timer.timeout.connect(self._log_pending_warnings)
+        self._warning_timer.start(500)
 
-    def _log_load_warnings(self):
-        """把 tasks 在读取数据文件时收集到的警告写进日志框，返回条数。"""
-        for warning in LOAD_WARNINGS:
-            self.append_log(warning)
-        return len(LOAD_WARNINGS)
+    def _log_pending_warnings(self):
+        """把 diagnostics 里**新产生**的诊断信息搬进日志框，返回本次搬运条数。
+
+        线程安全：只对共享列表取快照后在 GUI 线程追加，不做跨线程 UI 操作。
+        """
+        warnings = diagnostics.snapshot()
+        pending = warnings[self._warning_cursor:]
+        self._warning_cursor = len(warnings)
+        for message in pending:
+            self.append_log(message)
+        return len(pending)
 
     def _build_ui(self):
         root = QWidget(self)

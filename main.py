@@ -457,7 +457,8 @@ def match_task_templates(task, screen_img, template_names=None, stop_flag=None):
         return {}
 
     search_rects = resolve_search_rects(task)
-    if len(search_rects) > 1:
+    if search_rects:
+        # 逐条尝试所有已配置的区域，取每张模板的最高分
         merged_results = {}
         for search_rect in search_rects:
             results = match_all_templates(
@@ -474,8 +475,16 @@ def match_task_templates(task, screen_img, template_names=None, stop_flag=None):
                 current = merged_results.get(name)
                 if current is None or result[1] > current[1]:
                     merged_results[name] = result
-        return merged_results
-    if search_rects:
+        if merged_results:
+            return merged_results
+        # 所有区域都没命中 -> 统一退回"从第 1 个区域起逐次扩大到全屏"
+        #
+        # 此前只有"恰好 1 个区域"才走这条兜底，配了多个区域就不扩容 —— 于是给一个
+        # 步骤多框一段区域，反而会让原本能靠扩容补救的第一步失效，语义前后不一致。
+        # 现在两种情况共用同一条兜底：
+        #   - 1 个区域时行为与旧版完全一致（match_in_expanding_rect 本身就是
+        #     "先试该区域、未命中再以中心逐次扩大"），且命中时还少走一趟扩容循环；
+        #   - N 个区域时先逐条尝试（多区域的优势），全都没命中才扩容，代价最多一次。
         return match_in_expanding_rect(screen_img, match_templates, search_rects[0], get_task_threshold(task), stop_flag=stop_flag)
 
     center, radius = task_match_region(task)

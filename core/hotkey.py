@@ -5,6 +5,8 @@ import ctypes.wintypes
 import threading
 import time
 
+from diagnostics import warn
+
 user32 = ctypes.windll.user32
 
 WM_HOTKEY = 0x0312
@@ -126,11 +128,12 @@ class GlobalHotkey:
         try:
             modifiers, vk = parse_hotkey(self._combo_text)
         except ValueError as exc:
-            print(f"全局热键配置无效: {exc}")
+            warn(f"警告: 全局热键配置无效（{exc}），停止热键不可用。请检查配置里的 STOP_HOTKEY。")
             return
         hotkey_id = 1
         if not user32.RegisterHotKey(None, hotkey_id, modifiers, vk):
-            print(f"注册全局热键失败（可能已被其它程序占用）: {self._combo_text}")
+            warn(f"警告: 注册全局热键失败（{self._combo_text} 可能已被其它程序占用），"
+                 "脚本运行期间该热键无法停止脚本，请改用界面上的「停止」按钮。")
             return
         try:
             msg = ctypes.wintypes.MSG()

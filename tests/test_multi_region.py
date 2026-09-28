@@ -392,5 +392,182 @@ class BlueprintMultiRegionTests(_IsolatedTestCase):
         self.assertEqual(self.window.match_rect_edit.text(), original)
 
 
+class RegionGroupVisibilityTests(_IsolatedTestCase):
+    """「识别区域」组对哪些步骤类型可见。
+
+    背景：区域控件此前挂在 `recognition_group` 里，而那个组对 `click_until_gone`
+    是隐藏的 —— 可引擎偏偏为这类步骤使用识别区域
+    （`execute_click_until_gone_task` → `match_task_templates` → `resolve_search_rects`）。
+    表现为"配置生效、界面看不见也改不了"，而所有者真实数据里唯一的多区域步骤
+    （`追放主线关卡` 第 6 步「跳过剧情」）正是这个类型。
+    """
+
+    VISIBLE_TYPES = ("normal", "advanced", "click_until_gone")
+    HIDDEN_TYPES = ("key_press", "keyboard_move", "drag", "delay")
+
+    def setUp(self):
+        super().setUp()
+        self.window = g.PySide6ScriptWindow()
+
+    def tearDown(self):
+        self.window.close()
+        super().tearDown()
+
+    def _load_main(self, task_type):
+        g.TASKS[:] = [make_task(task_id="t", rects=[R1, R2])]
+        g.TASKS[0]["type"] = task_type
+        self.window.refresh_task_list()
+        self.window.select_task_index(0)
+
+    def _blueprint_for(self, task_type):
+        task = make_task(task_id="t", rects=[R1, R2])
+        task["type"] = task_type
+        window = g.BlueprintWindow([task], {}, lambda *a, **k: None, {}, None, {})
+        window._select_node(0)
+        return window
+
+    def test_main_window_region_group_visible_for_the_expected_types(self):
+        for task_type in self.VISIBLE_TYPES:
+            with self.subTest(task_type=task_type):
+                self._load_main(task_type)
+                self.assertTrue(self.window.region_group.isVisibleTo(self.window),
+                                f"{task_type} 步骤应能看到识别区域")
+                self.assertEqual(self.window.region_selector.count(), 2)
+
+    def test_main_window_region_group_hidden_for_other_types(self):
+        for task_type in self.HIDDEN_TYPES:
+            with self.subTest(task_type=task_type):
+                self._load_main(task_type)
+                self.assertFalse(self.window.region_group.isVisibleTo(self.window),
+                                 f"{task_type} 步骤不该显示识别区域")
+
+    def test_blueprint_region_group_visible_for_the_expected_types(self):
+        for task_type in self.VISIBLE_TYPES:
+            with self.subTest(task_type=task_type):
+                window = self._blueprint_for(task_type)
+                try:
+                    self.assertTrue(window.region_group.isVisibleTo(window),
+                                    f"{task_type} 步骤应能看到识别区域")
+                finally:
+                    window.close()
+
+    def test_blueprint_region_group_hidden_for_other_types(self):
+        for task_type in self.HIDDEN_TYPES:
+            with self.subTest(task_type=task_type):
+                window = self._blueprint_for(task_type)
+                try:
+                    self.assertFalse(window.region_group.isVisibleTo(window),
+                                     f"{task_type} 步骤不该显示识别区域")
+                finally:
+                    window.close()
+
+    def test_click_until_gone_still_hides_the_recognition_group(self):
+        """区域组独立出来之后，识别设置组对 click_until_gone 仍应保持隐藏。"""
+        self._load_main("click_until_gone")
+        self.assertFalse(self.window.recognition_group.isVisibleTo(self.window))
+        self.assertTrue(self.window.region_group.isVisibleTo(self.window))
+
+    def test_clear_editor_hides_the_region_group(self):
+        self._load_main("normal")
+        # 主窗口叫 clear_editor，蓝图窗口叫 _clear_editor
+        clearer = getattr(self.window, "clear_editor", None) or self.window._clear_editor
+        clearer()
+        self.assertFalse(self.window.region_group.isVisibleTo(self.window))
+
+    def test_selecting_a_group_hides_the_region_group_then_step_shows_it_again(self):
+        from PySide6.QtCore import Qt
+
+        task = make_task(task_id="t")
+        task["group_id"] = "gr"
+        g.TASKS[:] = [task]
+        mode = self.window.mode_combo.currentText() or "custom"
+        self.window.mode_group_metadata[mode] = {
+            "names": {"gr": "外层组"}, "colors": {"gr": "#eab308"}, "expanded": {},
+            "order": ["gr"], "parents": {"gr": None}, "children": {"gr": []},
+        }
+        self.window.refresh_task_list()
+        group_item = self.window.task_list.topLevelItem(0)
+        step_item = group_item.child(0)
+        self.assertEqual(group_item.data(0, Qt.UserRole), "group")
+
+        self.window.task_list.setCurrentItem(step_item)
+        self.assertTrue(self.window.region_group.isVisibleTo(self.window))
+        self.window.task_list.setCurrentItem(group_item)
+        self.assertFalse(self.window.region_group.isVisibleTo(self.window),
+                         "选中分组时应隐藏识别区域")
+        self.window.task_list.setCurrentItem(step_item)
+        self.assertTrue(self.window.region_group.isVisibleTo(self.window),
+                        "选回步骤后识别区域应重新显示")
+
+
+class ClickUntilGoneRegionTests(_IsolatedTestCase):
+    """`click_until_gone` 步骤的识别区域现在既能看见、也能改。"""
+
+    def setUp(self):
+        super().setUp()
+        self.window = g.PySide6ScriptWindow()
+
+    def tearDown(self):
+        self.window.close()
+        super().tearDown()
+
+    def _load(self):
+        task = make_task(task_id="t")
+        task["type"] = "click_until_gone"
+        g.TASKS[:] = [task]
+        self.window.refresh_task_list()
+        self.window.select_task_index(0)
+        return g.TASKS[0]
+
+    def test_regions_are_listed_and_switchable(self):
+        self._load()
+        self.assertEqual(self.window.region_selector.count(), 3)
+        self.window.region_selector.setCurrentIndex(1)
+        self.assertEqual([e.text() for e in self.window._region_widgets()[:4]],
+                         ["200", "200", "300", "300"])
+
+    def test_apply_updates_only_the_selected_region(self):
+        task = self._load()
+        self.window.region_selector.setCurrentIndex(1)
+        self.window.region_left_edit.setText("201")
+        self.window.apply_selected_task()
+
+        self.assertEqual(task["match_rects"], [(10, 10, 100, 100),
+                                               (201, 200, 300, 300),
+                                               (400, 400, 500, 500)],
+                         "持续点击步骤的「应用修改」也应回写识别区域，且不压缩其余区域")
+
+    def test_apply_with_all_boxes_empty_removes_only_the_selected_region(self):
+        task = self._load()
+        self.window.region_selector.setCurrentIndex(0)
+        for editor in self.window._region_widgets():
+            editor.clear()
+        self.window.apply_selected_task()
+        self.assertEqual(task["match_rects"], [(200, 200, 300, 300), (400, 400, 500, 500)])
+
+    def test_delete_button_works_for_this_type(self):
+        task = self._load()
+        self.window.region_selector.setCurrentIndex(2)
+        self.window.delete_current_region()
+        self.assertEqual(task["match_rects"], [(10, 10, 100, 100), (200, 200, 300, 300)])
+
+    def test_blueprint_apply_updates_only_the_selected_region(self):
+        task = make_task(task_id="t")
+        task["type"] = "click_until_gone"
+        window = g.BlueprintWindow([task], {}, lambda *a, **k: None, {}, None, {})
+        try:
+            window._select_node(0)
+            self.assertTrue(window.region_group.isVisibleTo(window))
+            window.region_selector.setCurrentIndex(2)
+            window.match_rect_edit.setText("401, 401, 501, 501")
+            window._apply_editor()
+        finally:
+            window.close()
+
+        self.assertEqual(task["match_rects"], [(10, 10, 100, 100),
+                                               (200, 200, 300, 300),
+                                               (401, 401, 501, 501)])
+
+
 if __name__ == "__main__":
     unittest.main()

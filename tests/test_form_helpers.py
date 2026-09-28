@@ -139,7 +139,8 @@ class WindowLayoutTests(unittest.TestCase):
                     )
 
     def test_region_fields_share_a_row_in_main_window(self):
-        layout = self.main_window.recognition_group.layout()
+        # 区域行已移入独立的「识别区域」组（对 click_until_gone 也可见）
+        layout = self.main_window.region_group.layout()
         for x_edit, y_edit, field in (
             (self.main_window.region_left_edit, self.main_window.region_top_edit, "左上"),
             (self.main_window.region_right_edit, self.main_window.region_bottom_edit, "右下"),
@@ -218,9 +219,16 @@ def canonical_field(label):
     return label
 
 
-def canonical_field_order(window):
-    """按界面上的实际顺序返回规范字段名（连续的区域行合并为一个 <区域>）。"""
-    layout = window.recognition_group.layout()
+def canonical_field_order(container):
+    """按界面上的实际顺序返回规范字段名（连续的区域行合并为一个 <区域>）。
+
+    `container` 可以是窗口（取它的 `recognition_group`），也可以是任意控件
+    （取它自己的 layout）——识别区域已独立成组，需要能单独检查那一组。
+    """
+    if hasattr(container, "recognition_group"):
+        layout = container.recognition_group.layout()
+    else:
+        layout = container.layout()
     order = []
     for i in range(layout.count()):
         row = layout.itemAt(i).layout()
@@ -241,10 +249,13 @@ class FormOrderParityTests(unittest.TestCase):
     背景：此前主窗口的匹配阈值在坐标之后、超时在「下一模板」之后、完成后等待与
     等待方式挤在同一行，而蓝图窗口是「模板名 / 匹配阈值 / 超时 / 完成后等待 /
     坐标 / 区域 / 下一模板 / 等待方式」——同一份数据在两个窗口里读起来完全不同。
+
+    注意：识别区域已移入独立的「识别区域」组（见 region_group），所以这里列的是
+    `recognition_group` 里剩下的字段；区域组的顺序由 RegionGroupOrderTests 覆盖。
     """
 
     EXPECTED = ["模板名", "匹配阈值", "超时", "完成后等待",
-                "偏移", "点击", "<区域>", "下一模板", "等待方式"]
+                "偏移", "点击", "下一模板", "等待方式"]
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -313,7 +324,8 @@ class RegionDisplayWidgetTests(unittest.TestCase):
         self.assertFalse(hasattr(self.main_window, "match_rect_edit"))
 
     def test_blueprint_keeps_its_visible_match_rect_widget(self):
-        layout = self.blueprint.recognition_group.layout()
+        # 识别区域文本框现在挂在独立的「识别区域」组里
+        layout = self.blueprint.region_group.layout()
         self.assertIsNotNone(
             find_row_layout_containing(layout, self.blueprint.match_rect_edit),
             "蓝图窗口的识别区域文本框应当是可见控件",
@@ -349,6 +361,99 @@ class RegionDisplayWidgetTests(unittest.TestCase):
             with self.subTest(window=name):
                 self.assertTrue(callable(getattr(window, "_capture_show_region_widgets", None)))
                 self.assertTrue(callable(getattr(window, "_capture_clear_region_widgets", None)))
+
+
+class RegionGroupOrderTests(unittest.TestCase):
+    """识别区域必须待在自己的组里，且两个窗口的顺序一致。
+
+    背景：区域控件此前挂在 `recognition_group` 内，而那个组对 `click_until_gone`
+    是隐藏的 —— 可引擎偏偏为这类步骤使用识别区域，于是"配置生效、界面看不见"。
+    现在它独立成组（`region_group`），对识别型与持续点击型都可见。
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._orig_presets_file = tasks.PRESETS_FILE
+        self._orig_tasks_file = tasks.TASKS_FILE
+        self._orig_save_presets = g.save_presets
+        self._orig_save_tasks = g.save_tasks
+        tasks.PRESETS_FILE = os.path.join(self._tmp.name, "saved_presets.json")
+        tasks.TASKS_FILE = os.path.join(self._tmp.name, "saved_tasks.json")
+        g.save_presets = tasks.save_presets
+        g.save_tasks = tasks.save_tasks
+        self.main_window = g.PySide6ScriptWindow()
+        self.blueprint = g.BlueprintWindow([{"id": "a", "type": "normal"}], {},
+                                           lambda *a, **k: None, {}, None, {})
+
+    def tearDown(self):
+        self.main_window.close()
+        self.blueprint.close()
+        tasks.PRESETS_FILE = self._orig_presets_file
+        tasks.TASKS_FILE = self._orig_tasks_file
+        g.save_presets = self._orig_save_presets
+        g.save_tasks = self._orig_save_tasks
+        self._tmp.cleanup()
+
+    def test_region_group_exists_on_both_windows(self):
+        for name, window in (("主窗口", self.main_window), ("蓝图窗口", self.blueprint)):
+            with self.subTest(window=name):
+                self.assertTrue(hasattr(window, "region_group"), f"{name} 没有 region_group")
+                self.assertIsNotNone(window.region_group.layout())
+
+    def test_region_inputs_are_not_in_the_recognition_group(self):
+        """区域输入控件不该再留在 recognition_group 里（那正是旧 bug 的来源）。"""
+        main_recognition = self.main_window.recognition_group.layout()
+        for widget in (self.main_window.region_left_edit, self.main_window.region_top_edit,
+                       self.main_window.region_right_edit, self.main_window.region_bottom_edit):
+            self.assertIsNone(
+                find_row_layout_containing(main_recognition, widget),
+                "主窗口的区域输入框仍留在识别设置组里",
+            )
+        blueprint_recognition = self.blueprint.recognition_group.layout()
+        self.assertIsNone(
+            find_row_layout_containing(blueprint_recognition, self.blueprint.match_rect_edit),
+            "蓝图窗口的区域文本框仍留在识别设置组里",
+        )
+
+    def test_region_inputs_are_in_the_region_group(self):
+        main_region = self.main_window.region_group.layout()
+        for widget in (self.main_window.region_left_edit, self.main_window.region_top_edit,
+                       self.main_window.region_right_edit, self.main_window.region_bottom_edit,
+                       self.main_window.region_center_x_edit, self.main_window.region_center_y_edit):
+            self.assertIsNotNone(find_row_layout_containing(main_region, widget))
+        blueprint_region = self.blueprint.region_group.layout()
+        self.assertIsNotNone(
+            find_row_layout_containing(blueprint_region, self.blueprint.match_rect_edit))
+
+    def test_selector_row_is_in_the_region_group_in_both_windows(self):
+        for name, window in (("主窗口", self.main_window), ("蓝图窗口", self.blueprint)):
+            with self.subTest(window=name):
+                row = find_row_layout_containing(window.region_group.layout(), window.region_selector)
+                self.assertIsNotNone(row, f"{name} 的区域选择器不在识别区域组里")
+                self.assertIsNotNone(find_row_layout_containing(window.region_group.layout(),
+                                                                window.region_delete_button))
+
+    def test_region_group_field_order_is_the_same_in_both_windows(self):
+        self.assertEqual(canonical_field_order(self.main_window.region_group),
+                         canonical_field_order(self.blueprint.region_group))
+        self.assertEqual(canonical_field_order(self.main_window.region_group), ["<区域>"])
+
+    def test_region_group_sits_right_after_the_recognition_group(self):
+        """显示顺序：识别设置 -> 识别区域 -> 持续点击设置。"""
+        for name, window in (("主窗口", self.main_window), ("蓝图窗口", self.blueprint)):
+            with self.subTest(window=name):
+                layout = window.recognition_group.parentWidget().layout()
+                widgets = [layout.itemAt(i).widget() for i in range(layout.count())
+                           if layout.itemAt(i).widget() is not None]
+                self.assertIn(window.recognition_group, widgets)
+                self.assertIn(window.region_group, widgets)
+                self.assertLess(widgets.index(window.recognition_group),
+                                widgets.index(window.region_group),
+                                "识别区域组应排在识别设置之后")
+                if window.click_until_group in widgets:
+                    self.assertLess(widgets.index(window.region_group),
+                                    widgets.index(window.click_until_group),
+                                    "识别区域组应排在持续点击设置之前")
 
 
 if __name__ == "__main__":

@@ -516,11 +516,25 @@ class CaptureOverlayMixin:
         self.template_preview.setVisible(False)
         self.editor_actions.setVisible(False)
         self.recognition_group.setVisible(False)
+        self._set_region_group_visible(False)
         self._group_hide_editor_groups()
         self.group_form.setVisible(True)
         self.group_name_edit.setText(self._group_names().get(str(group_id), str(group_id)))
         self._pending_group_color = None
         self._update_group_color_button(str(group_id))
+
+    def _set_region_group_visible(self, visible):
+        """显隐「识别区域」组。
+
+        它必须对**两种**步骤都可见：`normal` / `advanced` 自不必说，
+        `click_until_gone` 同样会用到识别区域 —— `execute_click_until_gone_task`
+        会调 `match_task_templates` -> `resolve_search_rects`。此前区域控件挂在
+        `recognition_group` 里，而那个组对 `click_until_gone` 是隐藏的，于是配置
+        生效、界面却看不见也改不了。
+        """
+        group = getattr(self, "region_group", None)
+        if group is not None:
+            group.setVisible(bool(visible))
 
     def _capture_set_no_current_task(self):
         """把「当前步骤」置为无效（两个窗口的属性名不同）。"""
@@ -2148,6 +2162,12 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
         self.recognition_group = QWidget()
         recognition_layout = QVBoxLayout(self.recognition_group)
         recognition_layout.setContentsMargins(0, 0, 0, 0)
+        # 识别区域单独成组：它对 normal/advanced 与 click_until_gone 都可见
+        # （引擎两种步骤都会用到 match_rects，见 _set_region_group_visible）。
+        # 这里只创建，挂到面板上的动作放在 recognition_group 之后以决定显示顺序。
+        self.region_group = QGroupBox("识别区域")
+        region_layout = QVBoxLayout(self.region_group)
+        region_layout.setContentsMargins(0, 0, 0, 0)
         self.template_edit = QLineEdit()
         self.threshold_edit = QLineEdit()
         self.timeout_edit = QLineEdit()
@@ -2180,12 +2200,14 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
         # X/Y 成对并排（此前 4 个坐标各占一行，输入框 529px 却只填一个短数字）
         add_coordinate_row("偏移:", self.offset_x_edit, self.offset_y_edit)
         add_coordinate_row("点击:", self.click_x_edit, self.click_y_edit)
+
+        # 以下两行移入独立的「识别区域」组（对所有会用到区域的步骤类型可见）
         # 一个步骤可以有多条识别区域（引擎逐条尝试），这一行用于查看/切换/删除
         _add_region_selector_row(
-            recognition_layout, self.region_selector,
+            region_layout, self.region_selector,
             self.region_status_label, self.region_delete_button,
         )
-        add_row("识别区域(左上,右下):", self.match_rect_edit)
+        partial(_add_form_row, region_layout)("识别区域(左上,右下):", self.match_rect_edit)
 
         next_row = QHBoxLayout()
         next_row.setContentsMargins(0, 0, 0, 0)
@@ -2220,6 +2242,9 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
         recognition_layout.addLayout(options_row)
 
         self.editor_layout.addWidget(self.recognition_group)
+
+        # 识别区域组紧跟在识别设置之后（创建在 _build_editor_panel 开头）
+        self.editor_layout.addWidget(self.region_group)
 
         self.click_until_group = QGroupBox("持续点击设置")
         click_until_layout = QVBoxLayout(self.click_until_group)
@@ -3033,6 +3058,8 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
         is_click_until = task.get("type") == "click_until_gone"
         is_recognition = task.get("type", "normal") in ("normal", "advanced")
         self.recognition_group.setVisible(is_recognition)
+        # 识别区域对「识别型」与「持续点击」都可见：后者同样会用到 match_rects
+        self._set_region_group_visible(is_recognition or is_click_until)
         self.click_until_group.setVisible(is_click_until)
         self.editor_actions.setVisible(is_recognition or is_click_until)
         templates = task.get("templates") or task.get("template", "")
@@ -3258,6 +3285,7 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
         self.click_until_continue_checkbox.setChecked(False)
         self.click_until_stop_on_change_checkbox.setChecked(False)
         self.click_until_group.setVisible(False)
+        self._set_region_group_visible(False)
         self.wait_for_combo.setCurrentIndex(0)
         self.template_preview.setPixmap(QPixmap())
         self.template_preview.setText("")
@@ -3291,6 +3319,10 @@ class BlueprintWindow(CaptureOverlayMixin, QMainWindow):
                 task["required"] = True
                 task["optional"] = False
                 task["enabled"] = self.enabled_checkbox.isChecked()
+                # 持续点击步骤同样会用识别区域（execute_click_until_gone_task ->
+                # match_task_templates -> resolve_search_rects），所以这里也要回写，
+                # 否则「识别区域」组显示出来了、填进去的值却不落盘。
+                self._capture_apply_current_region(task)
                 self._push_history()
                 self.refresh()
                 self._select_node(self.current_index)
@@ -4074,6 +4106,13 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         recognition_layout.setContentsMargins(0, 0, 0, 0)
         editor_layout.addWidget(self.recognition_group)
 
+        # 识别区域单独成组：它对 normal/advanced 与 click_until_gone 都可见
+        # （引擎两种步骤都会用到 match_rects，见 _set_region_group_visible）
+        self.region_group = QGroupBox("识别区域")
+        region_layout = QVBoxLayout(self.region_group)
+        region_layout.setContentsMargins(0, 0, 0, 0)
+        editor_layout.addWidget(self.region_group)
+
         self.click_until_group = QGroupBox("持续点击设置")
         click_until_layout = QVBoxLayout(self.click_until_group)
         click_until_layout.setContentsMargins(0, 0, 0, 0)
@@ -4135,14 +4174,17 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         # X/Y 成对并排（此前 4 个坐标各占一行，输入框 529px 却只填一个短数字）
         add_coordinate_row("偏移:", self.offset_x_edit, self.offset_y_edit)
         add_coordinate_row("点击:", self.click_x_edit, self.click_y_edit)
+
+        # 以下四行移入独立的「识别区域」组（对所有会用到区域的步骤类型可见）
         # 一个步骤可以有多条识别区域（引擎逐条尝试），这一行用于查看/切换/删除
         _add_region_selector_row(
-            recognition_layout, self.region_selector,
+            region_layout, self.region_selector,
             self.region_status_label, self.region_delete_button,
         )
-        add_coordinate_row("左上:", self.region_left_edit, self.region_top_edit)
-        add_coordinate_row("右下:", self.region_right_edit, self.region_bottom_edit)
-        add_coordinate_row("中心:", self.region_center_x_edit, self.region_center_y_edit)
+        add_region_coordinate_row = partial(_add_coordinate_row, region_layout)
+        add_region_coordinate_row("左上:", self.region_left_edit, self.region_top_edit)
+        add_region_coordinate_row("右下:", self.region_right_edit, self.region_bottom_edit)
+        add_region_coordinate_row("中心:", self.region_center_x_edit, self.region_center_y_edit)
 
         next_row = QHBoxLayout()
         next_row.setContentsMargins(0, 0, 0, 0)
@@ -4734,6 +4776,8 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         is_recognition = task.get("type", "normal") in ("normal", "advanced")
         self.editor_actions.setVisible(is_recognition or is_click_until)
         self.recognition_group.setVisible(is_recognition)
+        # 识别区域对「识别型」与「持续点击」都可见：后者同样会用到 match_rects
+        self._set_region_group_visible(is_recognition or is_click_until)
         self.click_until_group.setVisible(is_click_until)
         self.special_group.setTitle("持续点击设置" if is_click_until else "类型专用字段" if is_recognition else "步骤设置")
         self.description_edit.setText(str(task.get("description", "")))
@@ -4875,6 +4919,7 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
         self.wait_for_combo.setCurrentIndex(0)
         self._rebuild_special_form({})
         self.recognition_group.setVisible(False)
+        self._set_region_group_visible(False)
         self.group_form.setVisible(False)
         self.current_group_id = None
 
@@ -5261,6 +5306,10 @@ class PySide6ScriptWindow(CaptureOverlayMixin, QMainWindow):
                 task["stop_on_change"] = self.click_until_stop_on_change_checkbox.isChecked()
                 task["click"] = True
                 task["required"] = True
+                # 持续点击步骤同样会用识别区域（execute_click_until_gone_task ->
+                # match_task_templates -> resolve_search_rects），所以这里也要回写，
+                # 否则「识别区域」组显示出来了、填进去的值却不落盘。
+                self._capture_apply_current_region(task)
             else:
                 template_value = self.template_edit.text().strip() or "new_step"
                 if task.get("type") == "advanced":

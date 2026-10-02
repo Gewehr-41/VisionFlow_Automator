@@ -61,6 +61,25 @@ CONNECTION_OUTPUT_FIELDS = {
 }
 
 
+def detour_active(task):
+    """迂回是否生效的**唯一**判据（引擎闸门、迂回对话框初值、任务列表标签都用它）。
+
+    `detour_enabled` 是显式开关，只要任务里写了这个字段就以它为准：
+    明确写 False 就是关闭 —— 即使还留着 `detour_jump_to`。旧语义是
+    「开关为真 **或** 有失败跳转」，于是"清空跳转但没关开关"（或反过来
+    "关了开关但没清跳转"）都会留下半状态：前者让识别失败被静默吞掉，
+    后者让界面上的「取消勾选」形同虚设。
+
+    老数据没有这个字段，则沿用「有失败跳转即视为开启」的历史语义，
+    保证未迁移的数据行为不变。
+    """
+    if not isinstance(task, dict):
+        return False
+    if "detour_enabled" in task:
+        return bool(task.get("detour_enabled"))
+    return task.get("detour_jump_to") is not None
+
+
 class TaskNode(Node):
     """把旧版任务字典适配为统一节点对象。"""
 

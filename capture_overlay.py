@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
 
 import config
 from main import MATCH_STRATEGIES, get_task_match_strategy, reload_templates
+from nodes import detour_active
 from tasks import TASKS
 from ui_common import (
     _add_click_until_row,
@@ -756,7 +757,9 @@ class CaptureOverlayMixin:
         layout = QVBoxLayout(dialog)
 
         enabled_checkbox = QCheckBox("启用迂回")
-        enabled_checkbox.setChecked(bool(task.get("detour_enabled", False)))
+        # 初值走与引擎同一个判据：老数据没写开关但有失败跳转时，这里要显示为
+        # 「已启用」，否则用户只是打开对话框再保存，就会把在跑的迂回意外关掉。
+        enabled_checkbox.setChecked(detour_active(task))
         layout.addWidget(enabled_checkbox)
 
         jump_options = ["不跳转"]

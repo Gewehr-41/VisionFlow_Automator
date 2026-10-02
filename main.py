@@ -12,7 +12,7 @@ from core.screen import capture_screen, to_global_position, get_window_rect
 from core.template_match import StopExecution, load_templates, match_all_templates
 from core.input import click_position, click_global_position, drag_position, key_down, key_up
 from tasks import TASKS
-from nodes import NodeGraph, TaskNode
+from nodes import NodeGraph, TaskNode, detour_active
 
 
 templates = load_templates(ICON_DIR)
@@ -1034,7 +1034,7 @@ def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True):
                     return False
             return True
 
-        if allow_detour and (task.get("detour_enabled") or task.get("detour_jump_to") is not None):
+        if allow_detour and detour_active(task):
             log(f"  当前任务未识别到 '{tpl_name}'，执行迂回流程。", log_callback)
             if execute_detour_task(task, stop_flag=stop_flag, log_callback=log_callback):
                 jump_target = task.get("detour_jump_to")

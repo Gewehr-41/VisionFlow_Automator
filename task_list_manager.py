@@ -15,7 +15,7 @@ from PySide6.QtCore import Qt, QTimer, Slot
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QMessageBox, QTreeWidgetItem
 
-from nodes import remap_jump_targets
+from nodes import detour_active, remap_jump_targets
 from tasks import TASKS
 from ui_common import _jump_index_map
 
@@ -142,7 +142,7 @@ class TaskListMixin:
         def make_task_item(index, task):
             description = task.get("description", task.get("template", "未命名步骤"))
             task_type = task.get("type", "normal")
-            detour_status = " · 已启用迂回" if task.get("detour_enabled") else ""
+            detour_status = " · 已启用迂回" if detour_active(task) else ""
             item = QTreeWidgetItem([f"{index + 1:02d}. [{task_type}] {description}{detour_status}"])
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsDragEnabled)
             item.setData(0, Qt.UserRole, str(task.get("id", index)))

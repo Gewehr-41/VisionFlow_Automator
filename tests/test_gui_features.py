@@ -448,6 +448,29 @@ class GuiFeatureTests(unittest.TestCase):
             # 列表必须跟着还原，否则后续测试拿到的树项下标与 TASKS 不一致
             self.window.refresh_task_list()
 
+    def test_detour_label_follows_the_effective_state(self):
+        """列表里的「已启用迂回」必须与引擎判据同源（§8.1 #76）。"""
+        original = copy.deepcopy(g.TASKS)
+        try:
+            cases = (
+                ({"detour_enabled": False, "detour_jump_to": 2}, False, "显式关闭压过残留跳转"),
+                ({"detour_jump_to": 2}, True, "老数据没有开关字段"),
+                ({"detour_enabled": True}, True, "只有开关、没有跳转"),
+                ({}, False, "两者都没有"),
+            )
+            for extra, expected, why in cases:
+                task = {"id": "d", "type": "normal", "description": "迂回标签", "enabled": True}
+                task.update(extra)
+                g.TASKS[:] = [task, {"id": "e", "type": "normal", "description": "目标", "enabled": True}]
+                self.window.refresh_task_list()
+                item = self.window._find_task_item(0)
+                text = item.text(0) if item is not None else ""
+                with self.subTest(why=why, extra=extra):
+                    self.assertEqual("已启用迂回" in text, expected, f"{why}：列表文本为 {text!r}")
+        finally:
+            g.TASKS[:] = original
+            self.window.refresh_task_list()
+
     def test_preview_and_actions_are_siblings_in_one_row(self):
         """缩略图与按钮容器应同属一个水平行布局（左右并排）。"""
         preview_parent = self.window.template_preview.parentWidget()

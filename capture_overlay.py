@@ -1294,6 +1294,16 @@ class CaptureOverlayMixin:
         action_layout.setContentsMargins(0, 0, 0, 0)
         action_layout.setHorizontalSpacing(6)
         action_layout.setVerticalSpacing(4)
+        # 四个「采集类」按钮只对识别型（normal/advanced）与持续点击步骤有意义，
+        # 所以单独放进子容器、按步骤类型整体显隐（见 _update_editor_visibility）。
+        # ⚠️ 不能像以前那样把整个 editor_actions 一起隐藏：那会连带藏掉「应用修改」，
+        # 使另外 8 种步骤（delay/key_press/keyboard_move/drag/loop/condition/switch/event）
+        # 在编辑器里的改动没有任何按钮可以写回（历史上就是这么错的，见 §8.1 #74）。
+        self.capture_actions = QWidget()
+        capture_layout = QGridLayout(self.capture_actions)
+        capture_layout.setContentsMargins(0, 0, 0, 0)
+        capture_layout.setHorizontalSpacing(6)
+        capture_layout.setVerticalSpacing(4)
         for index, (label, handler) in enumerate((
             ("绑定图片", self.select_template_file),
             ("记录点击点", self.start_click_capture),
@@ -1302,10 +1312,11 @@ class CaptureOverlayMixin:
         )):
             button = QPushButton(label)
             button.clicked.connect(handler)
-            action_layout.addWidget(button, index // 2, index % 2)
+            capture_layout.addWidget(button, index // 2, index % 2)
+        action_layout.addWidget(self.capture_actions, 0, 0, 1, 2)
         self.apply_button = QPushButton("应用修改")
         self.apply_button.clicked.connect(self._apply_editor)
-        action_layout.addWidget(self.apply_button, 2, 0, 1, 2)
+        action_layout.addWidget(self.apply_button, 1, 0, 1, 2)
 
         # 模板预览在左、操作按钮在右，避免按钮整行铺开导致右侧留白。
         preview_row = QHBoxLayout()
@@ -1693,7 +1704,10 @@ class CaptureOverlayMixin:
         # 识别区域对「识别型」与「持续点击」都可见：后者同样会用到 match_rects
         self._set_region_group_visible(is_recognition or is_click_until)
         self.click_until_group.setVisible(is_click_until)
-        self.editor_actions.setVisible(is_recognition or is_click_until)
+        # 动作区整体随「选中了步骤」显示（从分组编辑切回来时必须重新显示，
+        # 否则会残留 _load_editor_for_group 里那次隐藏）；只有采集类按钮按类型显隐。
+        self.editor_actions.setVisible(True)
+        self.capture_actions.setVisible(is_recognition or is_click_until)
 
     def _load_common_editor_fields(self, task):
         """把任务里两个窗口共有的字段加载到面板控件。"""

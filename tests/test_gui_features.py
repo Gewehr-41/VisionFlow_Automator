@@ -32,20 +32,44 @@ class GuiFeatureTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self._orig_presets = tasks.PRESETS_FILE
-        self._orig_tasks = tasks.TASKS_FILE
+        self._orig_tasks_file = tasks.TASKS_FILE
         self._orig_save_presets = g.save_presets
         self._orig_save_tasks = g.save_tasks
         tasks.PRESETS_FILE = os.path.join(self._tmp.name, "saved_presets.json")
         tasks.TASKS_FILE = os.path.join(self._tmp.name, "saved_tasks.json")
         g.save_presets = tasks.save_presets
         g.save_tasks = tasks.save_tasks
+        # 固定夹具：本类此前**隐式依赖本机 saved_tasks.json 的步骤数** —— `tasks.TASKS`
+        # 在导入期就从真实文件读好了，setUp 里重定向路径并不会重新加载。本机数据一旦
+        # 少于 6 步，test_flow_next_to_outside_task_is_left_alone 就越界，两个预览测试
+        # 也取不到带模板的步骤（2026-09-30 所有者把列表删到 3 步后，这 3 条就挂了）。
+        # 这里显式装一份 8 步夹具，模板名取自真实模板库，测试与本机数据彻底解耦。
+        self._orig_task_list = copy.deepcopy(g.TASKS)
+        g.TASKS[:] = [self._fixture_task(index) for index in range(8)]
         self.window = g.PySide6ScriptWindow()
         self.mode = self.window.mode_combo.currentText() or "custom"
 
+    @staticmethod
+    def _fixture_task(index):
+        """夹具步骤：模板名取模板库里真实存在的一张，保证预览能显示。"""
+        import main
+        template = sorted(main.templates)[0] if main.templates else "1"
+        return {
+            "id": f"fixture-{index}",
+            "type": "normal",
+            "mode": "custom",
+            "description": f"夹具步骤 {index + 1}",
+            "enabled": True,
+            "template": template,
+            "click": True,
+            "required": True,
+        }
+
     def tearDown(self):
         self.window.close()
+        g.TASKS[:] = self._orig_task_list
         tasks.PRESETS_FILE = self._orig_presets
-        tasks.TASKS_FILE = self._orig_tasks
+        tasks.TASKS_FILE = self._orig_tasks_file
         g.save_presets = self._orig_save_presets
         g.save_tasks = self._orig_save_tasks
         self._tmp.cleanup()
@@ -351,7 +375,8 @@ class GuiFeatureTests(unittest.TestCase):
     def test_buttons_are_laid_out_in_a_grid(self):
         """按钮应排成网格（两列），而非整行铺开。"""
         from PySide6.QtWidgets import QGridLayout, QPushButton
-        layout = self.window.editor_actions.layout()
+        # 四个采集类按钮在 capture_actions 子容器里；「应用修改」在 editor_actions 里
+        layout = self.window.capture_actions.layout()
         self.assertIsInstance(layout, QGridLayout, "操作按钮应使用网格布局以便放右侧")
         positions = {}
         for i in range(layout.count()):
@@ -376,6 +401,52 @@ class GuiFeatureTests(unittest.TestCase):
                 self.assertEqual(cs, 2, "「应用修改」应跨两列")
                 return
         self.fail("未找到「应用修改」按钮")
+
+    def test_apply_button_is_visible_for_every_step_type(self):
+        """回归（§8.1 #74）：曾经有 8 种步骤类型连「应用修改」都看不到。
+
+        原因：采集类按钮与「应用修改」共用 editor_actions，而那整块被按类型
+        `setVisible(is_recognition or is_click_until)` 隐藏，于是 delay / key_press /
+        keyboard_move / drag / loop / condition / switch / event 的编辑器内容
+        （步骤名称、启用状态、类型专用字段）根本没有任何按钮能写回。
+
+        不变式：只要选中了步骤，「应用修改」在两个窗口都必须可见；
+        采集类按钮则相反，非识别型步骤应当隐藏（保持原有意图）。
+        """
+        types = ("normal", "keyboard_move", "key_press", "delay", "drag",
+                 "click_until_gone", "loop", "condition", "switch", "event")
+        original = copy.deepcopy(g.TASKS)
+        bp = g.BlueprintWindow([], {}, lambda *a, **k: None, {}, self.window, {})
+        try:
+            for step_type in types:
+                task = {"id": f"t_{step_type}", "type": step_type, "mode": "custom",
+                        "description": step_type, "enabled": True, "template": "1",
+                        "click": True, "required": True}
+                with self.subTest(window="主窗口", step_type=step_type):
+                    g.TASKS[:] = [copy.deepcopy(task)]
+                    self.window.refresh_task_list()
+                    self.window.select_task_index(0)
+                    self.assertTrue(
+                        self.window.apply_button.isVisibleTo(self.window),
+                        f"主窗口的 {step_type} 步骤看不到「应用修改」")
+                with self.subTest(window="蓝图窗口", step_type=step_type):
+                    bp.tasks = [copy.deepcopy(task)]
+                    bp.refresh()
+                    bp._select_node(0)
+                    self.assertTrue(
+                        bp.apply_button.isVisibleTo(bp),
+                        f"蓝图窗口的 {step_type} 步骤看不到「应用修改」")
+            # 采集类按钮（绑定图片 / 记录点击点 / 框选识别区域 / 清空识别区域）
+            # 对非识别型步骤仍然隐藏，避免给出不起作用的入口。
+            g.TASKS[:] = [{"id": "d", "type": "delay", "description": "d", "enabled": True}]
+            self.window.refresh_task_list()
+            self.window.select_task_index(0)
+            self.assertFalse(self.window.capture_actions.isVisibleTo(self.window))
+        finally:
+            bp.close()
+            g.TASKS[:] = original
+            # 列表必须跟着还原，否则后续测试拿到的树项下标与 TASKS 不一致
+            self.window.refresh_task_list()
 
     def test_preview_and_actions_are_siblings_in_one_row(self):
         """缩略图与按钮容器应同属一个水平行布局（左右并排）。"""

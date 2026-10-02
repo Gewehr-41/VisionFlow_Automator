@@ -766,6 +766,76 @@ class EditorRoundTripTests(unittest.TestCase):
         self.assertEqual(own_task.get("type"), "key_press")
 
 
+class BlueprintDetourCutTests(unittest.TestCase):
+    """蓝图里「删除连接」与迂回开关必须对称（§8.1 #75）。
+
+    引擎的判据是 `detour_enabled or detour_jump_to is not None`（main.py），
+    所以切断迂回线时只清跳转、留着开关，会让这一步在识别失败时**照样**走迂回，
+    而且因为没有跳转目标，失败被静默吞掉（不再按超时报错）。
+
+    save_callback 传空实现，测试不写任何真实数据文件；四个路径仍然一起重定向，
+    这样即使以后写盘改走别的模块，也不会漏到真实文件。
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._orig_files = (tasks.PRESETS_FILE, tasks.TASKS_FILE,
+                            tasks.BLUEPRINT_LAYOUT_FILE, tasks.BLUEPRINT_GRAPH_FILE)
+        tasks.PRESETS_FILE = os.path.join(self._tmp.name, "saved_presets.json")
+        tasks.TASKS_FILE = os.path.join(self._tmp.name, "saved_tasks.json")
+        tasks.BLUEPRINT_LAYOUT_FILE = os.path.join(self._tmp.name, "saved_blueprint_layouts.json")
+        tasks.BLUEPRINT_GRAPH_FILE = os.path.join(self._tmp.name, "saved_blueprint_graphs.json")
+
+    def tearDown(self):
+        (tasks.PRESETS_FILE, tasks.TASKS_FILE,
+         tasks.BLUEPRINT_LAYOUT_FILE, tasks.BLUEPRINT_GRAPH_FILE) = self._orig_files
+        self._tmp.cleanup()
+
+    def _make_window(self, **fields):
+        """三步：第 1 步带迂回，第 2/3 步可作跳转目标（避免自连接）。"""
+        source = {"id": "a", "type": "normal", "description": "带迂回", "enabled": True,
+                  "template": "1", "click": True, "required": True,
+                  "detour_enabled": True,
+                  "detour_steps": [{"type": "delay", "duration": 1.0}]}
+        source.update(fields)
+        other = [{"id": t_id, "type": "normal", "description": f"目标 {t_id}", "enabled": True,
+                  "template": "1", "click": True, "required": True} for t_id in ("b", "c")]
+        window = g.BlueprintWindow([source] + other, {}, lambda *a, **k: None, {}, None, {})
+        return window, source
+
+    @staticmethod
+    def _edges_of(window, *kinds):
+        return [e for e in window._edges if e["edge_kind"] in kinds]
+
+    def test_cutting_the_only_detour_wire_turns_the_switch_off(self):
+        window, source = self._make_window(detour_jump_to=2)
+        edges = self._edges_of(window, "detour_success", "detour_failure")
+        self.assertEqual(len(edges), 1, "应只有一条迂回跳转线")
+        window._delete_connection(edges[0])
+        self.assertIsNone(source.get("detour_jump_to"), "跳转目标应被清空")
+        self.assertFalse(source.get("detour_enabled"), "切断迂回连线后开关必须一起关掉")
+        self.assertTrue(source.get("detour_steps"), "已配置的迂回步骤不该被清掉")
+
+    def test_cutting_one_of_two_detour_wires_keeps_the_switch_on(self):
+        window, source = self._make_window(detour_jump_to=2, detour_success_jump_to=3)
+        edges = self._edges_of(window, "detour_success", "detour_failure")
+        self.assertEqual(len(edges), 2, "成功/失败两条迂回线都应在")
+        window._delete_connection(edges[0])
+        self.assertTrue(source.get("detour_enabled"), "还剩一条迂回线时不该关掉开关")
+        remaining = self._edges_of(window, "detour_success", "detour_failure")
+        self.assertEqual(len(remaining), 1)
+        window._delete_connection(remaining[0])
+        self.assertFalse(source.get("detour_enabled"), "最后一条迂回线也切掉后必须关掉开关")
+
+    def test_cutting_a_flow_wire_does_not_touch_the_detour(self):
+        window, source = self._make_window(detour_jump_to=2)
+        flow_edges = self._edges_of(window, "flow", "default")
+        self.assertTrue(flow_edges, "应有普通执行流连线")
+        window._delete_connection(flow_edges[-1])
+        self.assertTrue(source.get("detour_enabled"), "切普通连线不该影响迂回开关")
+        self.assertEqual(source.get("detour_jump_to"), 2)
+
+
 class BlueprintGraphWiringTests(unittest.TestCase):
     """验证 open_blueprint() 真的把「补全后的任务列表」交给蓝图窗口。
 

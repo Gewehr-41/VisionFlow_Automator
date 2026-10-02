@@ -744,6 +744,17 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
             source_task["condition_false_jump_to"] = None
         elif kind == "timeout":
             source_task["timeout_jump_to"] = None
+        # 迂回的两条跳转线就是「这条步骤用不用迂回」在画布上的表示（连上时
+        # connect_nodes 会置 detour_enabled=True），所以切断后必须对称地关掉开关：
+        # 引擎的判据是 `detour_enabled or detour_jump_to is not None`（main.py），
+        # 只清跳转而留着开关，会让这一步在识别失败时**照样**走迂回流程、
+        # 而且因为没有跳转目标，失败会被静默吞掉（不再按超时报错）。
+        # 只在两条线都不剩时才关：只切成一条说明迂回仍然接在图上；已配置的
+        # detour_steps 一律保留，不做破坏性清空。
+        if kind in ("detour_success", "detour_failure") and not (
+                source_task.get("detour_jump_to") is not None
+                or source_task.get("detour_success_jump_to") is not None):
+            source_task["detour_enabled"] = False
         self._push_history()
         self.refresh()
         self.save_layout()

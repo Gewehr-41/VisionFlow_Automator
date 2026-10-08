@@ -868,6 +868,14 @@ class BlueprintGraphWiringTests(unittest.TestCase):
         g.save_tasks = tasks.save_tasks
         g.save_blueprint_layouts = tasks.save_blueprint_layouts
         g.save_blueprint_graphs = tasks.save_blueprint_graphs
+        # 固定夹具：本类的断言需要至少 3 个步骤，而 `g.TASKS` 在**导入期**就从本机
+        # 真实 saved_tasks.json 读好了（setUp 重定向路径并不会重新加载）——本机列表
+        # 一变小，用例就会以"预设步骤不足"失败。夹具在 tearDown 里还原。
+        g.TASKS[:] = [
+            {"id": f"wire-{index}", "type": "normal", "description": f"夹具步骤 {index + 1}",
+             "enabled": True, "template": "1", "click": True, "required": True}
+            for index in range(4)
+        ]
         self.window = g.PySide6ScriptWindow()
 
     def tearDown(self):

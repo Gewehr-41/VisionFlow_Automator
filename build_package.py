@@ -57,13 +57,15 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 # 打包产物里"必须有"的东西：改 `.spec` 的 `excludes` / `_DROP` 之前先读这一份。
-# （路径都是相对分发目录的，来源：2026-10 实测通过的产物结构）
+# 这些路径**逐个对照过真实产物**（2026-10-10，1201 个程序文件 / 202.8 MB 的那份）：
+# 注意 Qt 的 DLL 与 opengl32sw.dll 都在 `_internal\PySide6\` 下，不在 `_internal\` 根上
+# —— 一开始把 opengl32sw.dll 写成 `_internal\opengl32sw.dll`，结果对好包误报"缺少"。
 REQUIRED_ENTRIES = (
     (os.path.join("_internal", "PySide6", "Qt6Svg.dll"),
      "Qt 的 SVG 支持：勾选框样式依赖它，缺了勾选框会变成空白"),
     (os.path.join("_internal", "PySide6", "plugins", "imageformats", "qsvg.dll"),
      "Qt 的 SVG 图片插件：同上"),
-    (os.path.join("_internal", "opengl32sw.dll"),
+    (os.path.join("_internal", "PySide6", "opengl32sw.dll"),
      "软件 OpenGL 兜底：虚拟机 / 远程桌面里缺了会黑窗"),
     (os.path.join("_internal", "_tk_data"),
      "pyautogui 在导入期依赖 tkinter，缺了程序直接起不来"),

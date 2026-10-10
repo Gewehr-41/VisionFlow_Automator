@@ -106,7 +106,7 @@ VisionFlow_Automator_打包版\
 - **必须放在可写目录**（桌面、`D:\` 下的自建目录等）。**不要放进 `C:\Program Files`**——程序运行时要往 exe 同级目录写数据文件，那里默认没有写权限。
 - 4 个数据文件（`saved_tasks.json` 等）就在 **exe 同级目录**，与源码运行的规则一致；想换位置可设置环境变量 `VF_DATA_DIR`。
 - 启动后日志框会打印 `[打包运行] 资源目录=…；数据目录=…`，可据此确认它读的是哪份数据。
-- 详细的构建/裁剪方法见「项目接手文档.md」§10；`.spec` 就是构建规格。
+- 详细的构建/裁剪方法见 `docs/项目接手文档.md` §10；`.spec` 就是构建规格。
 
 **改完代码后重新打包（一键）**：双击 `打包.bat`，或在本目录执行 `python build_package.py`。脚本按「预检 → 构建 → 部署 → 校验 → 收尾」五步走：
 
@@ -457,20 +457,20 @@ VisionFlow_Automator/
 ├─ diagnostics.py         运行期诊断消息的集中收集点
 ├─ config.py              全局识别、超时和窗口配置
 ├─ requirements.txt       Python 依赖清单
-├─ VisionFlow_Automator.spec  PyInstaller 打包规格（构建说明见「项目接手文档.md」§10）
+├─ VisionFlow_Automator.spec  PyInstaller 打包规格（构建说明见 docs/项目接手文档.md §10）
+├─ build_package.py       一键打包脚本（构建 → 部署 → 校验，见 §2.3）
 ├─ saved_tasks.json       custom 自定义任务
 ├─ saved_presets.json     用户预设、删除记录和分组信息
 ├─ saved_blueprint_layouts.json  蓝图步骤布局和缩放
 ├─ saved_blueprint_graphs.json   蓝图步骤与连接关系
 ├─ README.md               本说明
 ├─ CHANGELOG.md            更新日志
-├─ 项目接手文档.md         接手文档（现状/问题清单/设计/打包）
-├─ 优化路线.md             决策记录与路线
-├─ 更新报告.md             更新报告（接手 → 可分发，含量化对比与验证方式）
 ├─ icons/                  模板 PNG（64 张）+ 2 个 Qt 复选框 SVG
 ├─ core/                   截屏、输入和模板匹配模块
-├─ tests/                  单元测试（unittest，385 个用例 / 17 个文件）
-└─ 启动新界面.bat         启动 PySide6 界面（静默）—— 唯一入口
+├─ docs/                   内部文档（项目接手文档 / 优化路线 / 更新报告）
+├─ tests/                  单元测试（unittest，411 个用例 / 19 个文件）
+├─ 启动新界面.bat          启动 PySide6 界面（静默）—— 唯一入口
+└─ 打包.bat                一键重新打包（构建 → 部署 → 校验）
 ```
 
 > 第一代 Tkinter 界面 `legacy/gui.py` 与 `legacy/README.md` 已于 2026-09-28 删除

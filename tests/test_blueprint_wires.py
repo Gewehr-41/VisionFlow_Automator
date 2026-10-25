@@ -12,8 +12,13 @@ import unittest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QEvent, QPointF, Qt  # noqa: E402
-from PySide6.QtGui import QMouseEvent  # noqa: E402
-from PySide6.QtWidgets import QApplication, QGraphicsItem  # noqa: E402
+from PySide6.QtGui import QImage, QMouseEvent, QPainter  # noqa: E402
+from PySide6.QtWidgets import (  # noqa: E402
+    QApplication,
+    QGraphicsItem,
+    QStyle,
+    QStyleOptionGraphicsItem,
+)
 
 import gui_pyside6 as g  # noqa: E402
 
@@ -184,6 +189,51 @@ class WireSelectionTests(unittest.TestCase):
         self.assertEqual(len(self.window.tasks), 3, "删连线不该删步骤")
         self.assertIsNone(self.window.tasks[0].get("flow_next"))
         self.assertIsNone(self.window.tasks[1].get("flow_next"))
+
+
+class WireSelectionPaintTests(unittest.TestCase):
+    """选中连线时不该多出一圈 Qt 自带的虚线选中框（§8.1 #78 的收尾）。
+
+    成因：`QGraphicsPathItem::paint` 在 `State_Selected` 时会调用
+    `qt_graphicsItem_highlightSelected`，在**图元外接矩形**上补画一圈虚线；
+    连线的 boundingRect 还额外放宽了 14px，所以看起来像凭空多了一个白框。
+    选中态本身由 `_highlighted` 的白色描边表达。
+    """
+
+    def setUp(self):
+        self.window = make_window()
+        self.wire = self.window._edges[0]["wire"]
+
+    def tearDown(self):
+        self.window.close()
+
+    def _render(self, selected):
+        bounds = self.wire.boundingRect()
+        image = QImage(int(bounds.width()) + 2, int(bounds.height()) + 2,
+                       QImage.Format.Format_ARGB32)
+        image.fill(0)
+        painter = QPainter(image)
+        painter.translate(-bounds.left(), -bounds.top())
+        option = QStyleOptionGraphicsItem()
+        if selected:
+            option.state = option.state | QStyle.StateFlag.State_Selected
+        self.wire.paint(painter, option)
+        painter.end()
+        return image
+
+    def test_selected_state_does_not_paint_qt_selection_box(self):
+        plain = self._render(False)
+        selected = self._render(True)
+        self.assertEqual(plain.constBits().tobytes(), selected.constBits().tobytes(),
+                         "选中连线时图元自身不该多画东西（虚线框应被清掉，选中用白描边表示）")
+
+    def test_highlight_still_draws_when_selected(self):
+        """清掉虚线框不能把高亮也一起清掉：高亮由 _highlighted 控制。"""
+        plain = self._render(False)
+        self.wire._highlighted = True
+        highlighted = self._render(False)
+        self.assertNotEqual(plain.constBits().tobytes(), highlighted.constBits().tobytes(),
+                            "高亮描边必须真的画出来")
 
 
 if __name__ == "__main__":

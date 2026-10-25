@@ -19,6 +19,8 @@ from PySide6.QtWidgets import (
     QGraphicsScene,
     QGraphicsTextItem,
     QGraphicsView,
+    QStyle,
+    QStyleOptionGraphicsItem,
 )
 
 class BlueprintNodeItem(QGraphicsRectItem):
@@ -358,7 +360,14 @@ class BlueprintWireItem(QGraphicsPathItem):
             painter.setPen(QPen(QColor("#ffffff"), self._width + 2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
             painter.setBrush(Qt.NoBrush)
             painter.drawPath(self.path())
-        super().paint(painter, option, widget)
+        # Qt 会给"被选中的图元"在外接矩形上补画一圈虚线选中框
+        # （qt_graphicsItem_highlightSelected，由 super().paint 按 State_Selected 触发）。
+        # 连线选中后外接矩形比线本身大一圈（boundingRect 还额外放宽了 14px），
+        # 那圈白虚线看起来就像凭空多出来的一个框；选中态已由上面的白描边表达，
+        # 所以这里把选中位清掉再交给基类。
+        base_option = QStyleOptionGraphicsItem(option)
+        base_option.state = base_option.state & ~QStyle.StateFlag.State_Selected
+        super().paint(painter, base_option, widget)
         # 每根线的尽头都绘制小箭头，指向目标节点
         painter.setPen(Qt.NoPen)
         painter.setBrush(QBrush(self._color))

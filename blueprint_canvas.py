@@ -86,6 +86,8 @@ class BlueprintNodeItem(QGraphicsRectItem):
         self._connected_outputs = set()
         self._has_input = False
         self._runtime_state = None
+        # 悬停时"如果现在按下，会抓住哪个端口"——只用于高亮反馈，不参与任何逻辑判定
+        self._hover_port = None
 
     @staticmethod
     def output_ports(task):
@@ -185,6 +187,11 @@ class BlueprintNodeItem(QGraphicsRectItem):
         painter.setBrush(QBrush(input_color))
         painter.setPen(QPen(input_outline, 1))
         painter.drawEllipse(-5, center_y - 5, 10, 10)
+        if self._hover_port == "input":
+            # 悬停高亮：告诉用户"现在按下会从输入口开始拉线"
+            painter.setBrush(Qt.NoBrush)
+            painter.setPen(QPen(QColor("#ffffff"), 2))
+            painter.drawEllipse(-9, center_y - 9, 18, 18)
         painter.setFont(QFont("Microsoft YaHei", 7))
         for name, label, offset in self.ports():
             base = self.PORT_COLORS.get(name, "#94a3b8")
@@ -198,24 +205,48 @@ class BlueprintNodeItem(QGraphicsRectItem):
             painter.setPen(QPen(outline, 1))
             y = self.port_y(offset)
             painter.drawEllipse(rect.width() - 5, y - 5, 10, 10)
+            if name == self._hover_port:
+                painter.setBrush(Qt.NoBrush)
+                painter.setPen(QPen(QColor("#ffffff"), 2))
+                painter.drawEllipse(rect.width() - 9, y - 9, 18, 18)
             painter.setPen(QPen(QColor(color)))
             painter.drawText(QRectF(rect.width() - 80, y - 8, 70, 16), Qt.AlignRight | Qt.AlignVCenter, label)
 
-    def output_at(self, point):
+    def output_at(self, point, tolerance=None):
+        """返回这个点上"最近"的输出端口名，或 None。
+
+        以前是「按 ports() 顺序，第一个落进容差的就返回」（容差固定 14px）。
+        端口间距只有 16/20/32px，于是相邻两个端口的判定区互相重叠，
+        而且重叠区永远归 ports() 里靠前的那个（「顺序」）——实测瞄准
+        「未识别/成功/超时」时错抓 31%（缩放 43% 时 43%）。
+        改成"最近者胜"：只要离哪个端口最近就归哪个，重叠区不再有系统性偏向。
+        """
+        tolerance = 14.0 if tolerance is None else float(tolerance)
         if point.x() < self.rect().width() - 45:
             return None
+        best = None
+        best_distance = None
         for name, _label, offset in self.ports():
-            if abs(point.y() - self.port_y(offset)) <= 14:
-                return name
-        return None
+            distance = abs(point.y() - self.port_y(offset))
+            if distance <= tolerance and (best_distance is None or distance < best_distance):
+                best = name
+                best_distance = distance
+        return best
 
-    def input_at(self, point):
+    def input_at(self, point, tolerance=None):
+        tolerance = 14.0 if tolerance is None else float(tolerance)
         if point.x() > 18:
             return None
-        center_y = self.rect().height() / 2
-        if abs(point.y() - center_y) <= 14:
+        if abs(point.y() - self.rect().height() / 2) <= tolerance:
             return "input"
         return None
+
+    def set_hover_port(self, name):
+        """高亮"现在按下会抓住的端口"；None 表示不高亮。"""
+        if self._hover_port == name:
+            return
+        self._hover_port = name
+        self.update()
 
     def set_move_callback(self, callback):
         self._move_callback = callback
@@ -461,12 +492,33 @@ class BlueprintView(QGraphicsView):
     node_toggle_requested = Signal(int)
     wire_clicked = Signal(object)
 
+    # 连线手感相关的三个"屏幕像素"参数：都按当前缩放换算成场景坐标再用，
+    # 否则缩小画布后判定区会跟着一起变小（43% 缩放时 14px 只剩 6px）。
+    _PORT_TOLERANCE_PX = 12.0        # 端口判定容差
+    _PORT_TOLERANCE_SCENE_MAX = 22.0  # 换算后的上限，避免低缩放下把整块节点都算成端口
+    _START_MARGIN_PX = 10.0          # 从节点外侧多远处按下仍然算"够到了端口"
+    _DROP_MARGIN_PX = 12.0           # 松手时离目标节点多远仍然算接上
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.pending_connection = None
         self._connection_preview = None
         self._panning = False
         self._pan_last = None
+        self._hovered_port = None   # (node, 端口名)
+        self._hover_cross = False
+
+    # ---------- 命中半径（屏幕像素 → 场景坐标） ----------
+
+    def _view_scale(self):
+        return abs(self.transform().m11()) or 1.0
+
+    def _port_tolerance(self):
+        scene_value = self._PORT_TOLERANCE_PX / self._view_scale()
+        return max(14.0, min(scene_value, self._PORT_TOLERANCE_SCENE_MAX))
+
+    def _scene_margin(self, pixels):
+        return float(pixels) / self._view_scale()
 
     def _node_item_from(self, item):
         if isinstance(item, BlueprintNodeItem):
@@ -485,23 +537,27 @@ class BlueprintView(QGraphicsView):
             event.accept()
             return
         scene_position = self.mapToScene(event.position().toPoint())
+        # 端口优先于连线：连线正是从端口出发的，压在端口上会先命中连线，
+        # 于是"想拉线"变成"选中了连线"——这也是点击没反应的原因之一。
+        # 允许从节点外侧一点点按下：端口画在边框上，按偏 1px 就完全起不了拖。
+        node = self._node_at_scene_pos(scene_position, self._START_MARGIN_PX)
+        if node is not None:
+            local = node.mapFromScene(scene_position)
+            tolerance = self._port_tolerance()
+            output = node.output_at(local, tolerance)
+            if output is not None:
+                self.pending_connection = (node, output, "output")
+                event.accept()
+                return
+            if node.input_at(local, tolerance) is not None:
+                self.pending_connection = (node, "input", "input")
+                event.accept()
+                return
         item = self.scene().itemAt(scene_position, self.transform())
         if isinstance(item, BlueprintWireItem):
             self.wire_clicked.emit(item)
             event.accept()
             return
-        node = self._node_item_from(item)
-        if node is not None:
-            local = node.mapFromScene(scene_position)
-            output = node.output_at(local)
-            if output is not None:
-                self.pending_connection = (node, output, "output")
-                event.accept()
-                return
-            if node.input_at(local) is not None:
-                self.pending_connection = (node, "input", "input")
-                event.accept()
-                return
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
@@ -516,7 +572,46 @@ class BlueprintView(QGraphicsView):
             self._update_connection_preview(event.position())
             event.accept()
             return
+        self._update_hover_feedback(event.position())
         super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event):
+        self._clear_hover()
+        super().leaveEvent(event)
+
+    def _update_hover_feedback(self, view_pos):
+        """悬停时把"按下会抓住哪个端口"标出来——这比单纯放大判定区更能解决"不灵敏"。"""
+        scene_pos = self.mapToScene(view_pos.toPoint())
+        node = self._node_at_scene_pos(scene_pos, self._START_MARGIN_PX)
+        hovered = None
+        if node is not None:
+            local = node.mapFromScene(scene_pos)
+            tolerance = self._port_tolerance()
+            port = node.output_at(local, tolerance)
+            if port is None and node.input_at(local, tolerance) is not None:
+                port = "input"
+            if port is not None:
+                hovered = (node, port)
+        if hovered != self._hovered_port:
+            if self._hovered_port is not None:
+                self._hovered_port[0].set_hover_port(None)
+            if hovered is not None:
+                hovered[0].set_hover_port(hovered[1])
+            self._hovered_port = hovered
+        if (hovered is not None) != self._hover_cross:
+            self._hover_cross = hovered is not None
+            if self._hover_cross:
+                self.setCursor(Qt.CrossCursor)
+            else:
+                self.unsetCursor()
+
+    def _clear_hover(self):
+        if self._hovered_port is not None:
+            self._hovered_port[0].set_hover_port(None)
+            self._hovered_port = None
+        if self._hover_cross:
+            self._hover_cross = False
+            self.unsetCursor()
 
     def _connection_start_position(self, node, side, port):
         if side == "output":
@@ -525,34 +620,59 @@ class BlueprintView(QGraphicsView):
             return QPointF(node.x() + node.rect().width(), node.y() + sy)
         return QPointF(node.x(), node.y() + node.rect().height() / 2)
 
-    def _node_at_scene_pos(self, scene_pos):
+    def _node_at_scene_pos(self, scene_pos, margin_px=0.0):
+        """返回该点下的节点。
+
+        `margin_px` > 0 时，允许点在节点外侧这么多（屏幕像素）之内也算命中——
+        端口圆圈画在节点边框上，用户瞄着圆点按下、差一两个像素按到外面时，
+        以前 `itemAt()` 直接返回 None，等于"这次点击没发生"，手感就是"不灵敏"。
+        """
         # 预览线层级最高，会挡住节点，命中测试时先临时隐藏
         preview = self._connection_preview
         if preview is not None:
             preview.setVisible(False)
         try:
             item = self.scene().itemAt(scene_pos, self.transform())
-            return self._node_item_from(item)
+            node = self._node_item_from(item)
         finally:
             if preview is not None:
                 preview.setVisible(True)
+        if node is not None or margin_px <= 0:
+            return node
+        margin = self._scene_margin(margin_px)
+        best = None
+        best_distance = None
+        for candidate in self.scene().items():
+            if not isinstance(candidate, BlueprintNodeItem) or not candidate.isVisible():
+                continue
+            rect = candidate.rect()
+            local = candidate.mapFromScene(scene_pos)
+            if not rect.adjusted(-margin, -margin, margin, margin).contains(local):
+                continue
+            # 取"越出矩形最少"的那个，避免两个节点贴得很近时互相抢
+            dx = max(rect.left() - local.x(), 0.0, local.x() - rect.right())
+            dy = max(rect.top() - local.y(), 0.0, local.y() - rect.bottom())
+            distance = dx * dx + dy * dy
+            if best_distance is None or distance < best_distance:
+                best = candidate
+                best_distance = distance
+        return best
 
     def _connection_target(self, scene_pos, source_node, side):
-        target = self._node_at_scene_pos(scene_pos)
+        target = self._node_at_scene_pos(scene_pos, self._DROP_MARGIN_PX)
         if target is None or target is source_node:
             return None, None
         local = target.mapFromScene(scene_pos)
-        if not target.rect().adjusted(-16, -16, 16, 16).contains(local):
-            return None, None
         if side == "output":
             return target, "input"
+        # 从输入口往输出口拖：取最近的输出端口（不设容差上限，落点越近越准）
         best = None
-        best_dist = 1e9
+        best_distance = None
         for name, _label, offset in target.ports():
-            dist = abs(local.y() - target.port_y(offset))
-            if dist < best_dist:
-                best_dist = dist
+            distance = abs(local.y() - target.port_y(offset))
+            if best_distance is None or distance < best_distance:
                 best = name
+                best_distance = distance
         return target, best
 
     def _update_connection_preview(self, view_pos):

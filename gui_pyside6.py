@@ -146,6 +146,7 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
         self.view.group_toggle_requested.connect(self.toggle_group)
         self.view.node_toggle_requested.connect(self.toggle_collapse)
         self.view.wire_clicked.connect(self._on_wire_clicked)
+        self.view.wires_cut.connect(self._on_wires_cut)
         # zoom_changed 此前从未 connect；接上它才能在滚轮缩放后立即持久化
         self.view.zoom_changed.connect(self._on_zoom_changed)
         # 恢复上次的缩放比例。此前 zoom 只写不读（只在 sync_positions 里写入
@@ -515,6 +516,10 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
     def delete_selected(self):
         selected = sorted({item.index for item in self.scene.selectedItems() if isinstance(item, BlueprintNodeItem)}, reverse=True)
         if not selected:
+            # 只选中了连线：删除这些连接（框选连线后按 Delete 走的就是这里）
+            wires = [item for item in self.scene.selectedItems() if isinstance(item, BlueprintWireItem)]
+            if wires:
+                self._delete_wires(wires)
             return
         self._push_history()
         removed = set(selected)
@@ -536,6 +541,9 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
         self.refresh()
 
     def show_context_menu(self, position):
+        # 刚用 Ctrl+右键划过线：这次右键已经用于划断，不要再弹菜单
+        if self.view.consume_menu_suppression():
+            return
         scene_position = self.view.mapToScene(position)
         clicked_items = self.scene.items(scene_position)
         clicked_item = clicked_items[0] if clicked_items else None
@@ -560,11 +568,17 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
         edge = self._edge_for_wire(clicked_item)
         node = self._node_item_from(clicked_item)
         if edge is not None and node is None:
+            selected_wires = [i for i in self.scene.selectedItems() if isinstance(i, BlueprintWireItem)]
             menu = QMenu(self)
             add_bend_action = menu.addAction("在线上添加转折点")
-            delete_conn_action = menu.addAction("删除连接")
+            if len(selected_wires) > 1 and clicked_item in selected_wires:
+                # 框选了多条线后右键其中一条 → 一起删（等价于"批量断线"）
+                delete_conn_action = menu.addAction(f"删除选中的 {len(selected_wires)} 条连接")
+                delete_conn_action.triggered.connect(lambda: self._delete_wires(selected_wires))
+            else:
+                delete_conn_action = menu.addAction("删除连接")
+                delete_conn_action.triggered.connect(lambda: self._delete_connection(edge))
             add_bend_action.triggered.connect(lambda: self._add_bend(edge, scene_position))
-            delete_conn_action.triggered.connect(lambda: self._delete_connection(edge))
             menu.exec(self.view.mapToGlobal(position))
             return
 
@@ -729,8 +743,19 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
 
 
     def _delete_connection(self, edge):
-        source_task = self.tasks[edge["source"].index]
-        kind = edge["edge_kind"]
+        self._delete_connections([edge])
+
+    def _delete_wires(self, wires):
+        """按连线图元删除连接（框选 / 右键多选时用）。"""
+        wire_set = set(wires)
+        self._delete_connections([edge for edge in self._edges if edge["wire"] in wire_set])
+
+    def _on_wires_cut(self, wires):
+        """Ctrl+右键划断：一次性切掉划过的那几条连接。"""
+        self._delete_wires(list(wires or []))
+
+    def _clear_connection_fields(self, source_task, kind):
+        """把一条连接对应的跳转字段清掉（含迂回开关的对称处理）。"""
         if kind in ("flow", "default"):
             source_task["flow_next"] = None
             source_task["flow_next_disabled"] = True
@@ -755,7 +780,16 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
                 source_task.get("detour_jump_to") is not None
                 or source_task.get("detour_success_jump_to") is not None):
             source_task["detour_enabled"] = False
+
+    def _delete_connections(self, edges):
+        """一次删除多条连接：只推一次历史、重建一次场景、落盘一次。"""
+        edges = [edge for edge in edges if edge is not None]
+        if not edges:
+            return
         self._push_history()
+        for edge in edges:
+            self._clear_connection_fields(self.tasks[edge["source"].index], edge["edge_kind"])
+        self.selected_edge = None
         self.refresh()
         self.save_layout()
 

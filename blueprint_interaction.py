@@ -10,7 +10,7 @@
 from PySide6.QtCore import QPointF, QRectF, QTimer, Slot
 from PySide6.QtWidgets import QGraphicsTextItem
 
-from blueprint_canvas import BendHandleItem, BlueprintGroupItem, BlueprintNodeItem
+from blueprint_canvas import BendHandleItem, BlueprintGroupItem, BlueprintNodeItem, BlueprintWireItem
 
 
 class BlueprintInteractionMixin:
@@ -85,7 +85,11 @@ class BlueprintInteractionMixin:
     def _apply_wire_geometry(self, edge):
         output = edge["output"]
         is_exec = output == "output"
-        highlighted = (edge is self.selected_edge) or edge["source"].isSelected() or edge["target"].isSelected()
+        # 连线自己被框选/单击选中时也要高亮（框选删除多条线时靠这个看清单选了哪些）
+        highlighted = ((edge is self.selected_edge)
+                       or edge["wire"].isSelected()
+                       or edge["source"].isSelected()
+                       or edge["target"].isSelected())
         color = self._wire_color(output, edge["is_default"])
         start = self._node_endpoint(edge["source"].index, "output", output)
         end = self._node_endpoint(edge["target"].index, "input")
@@ -95,6 +99,17 @@ class BlueprintInteractionMixin:
         self._sync_bend_handles(edge)
 
     def _on_wire_clicked(self, wire):
+        # 单击某条线时，清掉其它被框选的线，避免"选中态"里混着一堆旧线
+        if not self._refreshing:
+            stale = [item for item in self.scene.selectedItems()
+                     if isinstance(item, BlueprintWireItem) and item is not wire]
+            if stale:
+                self._refreshing = True
+                try:
+                    for item in stale:
+                        item.setSelected(False)
+                finally:
+                    self._refreshing = False
         self.selected_edge = None
         for edge in self._edges:
             if edge["wire"] is wire:
@@ -183,12 +198,26 @@ class BlueprintInteractionMixin:
             return
         nodes = [i for i in self.scene.selectedItems() if isinstance(i, BlueprintNodeItem)]
         groups = [i for i in self.scene.selectedItems() if isinstance(i, BlueprintGroupItem)]
+        wires = [i for i in self.scene.selectedItems() if isinstance(i, BlueprintWireItem)]
+        if (nodes or groups) and wires:
+            # 框选节点/分组时顺带框到的连线不算选中：否则"删除选中的步骤"会连坐
+            # 删掉穿过选区的连线，而用户完全没意识到自己选中了它们。
+            self._refreshing = True
+            try:
+                for wire in wires:
+                    wire.setSelected(False)
+            finally:
+                self._refreshing = False
+            wires = []
         if len(nodes) == 1:
             self.selected_edge = None
             self._select_node(nodes[0].index)
         elif len(nodes) == 0 and len(groups) == 1:
             self.selected_edge = None
             self._load_editor_for_group(groups[0].group_id)
+        elif len(nodes) == 0 and wires:
+            # 只选中了连线：右侧编辑器保持原样，别把用户正在看的步骤清空
+            pass
         elif len(nodes) == 0:
             self.selected_edge = None
             self._clear_editor()

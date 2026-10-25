@@ -6,8 +6,10 @@
 
 名字在 gui_pyside6 里重新导出，`gui_pyside6.BlueprintNodeItem` 等用法不变。
 """
+import time
+
 from PySide6.QtCore import QLineF, QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QFont, QPainterPath, QPen, QPolygonF
+from PySide6.QtGui import QBrush, QColor, QFont, QPainterPath, QPainterPathStroker, QPen, QPolygonF
 from PySide6.QtWidgets import (
     QGraphicsEllipseItem,
     QGraphicsItem,
@@ -282,7 +284,20 @@ class BlueprintWireItem(QGraphicsPathItem):
         self.bends = []
         self._width = 2
         self._highlighted = False
+        # Ctrl+右键划过时把"将被切断"的线标红（只是预览，改数据在窗口层）
+        self._cut_preview = False
+        # 连线要能参与框选，才能一次删掉多条。节点被选中时会自动排除连线，
+        # 见 BlueprintInteractionMixin._on_selection_changed。
+        self.setFlag(QGraphicsItem.ItemIsSelectable, True)
         self.setZValue(-1)
+
+    def set_cut_preview(self, active):
+        self._cut_preview = bool(active)
+        self.update()
+
+    @property
+    def cut_preview(self):
+        return self._cut_preview
 
     def update_wire(self, start, end, color, is_exec, bends=None, width=2, highlighted=False):
         self.is_exec = is_exec
@@ -333,6 +348,11 @@ class BlueprintWireItem(QGraphicsPathItem):
         return super().boundingRect().adjusted(-14, -14, 14, 14)
 
     def paint(self, painter, option, widget=None):
+        if self._cut_preview:
+            # 划断预览：红边压在线上，松手前就能看清会切掉哪几条
+            painter.setPen(QPen(QColor("#ef4444"), self._width + 3, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawPath(self.path())
         if self._highlighted:
             # 高亮仅在外围描一圈白色细边，不改变主线颜色、不超出线太多
             painter.setPen(QPen(QColor("#ffffff"), self._width + 2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
@@ -491,6 +511,7 @@ class BlueprintView(QGraphicsView):
     group_toggle_requested = Signal(str)
     node_toggle_requested = Signal(int)
     wire_clicked = Signal(object)
+    wires_cut = Signal(object)   # Ctrl+右键划过：携带被划中的 BlueprintWireItem 列表
 
     # 连线手感相关的三个"屏幕像素"参数：都按当前缩放换算成场景坐标再用，
     # 否则缩小画布后判定区会跟着一起变小（43% 缩放时 14px 只剩 6px）。
@@ -507,6 +528,11 @@ class BlueprintView(QGraphicsView):
         self._pan_last = None
         self._hovered_port = None   # (node, 端口名)
         self._hover_cross = False
+        # Ctrl+右键划断连线
+        self._cut_active = False
+        self._cut_start = QPointF()
+        self._cut_preview_item = None
+        self._cut_suppress_until = 0.0
 
     # ---------- 命中半径（屏幕像素 → 场景坐标） ----------
 
@@ -535,6 +561,17 @@ class BlueprintView(QGraphicsView):
             self._pan_last = event.position()
             self.setCursor(Qt.ClosedHandCursor)
             event.accept()
+            return
+        if event.button() == Qt.RightButton:
+            if event.modifiers() & Qt.ControlModifier:
+                # Ctrl+右键拖动 = 划断连线（不弹右键菜单，见 consume_menu_suppression）
+                self._begin_cut(self.mapToScene(event.position().toPoint()))
+                event.accept()
+                return
+            super().mousePressEvent(event)
+            return
+        if event.button() != Qt.LeftButton:
+            super().mousePressEvent(event)
             return
         scene_position = self.mapToScene(event.position().toPoint())
         # 端口优先于连线：连线正是从端口出发的，压在端口上会先命中连线，
@@ -566,6 +603,10 @@ class BlueprintView(QGraphicsView):
             self._pan_last = event.position()
             self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - int(delta.x()))
             self.verticalScrollBar().setValue(self.verticalScrollBar().value() - int(delta.y()))
+            event.accept()
+            return
+        if self._cut_active:
+            self._update_cut(self.mapToScene(event.position().toPoint()))
             event.accept()
             return
         if self.pending_connection is not None:
@@ -633,6 +674,82 @@ class BlueprintView(QGraphicsView):
         if self._hover_cross:
             self._hover_cross = False
             self.unsetCursor()
+
+    # ---------- Ctrl+右键划断连线（Blender 的 Cut Links）----------
+
+    _CUT_MIN_DRAG_PX = 6.0     # 拖动短于这个距离不算划断，避免 Ctrl+右键单击误切
+    _CUT_TOLERANCE_PX = 8.0    # 划断线两侧的容差（屏幕像素）
+
+    def cut_active(self):
+        return self._cut_active
+
+    def consume_menu_suppression(self):
+        """窗口弹右键菜单前问一次：刚划过线就别再弹菜单。只生效一次。
+
+        用时间窗而不是 QTimer(0)：右键松开 → 菜单请求 → 定时器三者的先后顺序
+        并不保证，用时间窗（500ms）就不会出现"划完线又弹出菜单"。
+        """
+        if time.monotonic() >= self._cut_suppress_until:
+            return False
+        self._cut_suppress_until = 0.0
+        return True
+
+    def _visible_wires(self):
+        return [item for item in self.scene().items()
+                if isinstance(item, BlueprintWireItem) and item.isVisible()]
+
+    def _cut_area(self, start, end):
+        """把划断路径加粗成一条"切线区域"，方便切到稍微偏一点的线。"""
+        stroke = QPainterPathStroker()
+        stroke.setWidth(self._CUT_TOLERANCE_PX / self._view_scale())
+        line = QPainterPath(QPointF(start))
+        line.lineTo(QPointF(end))
+        return stroke.createStroke(line)
+
+    def _cut_is_long_enough(self, end):
+        return QLineF(self._cut_start, end).length() >= self._CUT_MIN_DRAG_PX / self._view_scale()
+
+    def _begin_cut(self, scene_pos):
+        self._clear_hover()
+        self._cut_active = True
+        self._cut_start = QPointF(scene_pos)
+        self._cut_preview_item = QGraphicsLineItem(QLineF(self._cut_start, self._cut_start))
+        self._cut_preview_item.setZValue(30)
+        self._cut_preview_item.setAcceptedMouseButtons(Qt.NoButton)
+        self._cut_preview_item.setPen(QPen(QColor("#ef4444"), 2, Qt.DashLine))
+        self.scene().addItem(self._cut_preview_item)
+        self.setCursor(Qt.CrossCursor)
+
+    def _update_cut(self, scene_pos):
+        if self._cut_preview_item is not None:
+            self._cut_preview_item.setLine(QLineF(self._cut_start, scene_pos))
+        cut_area = self._cut_area(self._cut_start, scene_pos) if self._cut_is_long_enough(scene_pos) else None
+        for wire in self._visible_wires():
+            wire.set_cut_preview(cut_area is not None and wire.path().intersects(cut_area))
+
+    def _finish_cut(self, scene_pos):
+        cut_wires = []
+        if self._cut_is_long_enough(scene_pos):
+            cut_area = self._cut_area(self._cut_start, scene_pos)
+            cut_wires = [wire for wire in self._visible_wires() if wire.path().intersects(cut_area)]
+        self._end_cut()
+        if cut_wires:
+            # 右键菜单常在这之后才请求，用一个短时间窗把它压掉
+            self._cut_suppress_until = time.monotonic() + 0.5
+            self.wires_cut.emit(cut_wires)
+
+    def _end_cut(self):
+        self._cut_active = False
+        if self._cut_preview_item is not None:
+            try:
+                self.scene().removeItem(self._cut_preview_item)
+            except RuntimeError:   # 场景已被 refresh() 清空
+                pass
+            self._cut_preview_item = None
+        for wire in self._visible_wires():
+            if wire.cut_preview:
+                wire.set_cut_preview(False)
+        self.unsetCursor()
 
     def _connection_start_position(self, node, side, port):
         if side == "output":
@@ -725,6 +842,10 @@ class BlueprintView(QGraphicsView):
             self._connection_preview = None
 
     def mouseReleaseEvent(self, event):
+        if self._cut_active:
+            self._finish_cut(self.mapToScene(event.position().toPoint()))
+            event.accept()
+            return
         if event.button() == Qt.MiddleButton and self._panning:
             self._panning = False
             self._pan_last = None

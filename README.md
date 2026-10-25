@@ -469,8 +469,8 @@ VisionFlow_Automator/
 ├─ CHANGELOG.md            更新日志
 ├─ icons/                  模板 PNG（64 张）+ 2 个 Qt 复选框 SVG
 ├─ core/                   截屏、输入和模板匹配模块
-├─ docs/                   内部文档（项目接手文档 / 优化路线 / 更新报告）
-├─ tests/                  单元测试（unittest，411 个用例 / 19 个文件）
+├─ docs/                   内部文档（项目接手文档 / 优化路线 / 更新报告 / 更新日记）
+├─ tests/                  单元测试（unittest，446 个用例 / 23 个文件）
 ├─ 启动新界面.bat          启动 PySide6 界面（静默）—— 唯一入口
 └─ 打包.bat                一键重新打包（构建 → 部署 → 校验）
 ```

@@ -43,6 +43,16 @@ import tasks
 _APP = QApplication.instance() or QApplication([])
 
 import gui_pyside6 as g
+
+# 编辑器往返用例需要"至少一步、且类型为 normal"的固定数据：
+# 所有者本地的 saved_tasks.json 实测可能被裁剪甚至清空（2026-10-26 为 0 条），
+# 若依赖它，整类用例会以「预设为空」误报失败。
+ROUNDTRIP_FIXTURE_TASKS = [
+    {"id": "roundtrip-fixture-0", "type": "normal", "description": "往返夹具 A",
+     "enabled": True, "template": "1", "click": True, "required": True},
+    {"id": "roundtrip-fixture-1", "type": "normal", "description": "往返夹具 B",
+     "enabled": True, "template": "2", "click": False, "required": False},
+]
 import blueprint_canvas
 import capture_overlay
 import task_widgets
@@ -357,6 +367,13 @@ class EditorRoundTripTests(unittest.TestCase):
         g.save_presets = tasks.save_presets
         g.save_tasks = tasks.save_tasks
         self.window = g.PySide6ScriptWindow()
+        # 本类用例要"加载第 1 步 → 改值 → 应用"，必须自带夹具：所有者本地的
+        # saved_tasks.json 随时可能被裁剪甚至清空（2026-10-26 实测 0 条，曾让整类
+        # 用例以"预设为空"误报失败）。夹具在窗口构造之后装，避免构造期的预设加载覆盖它。
+        self.mode = self.window.mode_combo.currentText() or "custom"
+        g.TASKS[:] = copy.deepcopy(ROUNDTRIP_FIXTURE_TASKS)
+        self.window.mode_tasks[self.mode] = copy.deepcopy(ROUNDTRIP_FIXTURE_TASKS)
+        self.window.refresh_task_list()
 
     def tearDown(self):
         self.window.close()

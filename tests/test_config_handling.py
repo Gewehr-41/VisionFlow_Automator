@@ -12,6 +12,7 @@
    新绑定的图片会"存了却找不到"。
 """
 
+import copy
 import os
 import tempfile
 import unittest
@@ -85,6 +86,7 @@ class _GuiTestCase(unittest.TestCase):
         self._orig_tasks_file = tasks.TASKS_FILE
         self._orig_save_presets = g.save_presets
         self._orig_save_tasks = g.save_tasks
+        self._tasks_snapshot = copy.deepcopy(g.TASKS)
         tasks.PRESETS_FILE = os.path.join(self._tmp.name, "saved_presets.json")
         tasks.TASKS_FILE = os.path.join(self._tmp.name, "saved_tasks.json")
         g.save_presets = tasks.save_presets
@@ -93,6 +95,7 @@ class _GuiTestCase(unittest.TestCase):
 
     def tearDown(self):
         self.window.close()
+        g.TASKS[:] = self._tasks_snapshot
         tasks.PRESETS_FILE = self._orig_presets_file
         tasks.TASKS_FILE = self._orig_tasks_file
         g.save_presets = self._orig_save_presets
@@ -151,6 +154,13 @@ class ConfigRestoreWiringTests(_GuiTestCase):
 
     def setUp(self):
         super().setUp()
+        # selected_tasks() 需要"启用步骤"非空。所有者本地的 saved_tasks.json 实测可能
+        # 被清空（2026-10-26 为 0 条），所以这里自带夹具，别让环境数据决定用例成败。
+        self.mode = self.window.mode_combo.currentText() or "custom"
+        g.TASKS[:] = [{"id": "config-fixture-0", "type": "normal", "description": "配置夹具",
+                       "enabled": True, "template": "1", "click": True, "required": True}]
+        self.window.mode_tasks[self.mode] = copy.deepcopy(g.TASKS)
+        self.window.refresh_task_list()
         self._orig_thread = execution_control.QThread
         self._orig_worker = execution_control.TaskWorker
         self._orig_g_thread = g.QThread

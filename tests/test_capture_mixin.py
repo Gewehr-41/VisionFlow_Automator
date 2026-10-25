@@ -28,6 +28,14 @@ _APP = QApplication.instance() or QApplication([])
 import gui_pyside6 as g
 
 
+_FIXTURE_TASKS = [
+    {"id": "capture-fixture-0", "type": "normal", "description": "采集夹具 A",
+     "enabled": True, "template": "1", "click": True, "required": True},
+    {"id": "capture-fixture-1", "type": "normal", "description": "采集夹具 B",
+     "enabled": True, "template": "2", "click": False, "required": False},
+]
+
+
 class CaptureMixinContractTests(unittest.TestCase):
     """先验证契约：两个窗口都应从 mixin 继承采集方法。"""
 
@@ -54,6 +62,13 @@ class CaptureMixinContractTests(unittest.TestCase):
         g.save_tasks = tasks.save_tasks
         self._tasks_snapshot = copy.deepcopy(g.TASKS)
         self.window = g.PySide6ScriptWindow()
+        # 本类用例按下标访问 g.TASKS，必须自带夹具：所有者本地的 saved_tasks.json
+        # 随时可能被裁剪甚至清空（2026-10-26 实测为 0 条，曾让整类用例以
+        # IndexError 误报失败）。夹具在窗口构造之后装，避免构造期的预设加载覆盖它。
+        self.mode = self.window.mode_combo.currentText() or "custom"
+        g.TASKS[:] = copy.deepcopy(_FIXTURE_TASKS)
+        self.window.mode_tasks[self.mode] = copy.deepcopy(_FIXTURE_TASKS)
+        self.window.refresh_task_list()
 
     def tearDown(self):
         self.window.close()

@@ -25,6 +25,8 @@ def make_window(count=3):
               "template": "1", "click": True, "required": True} for i in range(count)]
     window = g.BlueprintWindow(tasks, {}, lambda *a, **k: None, {}, None, {})
     window.resize(1400, 900)
+    window.show()   # 让 viewport 有真实尺寸，橡皮筋框选才按正常几何走
+    QApplication.processEvents()
     return window
 
 
@@ -112,17 +114,28 @@ class WireSelectionTests(unittest.TestCase):
     def _wires(self):
         return [edge["wire"] for edge in self.window._edges]
 
+    def _enter_wire_band_mode(self):
+        """模拟"按住 Ctrl 在空白处按下"——框选模式切换为只框连线。"""
+        empty = QPointF(0, 600)
+        self.view.mousePressEvent(mouse_event(QEvent.MouseButtonPress, self.view, empty,
+                                              Qt.LeftButton, Qt.ControlModifier))
+        self.view.mouseReleaseEvent(mouse_event(QEvent.MouseButtonRelease, self.view, empty,
+                                                Qt.LeftButton, Qt.ControlModifier))
+        self.assertTrue(self.view.band_prefers_wires(), "Ctrl+左键按下应进入只框连线的模式")
+
     def test_wire_is_selectable(self):
         for wire in self._wires():
             self.assertTrue(wire.flags() & QGraphicsItem.ItemIsSelectable, "连线应可被框选")
 
     def test_selected_wire_is_highlighted(self):
+        self._enter_wire_band_mode()
         wire = self._wires()[0]
         wire.setSelected(True)
         self.window._update_edges()
         self.assertTrue(wire._highlighted, "被框选的连线应该高亮，否则看不出选中了哪些")
 
     def test_box_selecting_wires_keeps_the_editor_open(self):
+        self._enter_wire_band_mode()
         self.window._select_node(1)
         index_before = self.window.current_index
         for wire in self._wires():
@@ -131,13 +144,39 @@ class WireSelectionTests(unittest.TestCase):
                          "只框选连线时不该把右侧正在编辑的步骤清掉")
 
     def test_selecting_a_node_deselects_the_wires(self):
+        """普通框选（没按 Ctrl）时，连线不算选中，避免删步骤连坐删线。"""
         for wire in self._wires():
             wire.setSelected(True)
         self.window._node_items[0].setSelected(True)
         self.assertFalse(any(wire.isSelected() for wire in self._wires()),
-                         "框选节点时顺带框到的连线应自动排除（否则删步骤会连坐删线）")
+                         "普通框选下的连线应被排除")
+
+    def test_ctrl_band_keeps_wires_and_drops_nodes(self):
+        self._enter_wire_band_mode()
+        wire = self._wires()[0]
+        wire.setSelected(True)
+        self.window._node_items[0].setSelected(True)
+        self.assertTrue(wire.isSelected(), "Ctrl 框选模式下连线应保留")
+        self.assertFalse(self.window._node_items[0].isSelected(), "Ctrl 框选模式下步骤应被排除")
+
+    def test_ctrl_rubber_band_selects_wires_and_skips_nodes(self):
+        """走真实的橡皮筋：Ctrl+左键从空白拖一个框，框住节点和连线，只应选中连线。"""
+        mid = self._wires()[0].path().pointAtPercent(0.5)
+        start = QPointF(mid.x() - 200, mid.y() - 120)
+        end = QPointF(mid.x() + 420, mid.y() + 120)
+        self.view.mousePressEvent(mouse_event(QEvent.MouseButtonPress, self.view, start,
+                                              Qt.LeftButton, Qt.ControlModifier))
+        self.view.mouseMoveEvent(mouse_event(QEvent.MouseMove, self.view, end,
+                                             Qt.LeftButton, Qt.ControlModifier))
+        self.view.mouseReleaseEvent(mouse_event(QEvent.MouseButtonRelease, self.view, end,
+                                                Qt.LeftButton, Qt.ControlModifier))
+        self.assertTrue(any(wire.isSelected() for wire in self._wires()),
+                        "Ctrl+拖动框选应该选中连线")
+        self.assertFalse(any(item.isSelected() for item in self.window._node_items.values()),
+                         "同一个框里的步骤不该被选中")
 
     def test_delete_removes_all_selected_wires_at_once(self):
+        self._enter_wire_band_mode()
         for wire in self._wires():
             wire.setSelected(True)
         self.window.delete_selected()

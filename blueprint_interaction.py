@@ -199,16 +199,24 @@ class BlueprintInteractionMixin:
         nodes = [i for i in self.scene.selectedItems() if isinstance(i, BlueprintNodeItem)]
         groups = [i for i in self.scene.selectedItems() if isinstance(i, BlueprintGroupItem)]
         wires = [i for i in self.scene.selectedItems() if isinstance(i, BlueprintWireItem)]
-        if (nodes or groups) and wires:
-            # 框选节点/分组时顺带框到的连线不算选中：否则"删除选中的步骤"会连坐
-            # 删掉穿过选区的连线，而用户完全没意识到自己选中了它们。
+        # 框选模式由按下时是否按着 Ctrl 决定：
+        #   · 普通拖动 → 只框步骤/分组，顺带框到的连线不算选中
+        #     （否则"删除选中的步骤"会连坐删掉穿过选区的连线）
+        #   · Ctrl+拖动 → 只框连线，顺带框到的步骤/分组不算选中
+        prefers_wires = self.view.band_prefers_wires() if hasattr(self.view, "band_prefers_wires") else False
+        if prefers_wires:
+            unwanted = nodes + groups
+            nodes, groups = [], []
+        else:
+            unwanted = wires
+            wires = []
+        if unwanted:
             self._refreshing = True
             try:
-                for wire in wires:
-                    wire.setSelected(False)
+                for item in unwanted:
+                    item.setSelected(False)
             finally:
                 self._refreshing = False
-            wires = []
         if len(nodes) == 1:
             self.selected_edge = None
             self._select_node(nodes[0].index)

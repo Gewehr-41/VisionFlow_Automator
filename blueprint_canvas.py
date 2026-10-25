@@ -533,6 +533,8 @@ class BlueprintView(QGraphicsView):
         self._cut_start = QPointF()
         self._cut_preview_item = None
         self._cut_suppress_until = 0.0
+        # 本次框选要选"连线"还是"步骤/分组"：由按下时是否按着 Ctrl 决定
+        self._band_prefers_wires = False
 
     # ---------- 命中半径（屏幕像素 → 场景坐标） ----------
 
@@ -595,6 +597,9 @@ class BlueprintView(QGraphicsView):
             self.wire_clicked.emit(item)
             event.accept()
             return
+        # 左键按在空白处会开始框选：这次是框"连线"还是框"步骤/分组"，
+        # 由按下时是否按着 Ctrl 决定（按在节点上则不改变框选模式）。
+        self._band_prefers_wires = (node is None) and bool(event.modifiers() & Qt.ControlModifier)
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
@@ -682,6 +687,10 @@ class BlueprintView(QGraphicsView):
 
     def cut_active(self):
         return self._cut_active
+
+    def band_prefers_wires(self):
+        """本次框选是否只选连线（按下时按着 Ctrl）。窗口按它过滤选择集。"""
+        return self._band_prefers_wires
 
     def consume_menu_suppression(self):
         """窗口弹右键菜单前问一次：刚划过线就别再弹菜单。只生效一次。

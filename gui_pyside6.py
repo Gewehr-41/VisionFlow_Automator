@@ -664,6 +664,8 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
 
     def _clear_editor(self):
         self.selected_label.setText("未选择步骤")
+        # 没选步骤时不该显示"步骤名称 / 启用状态 / 多模板时"
+        self.name_block.setVisible(False)
         for edit in (self.template_edit, self.description_edit, self.threshold_edit, self.timeout_edit, self.after_wait_edit, self.click_x_edit, self.click_y_edit, self.next_template_edit):
             edit.clear()
         self.click_checkbox.setChecked(False)
@@ -1488,6 +1490,8 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.template_preview.setText("无模板预览")
         self.template_preview.setVisible(False)
         self.editor_actions.setVisible(False)
+        # 没选步骤时不该显示"步骤名称 / 启用状态 / 多模板时"
+        self.name_block.setVisible(False)
         for editor in (self.description_edit, self.template_edit, self.threshold_edit, self.timeout_edit, self.after_wait_edit):
             editor.clear()
         self.click_until_template_edit.clear()

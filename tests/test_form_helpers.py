@@ -219,7 +219,7 @@ class WindowLayoutTests(unittest.TestCase):
         """共享构造器少建一个控件就会在这里失败（两个窗口都要有）。"""
         expected = (
             "selected_label", "template_preview", "editor_actions", "apply_button",
-            "capture_actions",
+            "capture_actions", "name_block", "strategy_label",
             "description_edit", "enabled_checkbox", "recognition_group", "region_group",
             "click_until_group", "template_edit", "threshold_edit", "timeout_edit",
             "after_wait_edit", "click_x_edit", "click_y_edit", "region_selector",

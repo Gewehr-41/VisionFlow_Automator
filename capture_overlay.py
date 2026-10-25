@@ -336,6 +336,8 @@ class CaptureOverlayMixin:
         self.selected_label.setText("组设置")
         self.template_preview.setVisible(False)
         self.editor_actions.setVisible(False)
+        # 组没有"步骤名称 / 启用状态 / 多模板时"，整块收起（它有自己的组设置表单）
+        self.name_block.setVisible(False)
         self.recognition_group.setVisible(False)
         self._set_region_group_visible(False)
         self._group_hide_editor_groups()
@@ -1329,8 +1331,13 @@ class CaptureOverlayMixin:
         preview_row.addWidget(self.editor_actions, 1)
         layout.addLayout(preview_row)
 
-        # 步骤名称与启用状态对所有步骤类型可见
-        name_form = QFormLayout()
+        # 步骤名称与启用状态对所有**步骤**可见；但选中分组或未选中步骤时整块都要收起来。
+        # 之前这两行是直接 `layout.addLayout(name_form)` 挂在布局上的裸表单，没有控件
+        # 句柄，于是 clear_editor / _load_editor_for_group 都藏不掉它们——表现为
+        # "未选择步骤"或"组设置"下面还残留空白的步骤名称输入框和「多模板时」。
+        self.name_block = QWidget()
+        name_form = QFormLayout(self.name_block)
+        name_form.setContentsMargins(0, 0, 0, 0)
         self.description_edit = QLineEdit()
         self.enabled_checkbox = QCheckBox("启用步骤")
         name_form.addRow("步骤名称:", self.description_edit)
@@ -1340,14 +1347,17 @@ class CaptureOverlayMixin:
         self.match_strategy_combo = QComboBox()
         for strategy_key, strategy_label in MATCH_STRATEGIES:
             self.match_strategy_combo.addItem(strategy_label, strategy_key)
+        # 「多模板时」只对"靠模板识别"的步骤（normal/advanced）有意义：
+        # 延迟/按键/移动/拖曳/持续点击等步骤的挑图策略根本不会被用到。
+        self.strategy_label = QLabel("多模板时:")
         status_row = QWidget()
         status_layout = QHBoxLayout(status_row)
         status_layout.setContentsMargins(0, 0, 0, 0)
         status_layout.addWidget(self.enabled_checkbox)
-        status_layout.addWidget(QLabel("多模板时:"))
+        status_layout.addWidget(self.strategy_label)
         status_layout.addWidget(self.match_strategy_combo, 1)
         name_form.addRow(labels["status"], status_row)
-        layout.addLayout(name_form)
+        layout.addWidget(self.name_block)
 
         self.recognition_group = QWidget()
         recognition_layout = QVBoxLayout(self.recognition_group)
@@ -1703,6 +1713,13 @@ class CaptureOverlayMixin:
         """按步骤类型切换面板各组的显隐（两个窗口这段逻辑逐字相同）。"""
         is_click_until = task.get("type") == "click_until_gone"
         is_recognition = task.get("type", "normal") in ("normal", "advanced")
+        # 选中步骤时"步骤名称 / 启用状态"整块恢复可见（从分组编辑切回来时必须重新显示，
+        # 否则会残留 _load_editor_for_group 里那次隐藏）。
+        self.name_block.setVisible(True)
+        # 「多模板时」只有真正按模板识别、且会按策略挑图的步骤才有意义。
+        # click_until_gone 虽然也做模板匹配，但它的执行路径不读挑图策略。
+        self.strategy_label.setVisible(is_recognition)
+        self.match_strategy_combo.setVisible(is_recognition)
         self.recognition_group.setVisible(is_recognition)
         # 识别区域对「识别型」与「持续点击」都可见：后者同样会用到 match_rects
         self._set_region_group_visible(is_recognition or is_click_until)

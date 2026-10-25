@@ -152,6 +152,23 @@ class EdgeAndDropTests(unittest.TestCase):
         self.view._update_hover_feedback(QPointF(self.view.mapFromScene(far)))
         self.assertIsNone(self.source._hover_port)
 
+    def test_hover_survives_a_scene_refresh(self):
+        """`refresh()` 会销毁所有节点，而悬停状态里存着节点对象。
+
+        不防这一下，刷新之后鼠标一动就会碰到已销毁的 C++ 对象并抛 RuntimeError
+        （新增/删除步骤、应用修改、撤销都会触发 refresh）。
+        """
+        scene_point = self.source.mapToScene(
+            QPointF(self.source.rect().width() - 5, self.source.port_y(0)))
+        view_point = QPointF(self.view.mapFromScene(scene_point))
+        self.view._update_hover_feedback(view_point)
+        self.assertEqual(self.source._hover_port, "output")
+
+        self.window.refresh()   # 旧节点全部销毁并重建
+        self.view._update_hover_feedback(view_point)   # 不得抛异常
+        self.view._clear_hover()                       # 同样不得抛异常
+        self.assertIsNone(self.view._hovered_port)
+
 
 if __name__ == "__main__":
     unittest.main()

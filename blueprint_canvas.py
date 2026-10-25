@@ -592,23 +592,44 @@ class BlueprintView(QGraphicsView):
                 port = "input"
             if port is not None:
                 hovered = (node, port)
-        if hovered != self._hovered_port:
-            if self._hovered_port is not None:
-                self._hovered_port[0].set_hover_port(None)
-            if hovered is not None:
-                hovered[0].set_hover_port(hovered[1])
-            self._hovered_port = hovered
-        if (hovered is not None) != self._hover_cross:
-            self._hover_cross = hovered is not None
-            if self._hover_cross:
+        self._apply_hover(hovered)
+        want_cross = hovered is not None
+        if want_cross != self._hover_cross:
+            self._hover_cross = want_cross
+            if want_cross:
                 self.setCursor(Qt.CrossCursor)
             else:
                 self.unsetCursor()
 
+    def _same_hover(self, first, second):
+        """比较两个悬停状态；节点可能已被 refresh() 销毁，比较本身也要防炸。"""
+        if first is None or second is None:
+            return first is second
+        try:
+            return first[0] is second[0] and first[1] == second[1]
+        except RuntimeError:
+            return False
+
+    def _apply_hover(self, hovered):
+        """切换高亮；上一个节点如果不在了（删除 / refresh / 撤销），静默跳过。
+
+        `refresh()` 会 `scene.clear()` 销毁所有节点，而悬停状态里存着节点对象；
+        不防这一下，刷新后鼠标一动就会碰已销毁的 C++ 对象而抛 RuntimeError。
+        """
+        if self._same_hover(self._hovered_port, hovered):
+            return
+        previous = self._hovered_port
+        if previous is not None:
+            try:
+                previous[0].set_hover_port(None)
+            except RuntimeError:
+                pass
+        if hovered is not None:
+            hovered[0].set_hover_port(hovered[1])
+        self._hovered_port = hovered
+
     def _clear_hover(self):
-        if self._hovered_port is not None:
-            self._hovered_port[0].set_hover_port(None)
-            self._hovered_port = None
+        self._apply_hover(None)
         if self._hover_cross:
             self._hover_cross = False
             self.unsetCursor()

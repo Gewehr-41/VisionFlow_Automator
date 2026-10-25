@@ -203,8 +203,54 @@ class TaskListMixin:
 
     def select_task_index(self, index):
         item = self._find_task_item(index)
-        if item is not None:
+        if item is None:
+            return
+        # QTreeView 为了让"当前项"可见，会在 setCurrentItem 内部调用 scrollTo，
+        # 把**被折叠的祖先组展开**。这有两个后果：
+        #   ① 用户手动折叠的组会自己弹开（所有者 2026-10-26 反馈：点第 4 组里的步骤，
+        #      第 1 组每点一次就自动展开）；
+        #   ② 这次展开会触发 itemExpanded → 把"展开"写回分组元数据并落盘，
+        #      也就是折叠状态被**真的改坏**了，不只是看起来变了。
+        # 所以选中前后各记一次展开状态：期间禁止写回元数据，选完按快照恢复。
+        snapshot = self._snapshot_group_expansion()
+        self._suppress_group_expand_sync = True
+        try:
             self.task_list.setCurrentItem(item)
+        finally:
+            self._suppress_group_expand_sync = False
+        self._restore_group_expansion(snapshot)
+
+    def _group_items(self):
+        """当前树里所有组项：group_id -> QTreeWidgetItem（含嵌套）。"""
+        found = {}
+        stack = [self.task_list.topLevelItem(i) for i in range(self.task_list.topLevelItemCount())]
+        while stack:
+            item = stack.pop()
+            if item is None:
+                continue
+            if item.data(0, Qt.UserRole) == "group":
+                found[str(item.data(0, Qt.UserRole + 1))] = item
+            stack.extend(item.child(i) for i in range(item.childCount()))
+        return found
+
+    def _snapshot_group_expansion(self):
+        return {group_id: item.isExpanded() for group_id, item in self._group_items().items()}
+
+    def _restore_group_expansion(self, snapshot):
+        """按快照恢复折叠状态（不写回元数据）；返回是否真的改过。"""
+        if not snapshot:
+            return False
+        changed = False
+        was_blocked = self.task_list.blockSignals(True)
+        try:
+            for group_id, item in self._group_items().items():
+                want = snapshot.get(group_id)
+                if want is not None and item.isExpanded() != want:
+                    item.setExpanded(want)
+                    changed = True
+        finally:
+            self.task_list.blockSignals(was_blocked)
+        return changed
 
     def _find_task_item(self, index):
         """在（可能嵌套的）任务树中按步骤下标查找对应的树项。"""

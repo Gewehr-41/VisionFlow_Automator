@@ -1424,6 +1424,10 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         """
         if item is None or item.data(0, Qt.UserRole) != "group":
             return
+        if getattr(self, "_suppress_group_expand_sync", False):
+            # 程序化选中步骤时，Qt 会为"让选中项可见"临时展开折叠的祖先组；
+            # 那不是用户操作，不能写回元数据，否则折叠状态会被改坏。
+            return
         group_id = str(item.data(0, Qt.UserRole + 1))
         mode = self.mode_combo.currentText() or "custom"
         metadata = self.mode_group_metadata.setdefault(mode, {})

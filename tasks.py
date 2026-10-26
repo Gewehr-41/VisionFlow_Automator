@@ -131,7 +131,7 @@ def _extract_task_list(payload):
             if isinstance(value, list):
                 return value
         for key, value in payload.items():
-            if key in ("custom", "__deleted__", "__group_metadata__", "__fallback__"):
+            if key in ("custom", "__deleted__", "__group_metadata__", "__fallback__", "__snippets__"):
                 continue
             if isinstance(value, list):
                 return value
@@ -240,7 +240,7 @@ def load_presets():
                 for name in DELETED_PRESET_NAMES:
                     presets.pop(str(name), None)
                 for name, preset_value in data.items():
-                    if name in ("custom", "__deleted__", "__group_metadata__", "__fallback__"):
+                    if name in ("custom", "__deleted__", "__group_metadata__", "__fallback__", "__snippets__"):
                         continue
                     if isinstance(preset_value, list):
                         presets[str(name)] = normalize_task_list(preset_value)
@@ -327,6 +327,28 @@ def load_fallback_steps():
         warn(f"警告: 读取 {PRESETS_FILE} 的全局兜底步骤失败（{exc}），兜底处理将不可用。")
         return {}
 
+
+def load_snippets():
+    """读取「步骤片段」（F13）：{片段名: [步骤...]}，存在预设文件的 __snippets__ 保留键里。"""
+    if not os.path.exists(PRESETS_FILE):
+        return {}
+    try:
+        with open(PRESETS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        snippets = data.get("__snippets__", {}) if isinstance(data, dict) else {}
+        if not isinstance(snippets, dict):
+            return {}
+        return {
+            str(name): [step for step in value if isinstance(step, dict)]
+            for name, value in snippets.items()
+            if isinstance(value, list) and value
+        }
+    except Exception as exc:
+        warn(f"警告: 读取 {PRESETS_FILE} 的步骤片段失败（{exc}），片段列表将为空。")
+        return {}
+
+
+SNIPPETS = load_snippets()
 
 FALLBACK_STEPS = load_fallback_steps()
 

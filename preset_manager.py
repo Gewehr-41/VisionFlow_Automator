@@ -63,6 +63,12 @@ class PresetManagerMixin:
             if str(name) in keep_names
         }
         # 全局兜底步骤（F7）：与分组元数据同一套保留规则，只写有内容的模式
+        # 步骤片段（F13）：全局共享，不按预设过滤
+        payload["__snippets__"] = {
+            str(name): value
+            for name, value in deepcopy(self.snippets).items()
+            if isinstance(value, list) and value
+        }
         payload["__fallback__"] = {
             name: value
             for name, value in deepcopy(self.mode_fallback_steps).items()

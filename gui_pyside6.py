@@ -44,6 +44,7 @@ from main import reload_templates
 from tasks import (
     DELETED_PRESET_NAMES,
     FALLBACK_STEPS,
+    SNIPPETS,
     PRESET_METADATA,
     TASKS,
     USER_PRESETS,
@@ -76,6 +77,7 @@ from preset_manager import PresetManagerMixin
 from qt_translations import install_qt_translations
 from recognition_debug_window import RecognitionDebugWindow
 from update_ui import UpdateCheckRunner, notify_update, report_check_failure
+import snippets as snippet_store
 from execution_control import ExecutionControlMixin
 from task_list_manager import TaskListMixin
 from ui_common import (
@@ -1118,6 +1120,8 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.mode_group_metadata = deepcopy(PRESET_METADATA)
         # 全局兜底处理步骤（F7）：按模式保存，结构与分组元数据同源
         self.mode_fallback_steps = deepcopy(FALLBACK_STEPS)
+        # 步骤片段（F13）：全局共享，存在预设文件的 __snippets__ 里
+        self.snippets = deepcopy(SNIPPETS)
         self.blueprint_layouts = load_blueprint_layouts()
         self.blueprint_graphs = load_blueprint_graphs()
         self.mode_tasks = {"custom": deepcopy(TASKS)}
@@ -1249,6 +1253,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             ("打开蓝图流程", self.open_blueprint),
             ("识别调试", self.open_recognition_debug),
             ("兜底处理", self.open_fallback_editor),
+            ("片段", self.open_snippet_menu),
             ("检查更新", self.check_updates),
         ]
         button_grid = QGridLayout()
@@ -1790,6 +1795,81 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         elif titles:
             self.window_combo.setCurrentIndex(0)
         self.append_log(f"检测到 {len(titles)} 个可见窗口。")
+
+    # ---------- 步骤片段（F13）：保存 / 插入 / 删除常用步骤组 ----------
+
+    @Slot()
+    def open_snippet_menu(self):
+        """「片段」按钮：保存选中步骤为片段、插入片段、删除片段。"""
+        from PySide6.QtGui import QCursor
+
+        menu = QMenu(self)
+        menu.addAction("保存选中步骤为片段…", self.save_selection_as_snippet)
+        insert_action = menu.addAction("插入片段…", self.insert_snippet_at_selection)
+        delete_action = menu.addAction("删除片段…", self.delete_snippet)
+        has_snippets = bool(getattr(self, "snippets", None))
+        insert_action.setEnabled(has_snippets)
+        delete_action.setEnabled(has_snippets)
+        menu.exec(QCursor.pos())
+
+    def save_selection_as_snippet(self):
+        indices = self._selected_task_indices()
+        if not indices:
+            QMessageBox.warning(self, "无法保存", "请先在左侧步骤列表里选择一个或多个步骤。")
+            return
+        name, accepted = QInputDialog.getText(self, "保存为片段", "片段名称：", text="")
+        name = (name or "").strip()
+        if not accepted or not name:
+            return
+        if name in self.snippets:
+            answer = QMessageBox.question(self, "覆盖片段", f"片段「{name}」已存在，是否覆盖？")
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        snippet = snippet_store.extract_snippet(TASKS, indices)
+        if not snippet:
+            return
+        self.snippets[name] = snippet
+        self._save_presets()
+        self.append_log(
+            f"已保存片段「{name}」：{snippet_store.snippet_summary(snippet)}"
+            "（片段内部的跳转保留，指向片段外的跳转会被丢弃）"
+        )
+
+    def insert_snippet_at_selection(self):
+        names = sorted(getattr(self, "snippets", {}) or {})
+        if not names:
+            QMessageBox.warning(self, "没有片段", "还没有保存过片段。先选中若干步骤，再用「片段 → 保存选中步骤为片段」。")
+            return
+        name, accepted = QInputDialog.getItem(self, "插入片段", "选择片段：", names, 0, False)
+        if not accepted or not name:
+            return
+        snippet = self.snippets.get(name) or []
+        if not snippet:
+            return
+        current = getattr(self, "current_task_index", -1)
+        position = current + 1 if isinstance(current, int) and 0 <= current < len(TASKS) else len(TASKS)
+        new_tasks = snippet_store.insert_snippet(TASKS, snippet, position)
+        inserted = len(new_tasks) - len(TASKS)
+        TASKS[:] = new_tasks
+        self.current_task_index = position
+        self.save_current_tasks()
+        self.refresh_task_list()
+        self.select_task_index(position)
+        self.append_log(f"已插入片段「{name}」：{inserted} 个步骤（插入点之后的跳转已自动后移）。")
+
+    def delete_snippet(self):
+        names = sorted(getattr(self, "snippets", {}) or {})
+        if not names:
+            return
+        name, accepted = QInputDialog.getItem(self, "删除片段", "选择要删除的片段：", names, 0, False)
+        if not accepted or not name or name not in self.snippets:
+            return
+        answer = QMessageBox.question(self, "删除片段", f"确定删除片段「{name}」吗？")
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.snippets.pop(name, None)
+        self._save_presets()
+        self.append_log(f"已删除片段「{name}」。")
 
     def _fallback_steps_for_mode(self, mode=None):
         """当前模式（预设）的「全局兜底处理步骤」副本（F7）。"""

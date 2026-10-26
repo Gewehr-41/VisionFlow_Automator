@@ -317,6 +317,11 @@ def canonical_field(label):
         return "匹配阈值"
     if label.startswith("超时"):
         return "超时"
+    if label.startswith("失败重试次数"):
+        # 步骤级重试（2026-10-26 新增）：两个窗口文案一致，只归一冒号
+        return "失败重试次数"
+    if label.startswith("重试间隔"):
+        return "重试间隔"
     if label.startswith("完成后等待"):
         return "完成后等待"
     if label == "点击:":
@@ -368,8 +373,8 @@ class FormOrderParityTests(unittest.TestCase):
     `recognition_group` 里剩下的字段；区域组的顺序由 RegionGroupOrderTests 覆盖。
     """
 
-    EXPECTED = ["模板名", "匹配阈值", "超时", "完成后等待",
-                "点击", "下一模板", "等待方式"]
+    EXPECTED = ["模板名", "匹配阈值", "超时", "失败重试次数", "重试间隔",
+                "完成后等待", "点击", "下一模板", "等待方式"]
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()

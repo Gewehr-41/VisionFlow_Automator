@@ -939,6 +939,10 @@ class CaptureOverlayMixin:
         normal_form.addRow(editor_labels["threshold"], threshold_edit)
         timeout_edit = QLineEdit(str(detour_task.get("timeout", detour_task.get("wait_timeout", 5))))
         normal_form.addRow(editor_labels["timeout"], timeout_edit)
+        retry_count_edit = QLineEdit(str(int(detour_task.get("retry_count", 0) or 0)))
+        normal_form.addRow(editor_labels["retry_count"], retry_count_edit)
+        retry_interval_edit = QLineEdit(str(detour_task.get("retry_interval", config.DEFAULT_RETRY_INTERVAL)))
+        normal_form.addRow(editor_labels["retry_interval"], retry_interval_edit)
         after_wait_edit = QLineEdit(str(detour_task.get("after_wait", 0.25)))
         normal_form.addRow("完成后等待(秒):", after_wait_edit)
 
@@ -1211,6 +1215,10 @@ class CaptureOverlayMixin:
                 if task_type in ("normal", "advanced"):
                     detour_task["threshold"] = self._float(threshold_edit.text(), config.THRESHOLD)
                     detour_task["timeout"] = self._float(timeout_edit.text(), detour_task.get("timeout", 5))
+                    detour_retry_count = self._int(retry_count_edit.text())
+                    detour_task["retry_count"] = max(0, 0 if detour_retry_count is None else detour_retry_count)
+                    detour_task["retry_interval"] = max(0.0, self._float(
+                        retry_interval_edit.text(), config.DEFAULT_RETRY_INTERVAL))
                     detour_task["after_wait"] = self._float(
                         after_wait_edit.text(), detour_task.get("after_wait", 0.25)
                     )
@@ -1268,7 +1276,8 @@ class CaptureOverlayMixin:
         layout.addWidget(save_button)
         dialog.exec()
     def _editor_field_labels(self):
-        return {"threshold": "匹配阈值:", "timeout": "超时(秒):", "status": "状态:"}
+        return {"threshold": "匹配阈值:", "timeout": "超时(秒):", "status": "状态:",
+                    "retry_count": "失败重试次数:", "retry_interval": "重试间隔(秒):"}
 
     def _editor_special_form_container(self):
         return None, QFormLayout()
@@ -1390,6 +1399,10 @@ class CaptureOverlayMixin:
         self.template_edit = QLineEdit()
         self.threshold_edit = QLineEdit()
         self.timeout_edit = QLineEdit()
+        # 步骤级重试（F1）：「连续未识别到」达到 retry_count 次后才判定失败。
+        # 只放在识别组里 —— 延迟/按键/移动等步骤不做识别，重试对它们没有意义。
+        self.retry_count_edit = QLineEdit()
+        self.retry_interval_edit = QLineEdit()
         self.after_wait_edit = QLineEdit()
         self.click_checkbox = QCheckBox("执行点击")
         self.match_required_checkbox = QCheckBox("必须识别到图片再点击")
@@ -1417,6 +1430,8 @@ class CaptureOverlayMixin:
         # 的阅读顺序完全不同。
         add_row(labels["threshold"], self.threshold_edit)
         add_row(labels["timeout"], self.timeout_edit)
+        add_row(labels["retry_count"], self.retry_count_edit)
+        add_row(labels["retry_interval"], self.retry_interval_edit)
         add_row("完成后等待(秒):", self.after_wait_edit)
         # X/Y 成对并排（此前 4 个坐标各占一行，输入框 529px 却只填一个短数字）
         # 「偏移」一行已于 2026-09-28 按所有者要求删除：界面不再提供偏移输入，
@@ -1752,6 +1767,8 @@ class CaptureOverlayMixin:
         self.click_until_stop_on_change_checkbox.setChecked(bool(task.get("stop_on_change", False)))
         self.threshold_edit.setText(str(task.get("threshold", config.THRESHOLD)))
         self.timeout_edit.setText(self._editor_timeout_text(task))
+        self.retry_count_edit.setText(str(int(task.get("retry_count", 0) or 0)))
+        self.retry_interval_edit.setText(str(task.get("retry_interval", config.DEFAULT_RETRY_INTERVAL)))
         self.after_wait_edit.setText(str(task.get("after_wait", 0.25)))
         self.click_checkbox.setChecked(bool(task.get("click", True)))
         self.match_required_checkbox.setChecked(bool(task.get("click_requires_match", True)))
@@ -1785,6 +1802,11 @@ class CaptureOverlayMixin:
                                         self._editor_float_fallback("threshold", task, config.THRESHOLD))
         task["timeout"] = self._float(self.timeout_edit.text(),
                                       self._editor_float_fallback("timeout", task, 5.0))
+        retry_count = self._int(self.retry_count_edit.text())
+        task["retry_count"] = max(0, 0 if retry_count is None else retry_count)
+        task["retry_interval"] = max(0.0, self._float(
+            self.retry_interval_edit.text(),
+            self._editor_float_fallback("retry_interval", task, config.DEFAULT_RETRY_INTERVAL)))
         task["after_wait"] = self._float(self.after_wait_edit.text(),
                                          self._editor_float_fallback("after_wait", task, 0.25))
         task["click"] = self.click_checkbox.isChecked()

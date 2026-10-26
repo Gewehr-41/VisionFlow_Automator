@@ -13,8 +13,10 @@ from PySide6.QtCore import Qt, QThread, QTimer, Slot
 from PySide6.QtWidgets import QMessageBox
 
 import config
+import preflight
 from core.hotkey import GlobalHotkey
 from core.input import release_all_inputs
+from tasks import TASKS
 from task_widgets import TaskWorker
 
 
@@ -38,6 +40,46 @@ class ExecutionControlMixin:
 
     def _capture_log(self, message):
         self.append_log(message)
+    def _preflight_before_run(self):
+        """开跑前体检（F2）。返回 True 表示继续执行（可能已自动修复安全项）。
+
+        检查对象是模块级 `TASKS`（不是 `selected_tasks()` 的副本）：要判断"跳转目标
+        指向已禁用步骤"就必须能同时看到禁用步骤，而且"自动修复"要落到用户真实数据上。
+
+        行为约束：**没查出问题时什么都不做**（与加这个功能之前完全一致）；
+        查出问题时才多一个对话框，用户选"仍然开始"即与旧行为等价。
+        """
+        issues = preflight.check_tasks(TASKS)
+        if not issues:
+            return True
+        fatal = [issue for issue in issues if issue.level == preflight.FATAL]
+        fixable = [issue for issue in issues if issue.fixable]
+        self.append_log(f"执行前体检：发现 {len(issues)} 个配置问题（其中 {len(fatal)} 个会导致执行失败）。")
+        for issue in issues:
+            self.append_log(f"  - {issue.describe()}")
+        box = QMessageBox(self)
+        box.setWindowTitle("执行前体检")
+        box.setIcon(QMessageBox.Icon.Warning if fatal else QMessageBox.Icon.Information)
+        box.setText(f"发现 {len(issues)} 个配置问题，其中 {len(fatal)} 个会导致执行失败。\n"
+                    "详情见「显示详情」；也可以先自动修复能安全修复的项。")
+        box.setDetailedText("\n".join(issue.describe() for issue in issues))
+        keep_button = box.addButton("仍然开始", QMessageBox.ButtonRole.AcceptRole)
+        fix_button = None
+        if fixable:
+            fix_button = box.addButton("自动修复可安全项并开始", QMessageBox.ButtonRole.ActionRole)
+        cancel_button = box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(cancel_button)
+        box.exec()
+        clicked = box.clickedButton()
+        if fix_button is not None and clicked is fix_button:
+            fixes = preflight.apply_safe_fixes(TASKS)
+            for line in fixes:
+                self.append_log(f"  已自动修复：{line}")
+            self.save_current_tasks()
+            self.refresh_task_list()
+            return True
+        return clicked is keep_button
+
     @Slot()
     def start_script(self):
         self._start_worker(None)
@@ -49,6 +91,10 @@ class ExecutionControlMixin:
         if not tasks:
             QMessageBox.warning(self, "无法执行", "没有启用的任务步骤。")
             return
+        if not self._preflight_before_run():
+            return
+        # 体检可能自动修复过数据（改了启用状态/跳转字段），重新取一次运行副本
+        tasks = self.selected_tasks()
         self.execution_states.clear()
         if self.blueprint_window is not None:
             self.blueprint_window.reset_execution_states()

@@ -14,6 +14,7 @@ SHOW_PREVIEW = False                # 是否显示 OpenCV 预览窗口
 CLICK_DELAY = 0.05                  # 点击前后的移动延迟，尽量更快
 DEFAULT_TIMEOUT = 50.0               # 默认等待超时时间
 DEFAULT_POLL_INTERVAL = 0.1        # 扫描间隔，减少反应延迟
+DEFAULT_RETRY_INTERVAL = 1.0       # 步骤级重试的默认间隔（秒）；重试次数默认 0 表示不启用
 
 # 后台窗口模式
 USE_WINDOW_MODE = True              # 是否优先按指定窗口区域识别

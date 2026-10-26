@@ -7,7 +7,7 @@ import uuid
 import numpy as np
 
 import config
-from config import ICON_DIR, THRESHOLD, DEFAULT_TIMEOUT, DEFAULT_POLL_INTERVAL, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP
+from config import ICON_DIR, THRESHOLD, DEFAULT_TIMEOUT, DEFAULT_POLL_INTERVAL, DEFAULT_RETRY_INTERVAL, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP
 from core.screen import capture_screen, to_global_position, get_window_rect
 from core.template_match import StopExecution, load_templates, match_all_templates
 from core.input import click_position, click_global_position, drag_position, key_down, key_up
@@ -924,6 +924,12 @@ def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True):
     optional = bool(task.get("optional", not bool(task.get("required", True))))
     description = task.get("description", tpl_name)
     poll_interval = float(task.get("poll_interval", DEFAULT_POLL_INTERVAL))
+    # 步骤级重试：「连续未识别到」的次数用完后才判定失败（走迂回 / 超时 / 可选跳过）。
+    # 默认 0 次 = 不启用，老数据完全走原逻辑；重试只插入等待与再抓一次，
+    # **不重置 start_time**，所以总时长仍受 timeout 约束。
+    retry_limit = max(0, int(task.get("retry_count", 0) or 0))
+    retry_interval = max(0.0, float(task.get("retry_interval", DEFAULT_RETRY_INTERVAL)))
+    retries_used = 0
 
     log(f"\n>>> 任务: {description}", log_callback)
     start_time = time.time()
@@ -1033,6 +1039,18 @@ def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True):
                 if interruptible_sleep(after_wait, stop_flag):
                     return False
             return True
+
+        # 重试用完之前不进失败分支：等一会儿再抓一次（日志里能看到第几次重试）。
+        # 仍受 timeout 约束：重试只在本次尝试的时间预算内进行，不会让"步骤最多跑多久"
+        # 失控（timeout<=0 表示不限制，此时按重试次数兜底）。
+        elapsed = time.time() - start_time
+        if retries_used < retry_limit and (timeout <= 0 or elapsed <= timeout):
+            retries_used += 1
+            log(f"  未识别到 '{tpl_name}'，第 {retries_used}/{retry_limit} 次重试"
+                f"（{retry_interval:g} 秒后重试）", log_callback)
+            if interruptible_sleep(retry_interval, stop_flag):
+                return False
+            continue
 
         if allow_detour and detour_active(task):
             log(f"  当前任务未识别到 '{tpl_name}'，执行迂回流程。", log_callback)

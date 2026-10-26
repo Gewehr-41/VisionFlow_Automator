@@ -1240,31 +1240,11 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         # 导致在界面上折叠组后重启即恢复展开（gui.py 的对应实现是完整的）。
         self.task_list.itemExpanded.connect(self._on_group_expanded_changed)
         self.task_list.itemCollapsed.connect(self._on_group_expanded_changed)
-        # 按钮区分两层（所有者 2026-10-26 反馈 4 行太臃肿，选择"两行编辑 + 工具菜单"方案）：
-        #   第一层：列表编辑，固定 8 个 = 2 行 × 4 列（高频动作始终可见）
-        #   第二层：全局工具收进「工具」下拉菜单（它们跟列表内容无关）
+        # 按钮区已经**全部撤掉**（所有者 2026-10-26："右键菜单有的就不要放到项目列表上了"）：
+        # 列表编辑动作（全选/清空/上移/下移/新增组/新增步骤/复制/删除）都在右键菜单里，
+        # 面板上只留右上角「工具 ▾」（全局功能入口，右键菜单里没有）。
+        # `task_buttons` 保留为空列表：外部代码/测试仍可安全遍历，不必改调用方。
         self.task_buttons = []
-        edit_button_specs = [
-            ("全选", self.select_all_tasks),
-            ("清空", self.clear_tasks),
-            ("上移", lambda: self.move_selected_item(-1)),
-            ("下移", lambda: self.move_selected_item(1)),
-            ("新增组", self.add_group),
-            ("新增步骤", self.add_task),
-            ("复制", self.copy_selected_item),
-            ("删除", self.delete_selected_item),
-        ]
-        button_grid = QGridLayout()
-        button_grid.setContentsMargins(0, 0, 0, 0)
-        button_grid.setHorizontalSpacing(8)
-        button_grid.setVerticalSpacing(4)
-        for index, (label, handler) in enumerate(edit_button_specs):
-            button = QPushButton(label)
-            button.clicked.connect(handler)
-            button_grid.addWidget(button, index // 4, index % 4)
-            self.task_buttons.append(button)
-        self.task_button_grid = button_grid
-        task_layout.addLayout(button_grid)
 
         # 全局工具菜单：打开蓝图流程 / 识别调试 / 兜底处理 / 片段 / 检查更新
         self.tool_menu = QMenu(self)
@@ -1845,22 +1825,87 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             self.window_combo.setCurrentIndex(0)
         self.append_log(f"检测到 {len(titles)} 个可见窗口。")
 
+    # ---------- 分组右键：重命名 / 改色 ----------
+
+    def rename_group(self, group_id):
+        """重命名分组（同时更新组内步骤的 group_name，保持导出/复制时一致）。"""
+        if not group_id:
+            return
+        mode = self.mode_combo.currentText() or "custom"
+        metadata = self.mode_group_metadata.setdefault(mode, {})
+        names = metadata.setdefault("names", {})
+        current = names.get(group_id, group_id)
+        new_name, accepted = QInputDialog.getText(self, "重命名分组", "分组名称：", text=str(current))
+        new_name = (new_name or "").strip()
+        if not accepted or not new_name or new_name == current:
+            return
+        names[group_id] = new_name
+        for task in TASKS:
+            if str(task.get("group_id") or "group_default") == str(group_id):
+                task["group_name"] = new_name
+        self._save_presets()
+        self.refresh_task_list()
+        self.append_log(f"已重命名分组：{new_name}")
+
+    def change_group_color(self, group_id):
+        """更改分组颜色（分组标签背景色）。"""
+        if not group_id:
+            return
+        from PySide6.QtGui import QColor
+
+        mode = self.mode_combo.currentText() or "custom"
+        metadata = self.mode_group_metadata.setdefault(mode, {})
+        colors = metadata.setdefault("colors", {})
+        current = QColor(colors.get(group_id, self._group_default_color()))
+        color = QColorDialog.getColor(current, self, "选择分组颜色")
+        if not color.isValid():
+            return
+        colors[group_id] = color.name()
+        self._save_presets()
+        self.refresh_task_list()
+        self.append_log(f"已更改分组颜色：{color.name()}")
+
     # ---------- 任务列表右键菜单 ----------
 
-    def _build_task_list_menu(self):
-        """构建「项目列表」的右键菜单（右键弹出与测试共用同一份）。"""
+    def _build_task_list_menu(self, context_item=None):
+        """构建「项目列表」的右键菜单（右键弹出与测试共用同一份）。
+
+        三种上下文：
+          · 右键在**步骤**上 → 复制 / 删除 / 上移 / 下移
+          · 右键在**分组**上 → 组设置 / 重命名组 / 更改组颜色 / 折叠展开 / 删除组 …
+          · 右键在**空白**处 → 只有创建类动作（编辑类因为没目标自动禁用）
+        """
         menu = QMenu(self)
+        is_group = context_item is not None and context_item.data(0, Qt.UserRole) == "group"
+        group_id = str(context_item.data(0, Qt.UserRole + 1)) if is_group else None
         selected = self._selected_task_indices()
-        menu.addAction("新增步骤", self.add_task)
-        menu.addAction("新增组", self.add_group)
-        menu.addSeparator()
-        copy_action = menu.addAction("复制", self.copy_selected_item)
-        delete_action = menu.addAction("删除", self.delete_selected_item)
-        up_action = menu.addAction("上移", lambda: self.move_selected_item(-1))
-        down_action = menu.addAction("下移", lambda: self.move_selected_item(1))
-        for action in (copy_action, delete_action, up_action, down_action):
-            action.setEnabled(bool(selected))
-        menu.addSeparator()
+
+        if is_group:
+            # 选中该组后右侧会切到「组设置」面板
+            menu.addAction("编辑组设置", lambda: self._load_editor_for_group(group_id))
+            menu.addAction("重命名分组…", lambda: self.rename_group(group_id))
+            menu.addAction("更改分组颜色…", lambda: self.change_group_color(group_id))
+            expanded = bool(context_item.isExpanded())
+            menu.addAction("折叠该组" if expanded else "展开该组",
+                           lambda: context_item.setExpanded(not expanded))
+            menu.addSeparator()
+            menu.addAction("在此组中新增步骤", self.add_task)
+            menu.addAction("在此组中新增子组", self.add_group)
+            delete_action = menu.addAction("删除该组及其步骤…", self.delete_selected_item)
+            delete_action.setEnabled(True)
+            menu.addSeparator()
+        else:
+            menu.addAction("新增步骤", self.add_task)
+            menu.addAction("新增组", self.add_group)
+            menu.addSeparator()
+            copy_action = menu.addAction("复制", self.copy_selected_item)
+            delete_action = menu.addAction("删除", self.delete_selected_item)
+            up_action = menu.addAction("上移", lambda: self.move_selected_item(-1))
+            down_action = menu.addAction("下移", lambda: self.move_selected_item(1))
+            for action in (copy_action, delete_action, up_action, down_action):
+                action.setEnabled(bool(selected))
+            menu.addSeparator()
+
         menu.addAction("全选", self.select_all_tasks)
         clear_action = menu.addAction("清空", self.clear_tasks)
         clear_action.setEnabled(bool(TASKS))
@@ -1869,11 +1914,11 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         return menu
 
     def show_task_list_menu(self, position):
-        """右键：点在某个步骤上时先选中它，再弹菜单（复制/删除因此作用于它）。"""
+        """右键：先按被点的对象选中它（步骤 → 复制/删除作用于它；分组 → 右侧切到组设置），再弹菜单。"""
         item = self.task_list.itemAt(position)
-        if item is not None and item.data(0, Qt.UserRole) != "group":
+        if item is not None:
             self.task_list.setCurrentItem(item)
-        self._build_task_list_menu().exec(self.task_list.viewport().mapToGlobal(position))
+        self._build_task_list_menu(item).exec(self.task_list.viewport().mapToGlobal(position))
 
     # ---------- 步骤片段（F13）：保存 / 插入 / 删除常用步骤组 ----------
 

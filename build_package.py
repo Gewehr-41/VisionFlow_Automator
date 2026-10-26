@@ -69,6 +69,8 @@ REQUIRED_ENTRIES = (
      "软件 OpenGL 兜底：虚拟机 / 远程桌面里缺了会黑窗"),
     (os.path.join("_internal", "_tk_data"),
      "pyautogui 在导入期依赖 tkinter，缺了程序直接起不来"),
+    (os.path.join("_internal", "PySide6", "translations", "qtbase_zh_CN.qm"),
+     "Qt 官方中文翻译：标准对话框按钮（显示详细信息 / 是 / 否 / 取消）靠它本地化"),
     (os.path.join("_internal", "icons"),
      "模板库（识别用），随程序分发"),
     (os.path.join("_internal", "PySide6", "plugins", "platforms", "qwindows.dll"),

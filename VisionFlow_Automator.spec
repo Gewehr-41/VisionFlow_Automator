@@ -71,11 +71,22 @@ _DROP = {
 }
 
 
+# Qt 官方中文翻译（F：标准对话框的「显示详细信息」「是/否/确定/取消」等文字要靠它）。
+# 只收集需要的两个文件：源码运行时 PySide6 自带 translators 目录，打包后必须显式带上，
+# 否则打包版的标准按钮会退回英文（源码版却是中文）。
+def _translation_datas():
+    import PySide6 as _pyside6_package
+    source = os.path.join(os.path.dirname(_pyside6_package.__file__), "translations")
+    target = os.path.join("PySide6", "translations")
+    return [(os.path.join(source, name), target)
+            for name in ("qt_zh_CN.qm", "qtbase_zh_CN.qm")
+            if os.path.isfile(os.path.join(source, name))]
+
 a = Analysis(
     ['gui_pyside6.py'],
     pathex=[],
     binaries=[],
-    datas=[('icons', 'icons')],
+    datas=[('icons', 'icons')] + _translation_datas(),
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

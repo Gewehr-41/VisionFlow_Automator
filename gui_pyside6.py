@@ -73,6 +73,7 @@ from blueprint_canvas import (
 )
 from task_widgets import TaskItemDelegate, TaskListWidget, TaskWorker
 from preset_manager import PresetManagerMixin
+from qt_translations import install_qt_translations
 from recognition_debug_window import RecognitionDebugWindow
 from execution_control import ExecutionControlMixin
 from task_list_manager import TaskListMixin
@@ -1990,6 +1991,9 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
 
 def main():
     app = QApplication(sys.argv)
+    # 加载 Qt 官方中文翻译：QMessageBox 的「显示详细信息」、是/否/确定/取消等
+    # 标准文字才会是中文（否则固定显示英文，所有者 2026-10-26 反馈过）。
+    install_qt_translations(app)
     app.setApplicationName("VisionFlow Automator")
     window = PySide6ScriptWindow()
     window.show()

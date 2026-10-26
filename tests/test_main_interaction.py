@@ -178,6 +178,62 @@ class GroupOperationTests(MainInteractionBase):
                          "选中组内步骤后新增的步骤应跟着进同一个组")
 
 
+class OrderSyncTests(MainInteractionBase):
+    """树顺序 = TASKS 执行顺序（本轮修复：组内步骤可排在子组上方、组排序影响执行顺序）。"""
+
+    def setUp(self):
+        super().setUp()
+        g.TASKS[:] = [_task("A", GROUP_ID), _task("B", CHILD_ID), _task("C", GROUP_ID)]
+        self.window.refresh_task_list()
+        _APP.processEvents()
+
+    def _ids(self):
+        return [task["id"] for task in g.TASKS]
+
+    def test_tree_order_matches_tasks_order(self):
+        lines = self.tree_texts()
+        tree_descriptions = [line.rsplit("]", 1)[-1].strip() for line in lines if "[T]" in line]
+        self.assertEqual(tree_descriptions, [task["description"] for task in g.TASKS],
+                         "树里的步骤顺序必须和执行顺序一致")
+
+    def test_outer_step_renders_above_child_group(self):
+        """A（外层组步骤）排在 B（子组）上面，C 排在子组下面——组内步骤不再被顶到子组下方。"""
+        lines = self.tree_texts()
+        a_line = next(index for index, line in enumerate(lines) if "A" in line)
+        child_group = next(index for index, line in enumerate(lines) if "分组: 子组" in line)
+        c_line = next(index for index, line in enumerate(lines) if "C" in line and "[T]" in line)
+        self.assertLess(a_line, child_group, "外层组自己的步骤应在子组之前")
+        self.assertGreater(c_line, child_group, "后面的外层步骤应还在子组之后")
+
+    def test_group_move_up_changes_execution_order(self):
+        g.TASKS[:] = [_task("A", GROUP_ID), _task("B", CHILD_ID), _task("C", OTHER_ID)]
+        self.window.refresh_task_list()
+        _APP.processEvents()
+        self.window.task_list.clearSelection()
+        self.group_item(OTHER_ID).setSelected(True)
+        self.window.move_selected_item(-1)
+        _APP.processEvents()
+        self.assertEqual(self._ids(), ["C", "A", "B"],
+                         "组上移后 TASKS 执行顺序要跟着变（此前只改元数据顺序）")
+        lines = self.tree_texts()
+        self.assertLess(next(i for i, line in enumerate(lines) if "分组: 另一组" in line),
+                        next(i for i, line in enumerate(lines) if "分组: 父组" in line))
+
+    def test_move_task_before_group(self):
+        self.window.move_task_before_group(2, CHILD_ID)   # 把 C 拖到子组上沿
+        _APP.processEvents()
+        self.assertEqual(self._ids(), ["A", "C", "B"])
+        task_c = next(task for task in g.TASKS if task["id"] == "C")
+        self.assertEqual(str(task_c.get("group_id")), GROUP_ID, "同级兄弟：留在父组里，只是排到子组前面")
+
+    def test_reparent_group_moves_execution_block(self):
+        self.window.reparent_group(CHILD_ID, OTHER_ID)
+        _APP.processEvents()
+        metadata = self.metadata()
+        self.assertEqual(metadata["parents"][CHILD_ID], OTHER_ID)
+        self.assertEqual(self._ids(), ["A", "C", "B"], "子组的步骤块要移到目标组后面（执行顺序）")
+
+
 class DragDropTests(MainInteractionBase):
     def test_move_task_into_empty_group(self):
         self.metadata()["names"]["empty"] = "空组"

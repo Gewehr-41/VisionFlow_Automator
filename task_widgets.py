@@ -59,6 +59,7 @@ class TaskListWidget(QTreeWidget):
     order_changed = Signal()
     task_drop_requested = Signal(int, int, bool, object)          # 源下标, 目标下标, 是否插到后面, 目标所属组
     task_into_group_requested = Signal(int, str)                  # 步骤 -> 放进某个组
+    task_before_group_requested = Signal(int, str)                # 步骤 -> 放到某个组前面
     task_to_root_requested = Signal(int)                          # 步骤 -> 移到根层末尾
     group_reparent_requested = Signal(str, object)                # 组 -> 挂到某个组（None=根层）
 
@@ -135,9 +136,15 @@ class TaskListWidget(QTreeWidget):
             return
         if target is not None and target.data(0, Qt.UserRole) == "group":
             target_group = str(target.data(0, Qt.UserRole + 1))
+            target_rect = self.visualItemRect(target)
+            drop_above = event.position().y() < target_rect.center().y()
             event.accept()
-            QTimer.singleShot(0, lambda: self.task_into_group_requested.emit(
-                int(source_index), target_group))
+            if drop_above:
+                QTimer.singleShot(0, lambda: self.task_before_group_requested.emit(
+                    int(source_index), target_group))
+            else:
+                QTimer.singleShot(0, lambda: self.task_into_group_requested.emit(
+                    int(source_index), target_group))
             return
         if target is None:
             event.accept()

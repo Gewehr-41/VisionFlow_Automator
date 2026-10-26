@@ -1281,6 +1281,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.task_list.order_changed.connect(self.persist_task_order)
         self.task_list.task_drop_requested.connect(self.reorder_task_from_tree)
         self.task_list.task_into_group_requested.connect(self.move_task_into_group)
+        self.task_list.task_before_group_requested.connect(self.move_task_before_group)
         self.task_list.task_to_root_requested.connect(self.move_task_to_root)
         self.task_list.group_reparent_requested.connect(self.reparent_group)
         # 组折叠/展开状态需要持久化：此前只读取元数据里的 expanded，从不写入，
@@ -1801,8 +1802,37 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.refresh_task_list()
         self.append_log("已停用全部步骤。")
 
+    def _group_member_indices(self, metadata, group_id):
+        """该组（含全部后代组）在 TASKS 里的下标。"""
+        member_ids = {str(gid) for gid in self._group_descendants(metadata, group_id)}
+        return [index for index, task in enumerate(TASKS)
+                if str(task.get("group_id") or "group_default") in member_ids]
+
+    def _swap_group_blocks(self, metadata, group_id, other_id, put_self_first):
+        """把两个组的步骤块在 TASKS 里对调（组排序 = 执行顺序）。"""
+        self_indices = self._group_member_indices(metadata, group_id)
+        other_indices = self._group_member_indices(metadata, other_id)
+        if not self_indices and not other_indices:
+            return
+        old_index_by_id = {str(task.get("id")): index for index, task in enumerate(TASKS)}
+        self_tasks = [TASKS[index] for index in self_indices]
+        other_tasks = [TASKS[index] for index in other_indices]
+        skip = set(self_indices) | set(other_indices)
+        first = min(self_indices + other_indices)
+        first_block, second_block = (self_tasks, other_tasks) if put_self_first else (other_tasks, self_tasks)
+        new_tasks = []
+        for index, task in enumerate(TASKS):
+            if index == first:
+                new_tasks.extend(first_block)
+                new_tasks.extend(second_block)
+            if index in skip:
+                continue
+            new_tasks.append(task)
+        TASKS[:] = new_tasks
+        remap_jump_targets(TASKS, _jump_index_map([old_index_by_id[str(t.get("id"))] for t in TASKS]))
+
     def _move_group(self, group_id, direction):
-        """在同一层级内移动分组（根层看 order，子组看父组的 children 顺序）。"""
+        """在同一层级内移动分组：元数据顺序 + TASKS 里的步骤块一起换，执行顺序才会跟着变。"""
         mode = self.mode_combo.currentText() or "custom"
         metadata = self.mode_group_metadata.setdefault(mode, {})
         parents = metadata.setdefault("parents", {})
@@ -1815,7 +1845,10 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         target = position + direction
         if not (0 <= target < len(siblings)):
             return
+        other_id = siblings[target]
+        self._swap_group_blocks(metadata, group_id, other_id, put_self_first=direction < 0)
         siblings[position], siblings[target] = siblings[target], siblings[position]
+        self.save_current_tasks()
         self._save_presets()
         self.refresh_task_list()
         # 刷新会重建树项、清掉选中：把这一组重新选中，连续点「上移/下移」才不会失效
@@ -1872,6 +1905,18 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.append_log(log_text)
 
     @Slot(int, str)
+    def move_task_before_group(self, source_index, group_id):
+        """拖到组头上沿：放到这个组**前面**（成为同层级的兄弟，可以排在子组上方）。"""
+        mode = self.mode_combo.currentText() or "custom"
+        metadata = self.mode_group_metadata.get(mode, {})
+        member_indices = self._group_member_indices(metadata, group_id)
+        insert_index = min(member_indices) if member_indices else len(TASKS)
+        parent_group = (metadata.get("parents") or {}).get(str(group_id))
+        if source_index < insert_index:
+            insert_index -= 1
+        self._move_task_with_group(source_index, insert_index, parent_group, "已把步骤移到该组前面。")
+
+    @Slot(int, str)
     def move_task_into_group(self, source_index, group_id):
         """拖到组头：加入该组（放在该组现有步骤的末尾；空组也能放进去）。"""
         members = [index for index, task in enumerate(TASKS)
@@ -1916,6 +1961,24 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         else:
             if group_id not in order:
                 order.append(group_id)
+        # 执行顺序跟着走：把整块步骤移到目标组步骤块的末尾（或根层末尾）
+        block_indices = self._group_member_indices(metadata, group_id)
+        if block_indices:
+            old_index_by_id = {str(task.get("id")): index for index, task in enumerate(TASKS)}
+            block_tasks = [TASKS[index] for index in block_indices]
+            rest = [task for index, task in enumerate(TASKS) if index not in set(block_indices)]
+            if parent:
+                target_indices = self._group_member_indices(metadata, parent)
+                target_ids = {str(TASKS[index].get("id")) for index in target_indices}
+                insert_at = len(rest)
+                for position, task in enumerate(rest):
+                    if str(task.get("id")) in target_ids:
+                        insert_at = position + 1
+            else:
+                insert_at = len(rest)
+            TASKS[:] = rest[:insert_at] + block_tasks + rest[insert_at:]
+            remap_jump_targets(TASKS, _jump_index_map([old_index_by_id[str(t.get("id"))] for t in TASKS]))
+        self.save_current_tasks()
         self._save_presets()
         self.refresh_task_list()
         self.append_log(f"已移动分组: {names.get(group_id, group_id)}")

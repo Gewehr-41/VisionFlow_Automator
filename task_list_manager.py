@@ -125,14 +125,25 @@ class TaskListMixin:
             group = make_group(group_id)
             parent_id = group_parents.get(group_id)
             parent_item = None
-            seen = set()
-            # 沿 parents 向上找第一个已存在的祖先，避免环或缺失导致的死循环
-            while parent_id is not None and str(parent_id) not in seen:
-                seen.add(str(parent_id))
-                if str(parent_id) in groups:
-                    parent_item = groups[str(parent_id)]
-                    break
-                parent_id = group_parents.get(str(parent_id))
+            if parent_id and str(parent_id) != group_id:
+                # 先把祖先链建出来（从最上层往下），否则子组会先被挂到根层
+                chain = []
+                seen = {group_id}
+                current = str(parent_id)
+                while current and current not in seen:
+                    seen.add(current)
+                    chain.append(current)
+                    current = str(group_parents.get(current)) if group_parents.get(current) else None
+                for ancestor in reversed(chain):
+                    if ancestor in groups:
+                        continue
+                    make_group(ancestor)
+                    grand_parent = group_parents.get(ancestor)
+                    if grand_parent and str(grand_parent) in groups:
+                        groups[str(grand_parent)].addChild(groups[ancestor])
+                    else:
+                        self.task_list.addTopLevelItem(groups[ancestor])
+                parent_item = groups.get(str(parent_id))
             if parent_item is not None:
                 parent_item.addChild(group)
             else:
@@ -155,17 +166,21 @@ class TaskListMixin:
         # ensure_group 会在创建时按 parents 元数据把子组挂到父组下面；
         # 父组即使还没被创建，也会在 child 挂载时由 Qt 自动补为父项，
         # 这里按 order/names/children 的顺序预先建好，保证层级稳定。
-        for group_id in (group_metadata.get("order") or []):
-            ensure_group(group_id)
-        for group_id in group_names:
-            ensure_group(group_id)
-        for group_id in group_children:
-            ensure_group(group_id)
-
+        # 按 TASKS 顺序直接建树：步骤在哪出现，它的组就在那里建出来。
+        # 这样组内的步骤可以排在子组**前面**（此前"先把所有组建好、再挂步骤"，
+        # 导致子组永远压在本组步骤上方，组内步骤怎么拖都上不去）。
         for index, task in enumerate(TASKS):
             task.setdefault("id", str(uuid.uuid4()))
             group_id = str(task.get("group_id") or "group_default")
             ensure_group(group_id).addChild(make_task_item(index, task))
+
+        # 没有步骤的组（空组 / 只有子组的组）按元数据顺序补在末尾，保证它们也能显示
+        for group_id in (group_metadata.get("order") or []):
+            ensure_group(str(group_id))
+        for group_id in group_names:
+            ensure_group(str(group_id))
+        for group_id in group_children:
+            ensure_group(str(group_id))
 
         # 依据子步骤启用情况回填组勾选状态（自底向上，先算子组再算父组）
 
@@ -194,9 +209,6 @@ class TaskListMixin:
         # 恢复各组折叠状态；未记录过的组默认展开
         for group_id, group in groups.items():
             group.setExpanded(bool(group_expanded.get(group_id, True)))
-
-        # 按元数据顺序重排组（上移/下移、拖拽改变父子关系后界面要跟着变）
-        self._apply_group_meta_order(group_metadata)
 
         self.task_list.blockSignals(False)
         if TASKS:

@@ -70,9 +70,14 @@ class TaskPanelRightClickTests(unittest.TestCase):
         self.assertEqual(self.window.task_buttons, [],
                          "右键菜单里已有的编辑动作不应再占用项目列表面板")
 
-    def test_only_tool_button_remains(self):
-        self.assertIs(self.window.tool_button.menu(), self.window.tool_menu)
-        self.assertEqual(sorted(self.window.tool_actions), sorted(TOOL_ENTRIES))
+    def test_tool_entries_are_visible_buttons(self):
+        """工具功能不折叠：5 个入口都摆在面板上（所有者 2026-10-26 要求把折叠的都放出来）。"""
+        texts = [button.text() for button in self.window.tool_buttons]
+        self.assertEqual(texts, TOOL_ENTRIES)
+        for label, button in self.window.tool_actions.items():
+            self.assertIn(button.text(), TOOL_ENTRIES)
+        self.assertFalse(hasattr(self.window, "tool_menu") and self.window.tool_menu is not None,
+                         "工具菜单已取消，改成直接可见的按钮")
 
     # ---------- 三种右键上下文 ----------
 
@@ -99,6 +104,7 @@ class TaskPanelRightClickTests(unittest.TestCase):
         for label in GROUP_ENTRIES:
             self.assertIn(label, texts)
         self.assertIn("删除该组及其步骤…", texts)
+        self.assertIn("仅删除该组（步骤移到上一级）…", texts, "组删除要同时提供两种语义")
         self.assertTrue(any(text in ("折叠该组", "展开该组") for text in texts))
         self.assertNotIn("复制", texts, "分组上下文不该出现步骤专用的复制")
 
@@ -126,6 +132,44 @@ class TaskPanelRightClickTests(unittest.TestCase):
                                return_value=g.QMessageBox.StandardButton.Yes):
             self.window.delete_selected_item()
         self.assertEqual(g.TASKS, [])
+
+    def test_delete_group_only_moves_steps_to_default_group(self):
+        with mock.patch.object(g.QMessageBox, "question",
+                               return_value=g.QMessageBox.StandardButton.Yes):
+            self.window.delete_group_only(self.group_id)
+        self.assertEqual([task["description"] for task in g.TASKS], ["步骤一", "步骤二"],
+                         "仅删组不能删掉步骤")
+        self.assertTrue(all(not task.get("group_id") for task in g.TASKS),
+                        "没有上一级分组时，步骤应回到「默认分组」（隐式根层）")
+        self.assertNotIn(self.group_id, self.window.mode_group_metadata[self.mode]["names"])
+        self.assertIn("仅删组", self.window.log_box.toPlainText())
+
+    def test_delete_group_only_moves_steps_to_parent_group(self):
+        parent_id = "g_parent"
+        metadata = self.window.mode_group_metadata[self.mode]
+        metadata["names"][parent_id] = "父组"
+        metadata.setdefault("parents", {})[self.group_id] = parent_id
+        metadata.setdefault("children", {})[parent_id] = [self.group_id]
+        metadata["order"] = [parent_id, self.group_id]
+        with mock.patch.object(g.QMessageBox, "question",
+                               return_value=g.QMessageBox.StandardButton.Yes):
+            self.window.delete_group_only(self.group_id)
+        self.assertTrue(all(str(task.get("group_id")) == parent_id for task in g.TASKS),
+                        "步骤应移到上一级分组")
+        self.assertTrue(all(task.get("group_name") == "父组" for task in g.TASKS))
+        self.assertNotIn(self.group_id, metadata["children"].get(parent_id, []))
+
+    def test_delete_group_only_refuses_default_group(self):
+        with mock.patch.object(g.QMessageBox, "information", return_value=None) as info:
+            self.window.delete_group_only("group_default")
+        self.assertTrue(info.called, "默认分组是根层，不能单独删除")
+        self.assertEqual(len(g.TASKS), 2)
+
+    def test_delete_group_with_steps_still_removes_everything(self):
+        with mock.patch.object(g.QMessageBox, "question",
+                               return_value=g.QMessageBox.StandardButton.Yes):
+            self.window.delete_group_only(self.group_id)
+        self.assertEqual(len(g.TASKS), 2)
 
     def test_right_click_selects_the_item_first(self):
         self.window.current_task_index = -1

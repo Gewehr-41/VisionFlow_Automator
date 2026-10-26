@@ -228,10 +228,10 @@ class SnippetGuiTests(unittest.TestCase):
         self.assertEqual(self.window.snippets, {})
         self.assertIn("已删除片段", self._logs())
 
-    def test_tool_menu_has_snippet_entry(self):
-        """「片段」从按钮区移进了「工具」菜单（2026-10-26 按钮区瘦身）。"""
+    def test_snippet_entry_is_a_visible_button(self):
+        """「片段」入口以按钮形式摆在面板上（2026-10-26：工具功能不折叠）。"""
         self.assertIn("片段", self.window.tool_actions)
-        self.assertIsNotNone(self.window.tool_button.menu())
+        self.assertIn("片段", [button.text() for button in self.window.tool_buttons])
 
 
 if __name__ == "__main__":

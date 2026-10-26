@@ -1246,33 +1246,28 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         # `task_buttons` 保留为空列表：外部代码/测试仍可安全遍历，不必改调用方。
         self.task_buttons = []
 
-        # 全局工具菜单：打开蓝图流程 / 识别调试 / 兜底处理 / 片段 / 检查更新
-        self.tool_menu = QMenu(self)
-        self.tool_actions = {}
+        # 全局工具：不折叠，直接摆在面板上（所有者 2026-10-26：面板空着不如把工具都放出来）
+        # 4 列网格 → 前 4 个工具一行，第 5 个（检查更新）落到第二行
+        self.tool_buttons = []
+        self.tool_actions = {}          # 兼容旧引用：标签 -> 按钮
         tool_specs = [
             ("打开蓝图流程", self.open_blueprint),
             ("识别调试", self.open_recognition_debug),
             ("兜底处理", self.open_fallback_editor),
             ("片段", self.open_snippet_menu),
-            (None, None),                      # 分隔线
             ("检查更新", self.check_updates),
         ]
-        for label, handler in tool_specs:
-            if label is None:
-                self.tool_menu.addSeparator()
-                continue
-            action = self.tool_menu.addAction(label)
-            action.triggered.connect(handler)
-            self.tool_actions[label] = action
-        # 「工具 ▾」做成右上角的小按钮：不单独占一整行，也不拉满宽度
-        self.tool_button = QPushButton("工具 ▾")
-        self.tool_button.setMenu(self.tool_menu)
-        self.tool_button.setFixedWidth(104)
-        tool_row = QHBoxLayout()
-        tool_row.setContentsMargins(0, 0, 0, 0)
-        tool_row.addStretch(1)
-        tool_row.addWidget(self.tool_button)
-        task_layout.insertLayout(0, tool_row)
+        tool_grid = QGridLayout()
+        tool_grid.setContentsMargins(0, 0, 0, 0)
+        tool_grid.setHorizontalSpacing(8)
+        tool_grid.setVerticalSpacing(4)
+        for index, (label, handler) in enumerate(tool_specs):
+            button = QPushButton(label)
+            button.clicked.connect(handler)
+            tool_grid.addWidget(button, index // 4, index % 4)
+            self.tool_buttons.append(button)
+            self.tool_actions[label] = button
+        task_layout.addLayout(tool_grid)
 
         # 任务列表右键菜单：常用编辑动作不必回按钮区找（列表此前完全没有右键菜单）
         self.task_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -1865,6 +1860,66 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.refresh_task_list()
         self.append_log(f"已更改分组颜色：{color.name()}")
 
+    def delete_group_only(self, group_id):
+        """仅删除分组本身：组内步骤移到上一级分组（没有上一级则回「默认分组」）。
+
+        与「删除该组及其步骤」的区别：任务数量不变、顺序不变、跳转编号不用重算；
+        子分组保留并挂到同一个上一级分组下面。
+        """
+        if not group_id:
+            return
+        if str(group_id) == "group_default":
+            QMessageBox.information(self, "无法删除", "「默认分组」是步骤的根层，不能单独删除。")
+            return
+        answer = QMessageBox.question(
+            self, "仅删除分组", "只删除这个分组，组内步骤移到上一级分组后继续保留，确定吗？")
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        mode = self.mode_combo.currentText() or "custom"
+        metadata = self.mode_group_metadata.setdefault(mode, {})
+        parents = metadata.setdefault("parents", {})
+        children_map = metadata.setdefault("children", {})
+        names = metadata.setdefault("names", {})
+        parent_id = parents.get(group_id)
+        parent_id = str(parent_id) if parent_id else None
+        if parent_id and str(parent_id) == str(group_id):
+            parent_id = None
+        # 子分组挂到上一级（保持原有先后）
+        for child_id in [str(child) for child in (children_map.get(group_id) or [])]:
+            parents[child_id] = parent_id
+            if parent_id:
+                siblings = children_map.setdefault(parent_id, [])
+                if child_id not in siblings:
+                    siblings.append(child_id)
+        if parent_id:
+            children_map[parent_id] = [
+                child for child in (children_map.get(parent_id) or [])
+                if str(child) != str(group_id)
+            ]
+        # 清理该组自己的元数据
+        for key in ("names", "colors", "parents", "children"):
+            metadata.get(key, {}).pop(group_id, None)
+        order = metadata.get("order") or []
+        metadata["order"] = [item for item in order if str(item) != str(group_id)]
+        # 步骤迁移：目标组为上一级；没有上一级则回隐式根层「默认分组」
+        target_id = parent_id or "group_default"
+        target_name = str(names.get(target_id) or ("默认分组" if target_id == "group_default" else target_id))
+        moved = 0
+        for task in TASKS:
+            if str(task.get("group_id") or "group_default") != str(group_id):
+                continue
+            if target_id == "group_default":
+                task.pop("group_id", None)
+                task.pop("group_name", None)
+            else:
+                task["group_id"] = target_id
+                task["group_name"] = target_name
+            moved += 1
+        self.save_current_tasks()
+        self._save_presets()
+        self.refresh_task_list()
+        self.append_log(f"已删除分组（仅删组），{moved} 个步骤移到「{target_name}」。")
+
     # ---------- 任务列表右键菜单 ----------
 
     def _build_task_list_menu(self, context_item=None):
@@ -1891,8 +1946,15 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             menu.addSeparator()
             menu.addAction("在此组中新增步骤", self.add_task)
             menu.addAction("在此组中新增子组", self.add_group)
-            delete_action = menu.addAction("删除该组及其步骤…", self.delete_selected_item)
-            delete_action.setEnabled(True)
+            # 两种删除语义（所有者 2026-10-26）：连步骤一起删 / 只删组、步骤移到上一级
+            delete_all = menu.addAction("删除该组及其步骤…", self.delete_selected_item)
+            delete_only = menu.addAction("仅删除该组（步骤移到上一级）…",
+                                         lambda: self.delete_group_only(group_id))
+            is_default_group = group_id == "group_default"
+            delete_all.setEnabled(not is_default_group)
+            delete_only.setEnabled(not is_default_group)
+            if is_default_group:
+                delete_all.setToolTip("「默认分组」是步骤根层，不能删除")
             menu.addSeparator()
         else:
             menu.addAction("新增步骤", self.add_task)

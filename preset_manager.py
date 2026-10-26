@@ -67,7 +67,8 @@ class PresetManagerMixin:
         payload["__snippets__"] = {
             str(name): value
             for name, value in deepcopy(self.snippets).items()
-            if isinstance(value, list) and value
+            if (isinstance(value, list) and value)
+            or (isinstance(value, dict) and value.get("tasks"))
         }
         payload["__fallback__"] = {
             name: value

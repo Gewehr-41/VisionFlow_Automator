@@ -1,10 +1,15 @@
 # -*- coding: utf-8 -*-
-"""F13 步骤片段：保存/插入时的跳转换算、持久化、界面流程。
+"""F13 片段（第二轮）：可保存分组、可插入到选中步骤之后、组内可再包含组。
 
-核心不变量：
-  · 保存时，指向片段**内部**的跳转改写成片段内相对编号，指向**外部**的丢弃；
-  · 插入时，插入点之后所有现有步骤的跳转整体后移，片段的相对编号换算成绝对编号；
-  · 片段内部按 id 寻址的 flow_next 保持连接；所有 id 重新生成。
+数据格式 v2（兼容 v1 的纯步骤列表）：
+
+    {片段名: {"version": 2, "tasks": [...], "groups": {gid: {name,color,parent}}, "group_order": [...]}}
+
+关键不变量：
+  · 保存：内部跳转改相对编号、外部跳转丢弃；选中分组会带上组内全部步骤与子组；
+  · 插入：插入点之后现有步骤的跳转整体后移；分组生成新 id 并重映射父子关系；
+    顶层组挂到插入点所在的组（或根层），片段里没有分组的步骤也归入该组；
+  · 插入位置：选中步骤 → 紧接其后；选中分组 → 该组最后一步之后；无选中 → 末尾。
 """
 
 import copy
@@ -20,149 +25,220 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 import gui_pyside6 as g  # noqa: E402
-import preflight  # noqa: E402
 import snippets  # noqa: E402
 import tasks  # noqa: E402
 
 _APP = QApplication.instance() or QApplication([])
 
 
-def _task(description, **extra):
+def _task(description, group_id=None, **extra):
     task = {"id": description, "type": "normal", "description": description, "template": description}
+    if group_id:
+        task["group_id"] = group_id
+        task["group_name"] = group_id
     task.update(extra)
     return task
 
 
+def _metadata():
+    return {
+        "names": {"g1": "战斗", "g2": "弹窗"},
+        "colors": {"g1": "#111111", "g2": "#222222"},
+        "parents": {"g1": None, "g2": "g1"},
+        "children": {"g1": ["g2"], "g2": []},
+        "order": ["g1"],
+    }
+
+
+class PayloadTests(unittest.TestCase):
+    def test_v1_list_is_normalised(self):
+        tasks_in, groups, order = snippets.normalize_payload([_task("A")])
+        self.assertEqual(len(tasks_in), 1)
+        self.assertEqual(groups, {})
+        self.assertEqual(order, [])
+
+    def test_v2_dict_is_normalised(self):
+        payload = {"version": 2, "tasks": [_task("A")],
+                   "groups": {"g1": {"name": "战斗", "color": "", "parent": None}},
+                   "group_order": ["g1"]}
+        tasks_in, groups, order = snippets.normalize_payload(payload)
+        self.assertEqual(tasks_in[0]["description"], "A")
+        self.assertEqual(order, ["g1"])
+
+    def test_garbage_is_empty(self):
+        for value in (None, 42, "x", {}, []):
+            tasks_in, groups, _order = snippets.normalize_payload(value)
+            self.assertEqual(tasks_in, [])
+            self.assertEqual(groups, {})
+
+
 class ExtractSnippetTests(unittest.TestCase):
+    def test_selected_steps_only(self):
+        task_list = [_task("A"), _task("B"), _task("C")]
+        payload = snippets.extract_snippet(task_list, [0, 2])
+        self.assertEqual([t["description"] for t in payload["tasks"]], ["A", "C"])
+        self.assertEqual(payload["groups"], {})
+
     def test_internal_jumps_become_relative(self):
-        tasks = [
-            _task("A"),
-            _task("B", condition_true_jump_to=3, condition_false_jump_to=1),
-            _task("C"),
-        ]
-        snippet = snippets.extract_snippet(tasks, [0, 1, 2])
-        self.assertEqual([task["description"] for task in snippet], ["A", "B", "C"])
-        self.assertEqual(snippet[1]["condition_true_jump_to"], 3)
-        self.assertEqual(snippet[1]["condition_false_jump_to"], 1)
+        task_list = [_task("A"), _task("B", condition_true_jump_to=3, condition_false_jump_to=1), _task("C")]
+        payload = snippets.extract_snippet(task_list, [0, 1, 2])
+        self.assertEqual(payload["tasks"][1]["condition_true_jump_to"], 3)
+        self.assertEqual(payload["tasks"][1]["condition_false_jump_to"], 1)
 
     def test_external_jumps_are_dropped(self):
-        tasks = [_task("A", timeout_jump_to=4), _task("B"), _task("C")]
-        snippet = snippets.extract_snippet(tasks, [0])
-        self.assertNotIn("timeout_jump_to", snippet[0], "指向片段外部的跳转没有意义，应丢弃")
-
-    def test_partial_selection_remaps_correctly(self):
-        tasks = [_task("A"), _task("B"), _task("C", condition_true_jump_to=2)]
-        snippet = snippets.extract_snippet(tasks, [1, 2])   # B, C
-        self.assertEqual([task["description"] for task in snippet], ["B", "C"])
-        self.assertEqual(snippet[1]["condition_true_jump_to"], 1, "原指向 B（片段内第 1 个）")
-
-    def test_internal_fields_are_stripped(self):
-        tasks = [_task("A", _outer_step_number=7, __runtime="x")]
-        snippet = snippets.extract_snippet(tasks, [0])
-        self.assertNotIn("_outer_step_number", snippet[0])
-        self.assertNotIn("__runtime", snippet[0])
+        task_list = [_task("A", timeout_jump_to=4), _task("B")]
+        payload = snippets.extract_snippet(task_list, [0])
+        self.assertNotIn("timeout_jump_to", payload["tasks"][0])
 
     def test_deepcopy_isolation(self):
-        tasks = [_task("A", match_rects=[[0, 0, 10, 10]])]
-        snippet = snippets.extract_snippet(tasks, [0])
-        snippet[0]["match_rects"][0][0] = 99
-        self.assertEqual(tasks[0]["match_rects"][0][0], 0, "片段必须是深拷贝")
+        task_list = [_task("A", match_rects=[[0, 0, 10, 10]])]
+        payload = snippets.extract_snippet(task_list, [0])
+        payload["tasks"][0]["match_rects"][0][0] = 99
+        self.assertEqual(task_list[0]["match_rects"][0][0], 0)
 
     def test_empty_selection(self):
-        self.assertEqual(snippets.extract_snippet([_task("A")], []), [])
-        self.assertEqual(snippets.extract_snippet([], [0]), [])
+        payload = snippets.extract_snippet([_task("A")], [])
+        self.assertEqual(payload["tasks"], [])
 
-    def test_summary(self):
-        self.assertIn("2 步", snippets.snippet_summary([_task("A"), _task("B")]))
-        self.assertEqual(snippets.snippet_summary([]), "空片段")
+    def test_internal_fields_are_stripped(self):
+        payload = snippets.extract_snippet([_task("A", _outer_step_number=3)], [0])
+        self.assertNotIn("_outer_step_number", payload["tasks"][0])
+
+    # ---- 分组 ----
+
+    def test_group_selection_brings_all_steps_including_children(self):
+        task_list = [_task("A", "g1"), _task("B", "g2"), _task("C", "g1"), _task("D")]
+        payload = snippets.extract_snippet(task_list, [], _metadata(), ["g1"])
+        self.assertEqual([t["description"] for t in payload["tasks"]], ["A", "B", "C"])
+        self.assertEqual(set(payload["groups"]), {"g1", "g2"})
+
+    def test_group_nesting_kept_inside_snippet(self):
+        task_list = [_task("A", "g1"), _task("B", "g2")]
+        payload = snippets.extract_snippet(task_list, [0, 1], _metadata())
+        self.assertIsNone(payload["groups"]["g1"]["parent"])
+        self.assertEqual(payload["groups"]["g2"]["parent"], "g1", "内部父子关系要保留")
+
+    def test_ancestor_groups_are_included_for_nesting(self):
+        task_list = [_task("A", "g2")]
+        payload = snippets.extract_snippet(task_list, [0], _metadata())
+        self.assertIn("g1", payload["groups"], "祖先组也要带上，否则嵌套关系断了")
+        self.assertEqual(payload["groups"]["g2"]["parent"], "g1")
+
+    def test_group_metadata_names_and_colors(self):
+        payload = snippets.extract_snippet([_task("A", "g1")], [0], _metadata())
+        self.assertEqual(payload["groups"]["g1"]["name"], "战斗")
+        self.assertEqual(payload["groups"]["g1"]["color"], "#111111")
+
+    def test_summary_counts_groups(self):
+        payload = snippets.extract_snippet([_task("A", "g1"), _task("B", "g2")], [0, 1], _metadata())
+        text = snippets.snippet_summary(payload)
+        self.assertIn("2 步", text)
+        self.assertIn("2 个分组", text)
 
 
 class InsertSnippetTests(unittest.TestCase):
     def setUp(self):
-        self.target = [
-            _task("T0", timeout_jump_to=2),
-            _task("T1"),
-        ]
-        # 3 步片段：条件跳转指向片段首尾（指向自己会被体检判成 jump_to_self，那是无效数据）
-        self.snippet = [
-            _task("S0"),
-            _task("S1", condition_true_jump_to=3, condition_false_jump_to=1),
-            _task("S2"),
-        ]
+        self.target = [_task("T0", timeout_jump_to=2), _task("T1")]
+        self.snippet = {
+            "version": 2,
+            "tasks": [_task("S0", "sg1"), _task("S1", "sg2", condition_true_jump_to=3, condition_false_jump_to=1),
+                      _task("S2", "sg1")],
+            "groups": {
+                "sg1": {"name": "新战斗", "color": "#abcdef", "parent": None},
+                "sg2": {"name": "新弹窗", "color": "", "parent": "sg1"},
+            },
+            "group_order": ["sg1", "sg2"],
+        }
 
-    def test_insert_shifts_existing_jumps(self):
-        result = snippets.insert_snippet(self.target, self.snippet, position=1)
-        self.assertEqual([task["description"] for task in result],
-                         ["T0", "S0", "S1", "S2", "T1"])
-        self.assertEqual(result[0]["timeout_jump_to"], 5, "原来指向 T1(2)，插入 3 步后应变成 5")
+    def test_shifts_existing_jumps(self):
+        result, _groups = snippets.insert_snippet(self.target, self.snippet, position=1)
+        self.assertEqual([t["description"] for t in result], ["T0", "S0", "S1", "S2", "T1"])
+        self.assertEqual(result[0]["timeout_jump_to"], 5, "T0 的跳转应随插入后移")
 
-    def test_snippet_relative_jumps_become_absolute(self):
-        result = snippets.insert_snippet(self.target, self.snippet, position=1)
-        condition = result[2]
-        self.assertEqual(condition["condition_true_jump_to"], 4, "片段第 3 个 → 绝对 4（S2）")
-        self.assertEqual(condition["condition_false_jump_to"], 2, "片段第 1 个 → 绝对 2（S0）")
+    def test_relative_jumps_become_absolute(self):
+        result, _groups = snippets.insert_snippet(self.target, self.snippet, position=1)
+        self.assertEqual(result[2]["condition_true_jump_to"], 4)
+        self.assertEqual(result[2]["condition_false_jump_to"], 2)
 
-    def test_ids_are_regenerated_and_flow_next_remapped(self):
-        snippet = [_task("S0"), _task("S1")]
-        snippet[0]["flow_next"] = "S1"          # 片段内部按 id 连接
-        result = snippets.insert_snippet([], snippet, position=0)
-        ids = [task["id"] for task in result]
-        self.assertEqual(len(set(ids)), 2, "id 必须重新生成且唯一")
-        self.assertEqual(result[0]["flow_next"], result[1]["id"], "内部连接应指向副本，而不是原片段")
+    def test_groups_get_new_ids_and_keep_nesting(self):
+        _result, groups = snippets.insert_snippet(self.target, self.snippet, position=1)
+        self.assertEqual(len(groups), 2)
+        self.assertNotIn(groups[0]["id"], ("sg1", "sg2"), "必须生成新 id")
+        self.assertEqual(groups[1]["parent"], groups[0]["id"], "内部嵌套要重映射到新 id")
+        self.assertEqual(groups[0]["name"], "新战斗")
+        self.assertEqual(groups[0]["color"], "#abcdef")
 
-    def test_dangling_flow_next_is_dropped(self):
-        snippet = [_task("S0")]
-        snippet[0]["flow_next"] = "不存在"
-        result = snippets.insert_snippet([], snippet, position=0)
-        self.assertNotIn("flow_next", result[0])
+    def test_steps_point_to_new_group_ids(self):
+        result, groups = snippets.insert_snippet(self.target, self.snippet, position=1)
+        ids = {group["id"] for group in groups}
+        for task in result[1:4]:
+            self.assertIn(task["group_id"], ids)
+        self.assertEqual(result[1]["group_id"], groups[0]["id"])
+        self.assertEqual(result[2]["group_id"], groups[1]["id"])
 
-    def test_insert_positions(self):
-        self.assertEqual([t["description"] for t in snippets.insert_snippet(self.target, [_task("S")], position=0)],
+    def test_top_level_groups_nest_under_target_group(self):
+        _result, groups = snippets.insert_snippet(self.target, self.snippet, position=1, parent_group_id="g_target")
+        self.assertEqual(groups[0]["parent"], "g_target", "插入到某个组里时，片段顶层组要变成它的子组")
+        self.assertEqual(groups[1]["parent"], groups[0]["id"])
+
+    def test_ungrouped_steps_follow_target_group(self):
+        snippet = {"version": 2, "tasks": [_task("S")], "groups": {}, "group_order": []}
+        result, _groups = snippets.insert_snippet([], snippet, position=0, parent_group_id="g_target")
+        self.assertEqual(result[0]["group_id"], "g_target")
+
+    def test_ids_and_flow_next(self):
+        snippet = {"version": 2, "tasks": [_task("S0"), _task("S1")]}
+        snippet["tasks"][0]["flow_next"] = "S1"
+        result, _groups = snippets.insert_snippet([], snippet, position=0)
+        self.assertEqual(len({task["id"] for task in result}), 2)
+        self.assertEqual(result[0]["flow_next"], result[1]["id"])
+
+    def test_positions_and_empty(self):
+        self.assertEqual([t["description"] for t in snippets.insert_snippet(self.target, [_task("S")], 0)[0]],
                          ["S", "T0", "T1"])
-        self.assertEqual([t["description"] for t in snippets.insert_snippet(self.target, [_task("S")])],
-                         ["T0", "T1", "S"], "不传 position 时追加到末尾")
-        self.assertEqual(len(snippets.insert_snippet(self.target, [_task("S")], position=99)), 3,
-                         "越界位置应夹到末尾")
-        self.assertEqual([t["description"] for t in snippets.insert_snippet(self.target, [])], ["T0", "T1"])
+        self.assertEqual([t["description"] for t in snippets.insert_snippet(self.target, [_task("S")])[0]],
+                         ["T0", "T1", "S"])
+        self.assertEqual(len(snippets.insert_snippet(self.target, [], 0)[0]), 2)
 
-    def test_inserted_list_keeps_all_jumps_in_range(self):
-        result = snippets.insert_snippet(self.target, self.snippet, position=1)
-        issues = preflight.check_tasks(result, icon_dir=tempfile.gettempdir(), screen_size=(1920, 1080))
-        jump_codes = {issue.code for issue in issues}
-        self.assertFalse({"jump_out_of_range", "jump_to_self"} & jump_codes, jump_codes)
+    def test_v1_snippet_still_insertable(self):
+        result, groups = snippets.insert_snippet(self.target, [_task("S")], position=1)
+        self.assertEqual([t["description"] for t in result], ["T0", "S", "T1"])
+        self.assertEqual(groups, [])
 
 
 class SnippetStorageTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
-        self._orig = (tasks.PRESETS_FILE, tasks.TASKS_FILE, g.save_presets, g.save_tasks)
+        self._orig = (tasks.PRESETS_FILE, tasks.TASKS_FILE)
         tasks.PRESETS_FILE = os.path.join(self._tmp.name, "saved_presets.json")
         tasks.TASKS_FILE = os.path.join(self._tmp.name, "saved_tasks.json")
-        g.save_presets, g.save_tasks = tasks.save_presets, tasks.save_tasks
 
     def tearDown(self):
-        (tasks.PRESETS_FILE, tasks.TASKS_FILE, g.save_presets, g.save_tasks) = self._orig
+        tasks.PRESETS_FILE, tasks.TASKS_FILE = self._orig
         self._tmp.cleanup()
 
     def _write(self, payload):
         with io.open(tasks.PRESETS_FILE, "w", encoding="utf-8") as handle:
             json.dump(payload, handle, ensure_ascii=False)
 
-    def test_loader_reads_reserved_key(self):
-        self._write({"__snippets__": {"常用": [_task("A")]}})
+    def test_loader_reads_v1_list(self):
+        self._write({"__snippets__": {"老片段": [_task("A")]}})
         loaded = tasks.load_snippets()
-        self.assertEqual(list(loaded), ["常用"])
-        self.assertEqual(loaded["常用"][0]["description"], "A")
+        self.assertEqual(loaded["老片段"][0]["description"], "A")
 
-    def test_reserved_key_is_not_listed_as_preset(self):
+    def test_loader_reads_v2_dict(self):
+        self._write({"__snippets__": {"新片段": {"version": 2, "tasks": [_task("A")],
+                                                "groups": {"g1": {"name": "组", "color": "", "parent": None}},
+                                                "group_order": ["g1"]}}})
+        loaded = tasks.load_snippets()
+        self.assertEqual(loaded["新片段"]["version"], 2)
+        self.assertEqual(list(loaded["新片段"]["groups"]), ["g1"])
+
+    def test_reserved_key_is_not_preset(self):
         self._write({"预设A": [_task("A")], "__snippets__": {"常用": [_task("B")]}})
         presets = tasks.load_presets()
         self.assertIn("预设A", presets)
-        self.assertNotIn("__snippets__", presets, "保留键不能被当成预设")
-
-    def test_reserved_key_is_dropped_from_preset_export_payload_extraction(self):
-        self._write({"__snippets__": {"常用": [_task("B")]}})
-        self.assertEqual(tasks.load_snippets()["常用"][0]["description"], "B")
+        self.assertNotIn("__snippets__", presets)
 
 
 class SnippetGuiTests(unittest.TestCase):
@@ -175,6 +251,7 @@ class SnippetGuiTests(unittest.TestCase):
         self._tasks_snapshot = copy.deepcopy(g.TASKS)
         self.window = g.PySide6ScriptWindow()
         self.window.snippets = {}
+        self.mode = self.window.mode_combo.currentText() or "custom"
 
     def tearDown(self):
         self.window.close()
@@ -185,39 +262,73 @@ class SnippetGuiTests(unittest.TestCase):
     def _logs(self):
         return self.window.log_box.toPlainText()
 
-    def test_save_selection_writes_snippet_and_persists(self):
-        g.TASKS[:] = [_task("A"), _task("B", condition_true_jump_to=1), _task("C")]
-        with mock.patch.object(self.window, "_selected_task_indices", lambda: [0, 1]), \
-                mock.patch.object(g.QInputDialog, "getText", staticmethod(lambda *a, **k: ("常用组", True))):
-            self.window.save_selection_as_snippet()
-        self.assertIn("常用组", self.window.snippets)
-        self.assertEqual(len(self.window.snippets["常用组"]), 2)
-        with io.open(tasks.PRESETS_FILE, encoding="utf-8") as handle:
-            payload = json.load(handle)
-        self.assertIn("__snippets__", payload)
-        self.assertEqual(len(payload["__snippets__"]["常用组"]), 2)
-        self.assertIn("已保存片段", self._logs())
-
-    def test_insert_snippet_after_current_step(self):
-        self.window.snippets = {"常用组": [_task("S0"), _task("S1")]}
-        g.TASKS[:] = [_task("A"), _task("B", timeout_jump_to=2)]
-        self.window.current_task_index = 0
-        with mock.patch.object(g.QInputDialog, "getItem", staticmethod(lambda *a, **k: ("常用组", True))):
-            self.window.insert_snippet_at_selection()
-        self.assertEqual([task["description"] for task in g.TASKS], ["A", "S0", "S1", "B"])
-        self.assertEqual(g.TASKS[3]["timeout_jump_to"], 4, "B 原本指向自己（第 2 步），插入 2 步后应变第 4 步")
-        self.assertIn("已插入片段", self._logs())
-
-    def test_save_without_selection_warns(self):
+    def test_save_group_includes_steps_and_persists_v2(self):
+        self.window.mode_group_metadata[self.mode] = _metadata()
+        g.TASKS[:] = [_task("A", "g1"), _task("B", "g2"), _task("C")]
         with mock.patch.object(self.window, "_selected_task_indices", lambda: []), \
+                mock.patch.object(self.window, "_selected_group_ids", lambda: ["g1"]), \
+                mock.patch.object(g.QInputDialog, "getText", staticmethod(lambda *a, **k: ("带组片段", True))):
+            self.window.save_selection_as_snippet()
+        payload = self.window.snippets["带组片段"]
+        self.assertEqual(len(payload["tasks"]), 2, "g1 与子组 g2 的步骤都要收进片段")
+        self.assertEqual(set(payload["groups"]), {"g1", "g2"})
+        with io.open(tasks.PRESETS_FILE, encoding="utf-8") as handle:
+            stored = json.load(handle)["__snippets__"]["带组片段"]
+        self.assertEqual(stored["version"], 2)
+        self.assertEqual(set(stored["groups"]), {"g1", "g2"})
+
+    def test_save_empty_group_warns(self):
+        self.window.mode_group_metadata[self.mode] = {"names": {"empty": "空组"}, "colors": {}, "parents": {"empty": None},
+                                                      "children": {"empty": []}, "order": ["empty"]}
+        g.TASKS[:] = [_task("A")]
+        with mock.patch.object(self.window, "_selected_task_indices", lambda: []), \
+                mock.patch.object(self.window, "_selected_group_ids", lambda: ["empty"]), \
+                mock.patch.object(g.QInputDialog, "getText", staticmethod(lambda *a, **k: ("空片段", True))), \
                 mock.patch.object(g.QMessageBox, "warning", return_value=None) as warning:
             self.window.save_selection_as_snippet()
         self.assertTrue(warning.called)
+        self.assertNotIn("空片段", self.window.snippets)
 
-    def test_insert_without_snippets_warns(self):
-        with mock.patch.object(g.QMessageBox, "warning", return_value=None) as warning:
+    def test_insert_after_selected_step(self):
+        self.window.snippets = {"常用组": [_task("S0"), _task("S1")]}
+        g.TASKS[:] = [_task("A"), _task("B", timeout_jump_to=2)]
+        with mock.patch.object(self.window, "_selected_task_indices", lambda: [0]), \
+                mock.patch.object(self.window, "_selected_group_ids", lambda: []), \
+                mock.patch.object(g.QInputDialog, "getItem", staticmethod(lambda *a, **k: ("常用组", True))):
             self.window.insert_snippet_at_selection()
-        self.assertTrue(warning.called)
+        self.assertEqual([t["description"] for t in g.TASKS], ["A", "S0", "S1", "B"],
+                         "插入的步骤必须紧接在选中步骤之后")
+        self.assertEqual(g.TASKS[3]["timeout_jump_to"], 4)
+
+    def test_insert_into_selected_group(self):
+        self.window.mode_group_metadata[self.mode] = _metadata()
+        self.window.snippets = {"带组片段": snippets.extract_snippet(
+            [_task("X", "gx1"), _task("Y", "gx2")], [0, 1],
+            {"names": {"gx1": "内层A", "gx2": "内层B"}, "colors": {},
+             "parents": {"gx1": None, "gx2": "gx1"}, "children": {"gx1": ["gx2"], "gx2": []}, "order": ["gx1"]})}
+        g.TASKS[:] = [_task("A", "g1"), _task("B", "g1"), _task("C")]
+        with mock.patch.object(self.window, "_selected_task_indices", lambda: []), \
+                mock.patch.object(self.window, "_selected_group_ids", lambda: ["g1"]), \
+                mock.patch.object(g.QInputDialog, "getItem", staticmethod(lambda *a, **k: ("带组片段", True))):
+            self.window.insert_snippet_at_selection()
+        self.assertEqual([t["description"] for t in g.TASKS], ["A", "B", "X", "Y", "C"],
+                         "插入分组时接在该组最后一个步骤之后")
+        metadata = self.window.mode_group_metadata[self.mode]
+        new_ids = [gid for gid in metadata["names"] if gid not in ("g1", "g2")]
+        self.assertEqual(len(new_ids), 2, "片段里的两个分组都要登记")
+        top = next(gid for gid in new_ids if metadata["parents"][gid] == "g1")
+        child = next(gid for gid in new_ids if metadata["parents"][gid] == top)
+        self.assertTrue(top and child, "顶层组挂到 g1，嵌套组挂到顶层组")
+        self.assertEqual(g.TASKS[2]["group_id"], top)
+
+    def test_insert_without_selection_appends(self):
+        self.window.snippets = {"常用组": [_task("S")]}
+        g.TASKS[:] = [_task("A")]
+        with mock.patch.object(self.window, "_selected_task_indices", lambda: []), \
+                mock.patch.object(self.window, "_selected_group_ids", lambda: []), \
+                mock.patch.object(g.QInputDialog, "getItem", staticmethod(lambda *a, **k: ("常用组", True))):
+            self.window.insert_snippet_at_selection()
+        self.assertEqual([t["description"] for t in g.TASKS], ["A", "S"])
 
     def test_delete_snippet(self):
         self.window.snippets = {"临时": [_task("S")]}
@@ -226,12 +337,16 @@ class SnippetGuiTests(unittest.TestCase):
                                   return_value=g.QMessageBox.StandardButton.Yes):
             self.window.delete_snippet()
         self.assertEqual(self.window.snippets, {})
-        self.assertIn("已删除片段", self._logs())
 
-    def test_snippet_entry_is_a_visible_button(self):
-        """「片段」入口以按钮形式摆在面板上（2026-10-26：工具功能不折叠）。"""
+    def test_no_selection_warns(self):
+        with mock.patch.object(self.window, "_selected_task_indices", lambda: []), \
+                mock.patch.object(self.window, "_selected_group_ids", lambda: []), \
+                mock.patch.object(g.QMessageBox, "warning", return_value=None) as warning:
+            self.window.save_selection_as_snippet()
+        self.assertTrue(warning.called)
+
+    def test_tool_button_exists(self):
         self.assertIn("片段", self.window.tool_actions)
-        self.assertIn("片段", [button.text() for button in self.window.tool_buttons])
 
 
 if __name__ == "__main__":

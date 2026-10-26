@@ -1454,6 +1454,8 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
     @Slot(QTreeWidgetItem, QTreeWidgetItem)
     def load_selected_task(self, item, _previous_item):
         if item is not None and item.data(0, Qt.UserRole) == "group":
+            # 选中的是分组：清掉旧的步骤下标，避免"插入片段"按上一步骤的位置插错地方
+            self.current_task_index = -1
             self._load_editor_for_group(str(item.data(0, Qt.UserRole + 1)))
             return
         index = self._task_index_from_item(item)
@@ -2045,8 +2047,9 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
 
     def save_selection_as_snippet(self):
         indices = self._selected_task_indices()
-        if not indices:
-            QMessageBox.warning(self, "无法保存", "请先在左侧步骤列表里选择一个或多个步骤。")
+        group_ids = self._selected_group_ids()
+        if not indices and not group_ids:
+            QMessageBox.warning(self, "无法保存", "请先在左侧列表里选择一个或多个步骤或分组。")
             return
         name, accepted = QInputDialog.getText(self, "保存为片段", "片段名称：", text="")
         name = (name or "").strip()
@@ -2056,37 +2059,83 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             answer = QMessageBox.question(self, "覆盖片段", f"片段「{name}」已存在，是否覆盖？")
             if answer != QMessageBox.StandardButton.Yes:
                 return
-        snippet = snippet_store.extract_snippet(TASKS, indices)
-        if not snippet:
+        mode = self.mode_combo.currentText() or "custom"
+        metadata = self.mode_group_metadata.get(mode, {})
+        # 选中分组时会把组内步骤（含子组）全部收进片段，分组结构一起保存
+        snippet = snippet_store.extract_snippet(TASKS, indices, metadata, group_ids)
+        if not snippet.get("tasks"):
+            QMessageBox.warning(self, "无法保存", "选中的分组里还没有步骤，片段会是空的。")
             return
         self.snippets[name] = snippet
         self._save_presets()
         self.append_log(
             f"已保存片段「{name}」：{snippet_store.snippet_summary(snippet)}"
-            "（片段内部的跳转保留，指向片段外的跳转会被丢弃）"
+            "（分组会一起保存；片段内部的跳转保留，指向片段外的跳转会被丢弃）"
         )
 
     def insert_snippet_at_selection(self):
         names = sorted(getattr(self, "snippets", {}) or {})
         if not names:
-            QMessageBox.warning(self, "没有片段", "还没有保存过片段。先选中若干步骤，再用「片段 → 保存选中步骤为片段」。")
+            QMessageBox.warning(self, "没有片段", "还没有保存过片段。先选中若干步骤或分组，再用「片段 → 保存选中步骤为片段」。")
             return
         name, accepted = QInputDialog.getItem(self, "插入片段", "选择片段：", names, 0, False)
         if not accepted or not name:
             return
-        snippet = self.snippets.get(name) or []
+        snippet = self.snippets.get(name)
         if not snippet:
             return
-        current = getattr(self, "current_task_index", -1)
-        position = current + 1 if isinstance(current, int) and 0 <= current < len(TASKS) else len(TASKS)
-        new_tasks = snippet_store.insert_snippet(TASKS, snippet, position)
+        snippet_tasks, _groups, _order = snippet_store.normalize_payload(snippet)
+        if not snippet_tasks:
+            return
+        # 插入位置：选中步骤 → 紧接在它后面；选中分组 → 接在该组最后一个步骤后面
+        selected_indices = self._selected_task_indices()
+        selected_groups = self._selected_group_ids()
+        parent_group = None
+        if selected_indices:
+            anchor = max(selected_indices)
+            position = anchor + 1
+            anchor_task = TASKS[anchor] if anchor < len(TASKS) else {}
+            parent_group = str(anchor_task.get("group_id")) if anchor_task.get("group_id") else None
+        elif selected_groups:
+            parent_group = str(selected_groups[0])
+            members = [index for index, task in enumerate(TASKS)
+                       if str(task.get("group_id") or "group_default") == parent_group]
+            position = (max(members) + 1) if members else len(TASKS)
+        else:
+            position = len(TASKS)
+        new_tasks, new_groups = snippet_store.insert_snippet(
+            TASKS, snippet, position, parent_group_id=parent_group)
         inserted = len(new_tasks) - len(TASKS)
         TASKS[:] = new_tasks
+        # 片段里的分组登记进当前预设（新 id，顶层组挂到插入点所在的组下面）
+        if new_groups:
+            mode = self.mode_combo.currentText() or "custom"
+            metadata = self.mode_group_metadata.setdefault(mode, {})
+            names_map = metadata.setdefault("names", {})
+            colors_map = metadata.setdefault("colors", {})
+            parents_map = metadata.setdefault("parents", {})
+            children_map = metadata.setdefault("children", {})
+            order = metadata.setdefault("order", [])
+            for group in new_groups:
+                group_id = group["id"]
+                names_map[group_id] = group["name"]
+                colors_map[group_id] = group["color"] or self._group_default_color()
+                parents_map[group_id] = group["parent"]
+                children_map.setdefault(group_id, [])
+                parent = group["parent"]
+                if parent:
+                    children_map.setdefault(parent, [])
+                    if group_id not in children_map[parent]:
+                        children_map[parent].append(group_id)
+                else:
+                    order.append(group_id)
         self.current_task_index = position
         self.save_current_tasks()
+        self._save_presets()
         self.refresh_task_list()
         self.select_task_index(position)
-        self.append_log(f"已插入片段「{name}」：{inserted} 个步骤（插入点之后的跳转已自动后移）。")
+        group_note = f"，{len(new_groups)} 个分组" if new_groups else ""
+        self.append_log(f"已插入片段「{name}」：{inserted} 个步骤{group_note}（插入点之后的跳转已自动后移）。")
 
     def delete_snippet(self):
         names = sorted(getattr(self, "snippets", {}) or {})

@@ -329,7 +329,7 @@ def load_fallback_steps():
 
 
 def load_snippets():
-    """读取「步骤片段」（F13）：{片段名: [步骤...]}，存在预设文件的 __snippets__ 保留键里。"""
+    """读取「步骤片段」：v1 是 [步骤...]，v2 是 {version,tasks,groups,group_order}；都在预设文件的 __snippets__ 里。"""
     if not os.path.exists(PRESETS_FILE):
         return {}
     try:
@@ -338,11 +338,13 @@ def load_snippets():
         snippets = data.get("__snippets__", {}) if isinstance(data, dict) else {}
         if not isinstance(snippets, dict):
             return {}
-        return {
-            str(name): [step for step in value if isinstance(step, dict)]
-            for name, value in snippets.items()
-            if isinstance(value, list) and value
-        }
+        loaded = {}
+        for name, value in snippets.items():
+            if isinstance(value, list) and value:
+                loaded[str(name)] = [step for step in value if isinstance(step, dict)]
+            elif isinstance(value, dict) and (value.get("tasks") or value.get("groups")):
+                loaded[str(name)] = value
+        return loaded
     except Exception as exc:
         warn(f"警告: 读取 {PRESETS_FILE} 的步骤片段失败（{exc}），片段列表将为空。")
         return {}

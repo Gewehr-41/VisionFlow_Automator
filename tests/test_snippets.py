@@ -228,9 +228,10 @@ class SnippetGuiTests(unittest.TestCase):
         self.assertEqual(self.window.snippets, {})
         self.assertIn("已删除片段", self._logs())
 
-    def test_button_exists(self):
-        texts = [button.text() for button in self.window.task_buttons]
-        self.assertIn("片段", texts)
+    def test_tool_menu_has_snippet_entry(self):
+        """「片段」从按钮区移进了「工具」菜单（2026-10-26 按钮区瘦身）。"""
+        self.assertIn("片段", self.window.tool_actions)
+        self.assertIsNotNone(self.window.tool_button.menu())
 
 
 if __name__ == "__main__":

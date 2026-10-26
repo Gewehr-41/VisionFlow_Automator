@@ -219,9 +219,9 @@ class UpdateGuiTests(unittest.TestCase):
     def _logs(self):
         return self.window.log_box.toPlainText()
 
-    def test_button_exists(self):
-        texts = [button.text() for button in self.window.task_buttons]
-        self.assertIn("检查更新", texts)
+    def test_tool_menu_has_update_entry(self):
+        """「检查更新」从按钮区移进了「工具」菜单（2026-10-26 按钮区瘦身）。"""
+        self.assertIn("检查更新", self.window.tool_actions)
 
     def test_newer_version_notifies_and_logs(self):
         info = uc.UpdateInfo(True, "v0.6.0", config.APP_VERSION, "https://example.com/dl", "v0.6.0", None)

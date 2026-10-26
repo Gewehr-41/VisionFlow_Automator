@@ -1240,8 +1240,11 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         # 导致在界面上折叠组后重启即恢复展开（gui.py 的对应实现是完整的）。
         self.task_list.itemExpanded.connect(self._on_group_expanded_changed)
         self.task_list.itemCollapsed.connect(self._on_group_expanded_changed)
+        # 按钮区分两层（所有者 2026-10-26 反馈 4 行太臃肿，选择"两行编辑 + 工具菜单"方案）：
+        #   第一层：列表编辑，固定 8 个 = 2 行 × 4 列（高频动作始终可见）
+        #   第二层：全局工具收进「工具」下拉菜单（它们跟列表内容无关）
         self.task_buttons = []
-        button_specs = [
+        edit_button_specs = [
             ("全选", self.select_all_tasks),
             ("清空", self.clear_tasks),
             ("上移", lambda: self.move_selected_item(-1)),
@@ -1250,22 +1253,68 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             ("新增步骤", self.add_task),
             ("复制", self.copy_selected_item),
             ("删除", self.delete_selected_item),
-            ("打开蓝图流程", self.open_blueprint),
-            ("识别调试", self.open_recognition_debug),
-            ("兜底处理", self.open_fallback_editor),
-            ("片段", self.open_snippet_menu),
-            ("检查更新", self.check_updates),
         ]
         button_grid = QGridLayout()
         button_grid.setContentsMargins(0, 0, 0, 0)
         button_grid.setHorizontalSpacing(8)
         button_grid.setVerticalSpacing(4)
-        for index, (label, handler) in enumerate(button_specs):
+        for index, (label, handler) in enumerate(edit_button_specs):
             button = QPushButton(label)
             button.clicked.connect(handler)
             button_grid.addWidget(button, index // 4, index % 4)
             self.task_buttons.append(button)
+        self.task_button_grid = button_grid
         task_layout.addLayout(button_grid)
+
+        # 全局工具菜单：打开蓝图流程 / 识别调试 / 兜底处理 / 片段 / 检查更新
+        self.tool_menu = QMenu(self)
+        self.tool_actions = {}
+        tool_specs = [
+            ("打开蓝图流程", self.open_blueprint),
+            ("识别调试", self.open_recognition_debug),
+            ("兜底处理", self.open_fallback_editor),
+            ("片段", self.open_snippet_menu),
+            (None, None),                      # 分隔线
+            ("检查更新", self.check_updates),
+        ]
+        for label, handler in tool_specs:
+            if label is None:
+                self.tool_menu.addSeparator()
+                continue
+            action = self.tool_menu.addAction(label)
+            action.triggered.connect(handler)
+            self.tool_actions[label] = action
+        # 「工具 ▾」做成右上角的小按钮：不单独占一整行，也不拉满宽度
+        self.tool_button = QPushButton("工具 ▾")
+        self.tool_button.setMenu(self.tool_menu)
+        self.tool_button.setFixedWidth(104)
+        tool_row = QHBoxLayout()
+        tool_row.setContentsMargins(0, 0, 0, 0)
+        tool_row.addStretch(1)
+        tool_row.addWidget(self.tool_button)
+        task_layout.insertLayout(0, tool_row)
+
+        # 任务列表右键菜单：常用编辑动作不必回按钮区找（列表此前完全没有右键菜单）
+        self.task_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.task_list.customContextMenuRequested.connect(self.show_task_list_menu)
+        # 列表快捷键：action 挂在 task_list 上 + WidgetShortcut 作用域，
+        # 只有焦点在列表里时才生效——否则会抢走「步骤名称」等输入框里的 Delete / Ctrl+C / Ctrl+A。
+        self.list_shortcuts = []
+        shortcut_specs = [
+            ("Del", self.delete_selected_item),
+            ("Ctrl+C", self.copy_selected_item),
+            ("Ctrl+A", self.select_all_tasks),
+            ("Ins", self.add_task),
+            ("Ctrl+Up", lambda: self.move_selected_item(-1)),
+            ("Ctrl+Down", lambda: self.move_selected_item(1)),
+        ]
+        for sequence, handler in shortcut_specs:
+            action = QAction(self.task_list)
+            action.setShortcut(QKeySequence(sequence))
+            action.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
+            action.triggered.connect(handler)
+            self.task_list.addAction(action)
+            self.list_shortcuts.append(action)
         task_layout.addWidget(self.task_list)
         splitter.addWidget(task_panel)
 
@@ -1795,6 +1844,36 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         elif titles:
             self.window_combo.setCurrentIndex(0)
         self.append_log(f"检测到 {len(titles)} 个可见窗口。")
+
+    # ---------- 任务列表右键菜单 ----------
+
+    def _build_task_list_menu(self):
+        """构建「项目列表」的右键菜单（右键弹出与测试共用同一份）。"""
+        menu = QMenu(self)
+        selected = self._selected_task_indices()
+        menu.addAction("新增步骤", self.add_task)
+        menu.addAction("新增组", self.add_group)
+        menu.addSeparator()
+        copy_action = menu.addAction("复制", self.copy_selected_item)
+        delete_action = menu.addAction("删除", self.delete_selected_item)
+        up_action = menu.addAction("上移", lambda: self.move_selected_item(-1))
+        down_action = menu.addAction("下移", lambda: self.move_selected_item(1))
+        for action in (copy_action, delete_action, up_action, down_action):
+            action.setEnabled(bool(selected))
+        menu.addSeparator()
+        menu.addAction("全选", self.select_all_tasks)
+        clear_action = menu.addAction("清空", self.clear_tasks)
+        clear_action.setEnabled(bool(TASKS))
+        menu.addSeparator()
+        menu.addAction("打开蓝图流程", self.open_blueprint)
+        return menu
+
+    def show_task_list_menu(self, position):
+        """右键：点在某个步骤上时先选中它，再弹菜单（复制/删除因此作用于它）。"""
+        item = self.task_list.itemAt(position)
+        if item is not None and item.data(0, Qt.UserRole) != "group":
+            self.task_list.setCurrentItem(item)
+        self._build_task_list_menu().exec(self.task_list.viewport().mapToGlobal(position))
 
     # ---------- 步骤片段（F13）：保存 / 插入 / 删除常用步骤组 ----------
 

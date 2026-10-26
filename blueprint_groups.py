@@ -125,6 +125,80 @@ class BlueprintGroupMixin:
         for group_id in known:
             render(group_id)
 
+    # ---------- 子图聚焦（F14）：进入某个组内部，只看它（含子组）的节点 ----------
+
+    def _focus_ancestors(self, group_id):
+        """返回 [自己, 父组, 祖父组…]（不含隐式根层「默认分组」）。"""
+        parents = self._group_parents()
+        chain = []
+        current = str(group_id)
+        seen = set()
+        while current and current != "group_default" and current not in seen:
+            seen.add(current)
+            chain.append(current)
+            parent = parents.get(current)
+            current = str(parent) if parent else None
+        return chain
+
+    def focus_path(self):
+        """当前聚焦的路径（根 → 自己）。未聚焦时返回空列表。"""
+        focus = getattr(self, "focus_group", None)
+        if not focus:
+            return []
+        return list(reversed(self._focus_ancestors(focus)))
+
+    def _focus_visible_indices(self):
+        """聚焦时可见的节点下标集合；None 表示"未聚焦，全部可见"。"""
+        focus = getattr(self, "focus_group", None)
+        if not focus:
+            return None
+        return set(self._group_all_node_indices(focus))
+
+    def enter_group(self, group_id):
+        """进入某个组内部（子图视图）。"""
+        if group_id is None:
+            self.focus_root()
+            return
+        group_id = str(group_id)
+        if group_id == "group_default":
+            self.focus_root()
+            return
+        if getattr(self, "focus_group", None) == group_id:
+            return
+        self.focus_group = group_id
+        self.refresh()
+
+    def leave_group(self):
+        """回到上一级（父组；已在根层则不动）。"""
+        focus = getattr(self, "focus_group", None)
+        if not focus:
+            return
+        chain = self._focus_ancestors(focus)
+        self.focus_group = chain[1] if len(chain) > 1 else None
+        self.refresh()
+
+    def focus_root(self):
+        if getattr(self, "focus_group", None) is None:
+            return
+        self.focus_group = None
+        self.refresh()
+
+    def _update_breadcrumb(self):
+        """更新面包屑文字与按钮可用状态（子图视图的导航条）。"""
+        if getattr(self, "breadcrumb_bar", None) is None:
+            return
+        focus = getattr(self, "focus_group", None)
+        self.back_button.setEnabled(bool(focus))
+        self.root_button.setEnabled(bool(focus))
+        if not focus:
+            self.breadcrumb_label.setText("视图：根层（所有步骤）")
+            return
+        names = self._group_names()
+        path = self.focus_path()
+        crumbs = " › ".join(str(names.get(group_id, group_id)) for group_id in path) or str(focus)
+        count = len(self._group_all_node_indices(focus))
+        self.breadcrumb_label.setText(f"视图：根层 › {crumbs}（{count} 步）")
+
     def _collapsed_group_for(self, index):
         task = self.tasks[index]
         group_id = str(task.get("group_id") or "group_default")
@@ -178,6 +252,9 @@ class BlueprintGroupMixin:
         scene_position = self.view.mapToScene(position)
         menu = QMenu(self)
         add_group_action = menu.addAction("新增组")
+        enter_action = menu.addAction("进入该组内部（子图）")
+        enter_action.setEnabled(getattr(self, "focus_group", None) != group_id)
+        enter_action.triggered.connect(lambda: self.enter_group(group_id))
         toggle_action = menu.addAction("收起组" if group_id not in self.collapsed_groups else "展开组")
         edit_action = menu.addAction("编辑组设置")
         add_task_action = menu.addAction("新建步骤到此组")
@@ -275,6 +352,12 @@ class BlueprintGroupMixin:
     def _delete_group(self, group_id):
         if QMessageBox.question(self, "确认删除", "确定删除该组及其包含的步骤吗？") != QMessageBox.Yes:
             return
+        # 删掉的正是当前聚焦的子图（或它的祖先）时，回根层，避免聚焦到一个不存在的组
+        focus = getattr(self, "focus_group", None)
+        if focus:
+            doomed = {str(group_id)} | {str(g) for g in self._group_descendants(group_id)}
+            if str(focus) in doomed:
+                self.focus_group = None
         self._push_history()
         remove_ids = {str(group_id)}
         remove_ids.update(str(g) for g in self._group_descendants(group_id))

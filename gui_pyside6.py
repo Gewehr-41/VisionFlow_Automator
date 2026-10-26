@@ -126,6 +126,8 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
         self.clipboard = []
         self.grid_snap = False
         self.collapsed_groups = self._load_collapsed_groups()
+        # 子图聚焦（F14）：None = 根层；否则为正在查看的组 id（仅视图状态，不写入数据）
+        self.focus_group = None
         self.current_index = -1
         self.current_group_id = None
         self._pending_group_color = None
@@ -155,6 +157,12 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
         self.view.wires_cut.connect(self._on_wires_cut)
         # zoom_changed 此前从未 connect；接上它才能在滚轮缩放后立即持久化
         self.view.zoom_changed.connect(self._on_zoom_changed)
+        # Esc 退出子图：绑定在画布控件上（WidgetShortcut），焦点在画布时才生效
+        self._leave_focus_action = QAction(self.view)
+        self._leave_focus_action.setShortcut(QKeySequence(Qt.Key.Key_Escape))
+        self._leave_focus_action.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
+        self._leave_focus_action.triggered.connect(self.leave_group)
+        self.view.addAction(self._leave_focus_action)
         # 恢复上次的缩放比例。此前 zoom 只写不读（只在 sync_positions 里写入
         # layout_data["zoom"]，打开时从不应用），导致每次重开蓝图都回到 100%。
         self._restore_saved_zoom()
@@ -179,9 +187,25 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
         toolbar_layout.addWidget(QLabel("点击步骤编辑，拖动步骤调整布局"))
         toolbar_layout.addStretch(1)
 
+        # 子图导航条（F14）：进入组内部后显示路径与返回按钮
+        self.breadcrumb_bar = QWidget()
+        breadcrumb_layout = QHBoxLayout(self.breadcrumb_bar)
+        breadcrumb_layout.setContentsMargins(0, 0, 0, 0)
+        self.back_button = QPushButton("← 返回上级")
+        self.back_button.clicked.connect(self.leave_group)
+        self.root_button = QPushButton("根层")
+        self.root_button.clicked.connect(self.focus_root)
+        self.breadcrumb_label = QLabel("视图：根层（所有步骤）")
+        breadcrumb_layout.addWidget(self.back_button)
+        breadcrumb_layout.addWidget(self.root_button)
+        breadcrumb_layout.addWidget(self.breadcrumb_label, 1)
+        self.back_button.setEnabled(False)
+        self.root_button.setEnabled(False)
+
         canvas_panel = QGroupBox("蓝图流程")
         canvas_layout = QVBoxLayout(canvas_panel)
         canvas_layout.addWidget(toolbar)
+        canvas_layout.addWidget(self.breadcrumb_bar)
         canvas_layout.addWidget(self.view, 1)
 
         # 编辑面板
@@ -360,6 +384,7 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
             self._edges = []
             positions = self.layout_data.setdefault("positions", {})
             node_items = {}
+            focus_visible = self._focus_visible_indices()
             for index, task in enumerate(self.tasks):
                 item = BlueprintNodeItem(index, task)
                 position = positions.get(str(index), positions.get(index))
@@ -369,7 +394,8 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
                     item.setPos(40 + (index % 3) * 280, 40 + (index // 3) * 130)
                 self.scene.addItem(item)
                 item.set_runtime_state(self.execution_states.get(str(task.get("id"))))
-                item.setVisible(not self._node_hidden(task))
+                in_focus = focus_visible is None or index in focus_visible
+                item.setVisible(in_focus and not self._node_hidden(task))
                 item.setSelected(index in selected_indices)
                 node_items[index] = item
 
@@ -384,12 +410,19 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
                 item.set_connection_state(connected_outputs.get(index, set()), index in connected_inputs)
 
             self._render_groups(node_items)
+            # 子图视图里只显示聚焦组及其后代的组框（父组框会框住整个画面，隐藏）
+            if focus_visible is not None:
+                allowed_groups = {str(self.focus_group)}
+                allowed_groups.update(str(gid) for gid in self._group_descendants(self.focus_group))
+                for group_id, box in self._group_items.items():
+                    box.setVisible(str(group_id) in allowed_groups)
             self._render_connections(node_items)
             for item in node_items.values():
                 item.set_move_callback(self._on_node_moved)
             self.scene.setSceneRect(self._visible_scene_rect().adjusted(-80, -80, 80, 80))
         finally:
             self._refreshing = False
+        self._update_breadcrumb()
         self._refresh_editor_from_selection()
 
     def update_execution_state(self, task_id, state):
@@ -428,8 +461,12 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
 
     def _render_connections(self, node_items):
         self._edges = []
+        focus_visible = self._focus_visible_indices()
         for source_index, output, target_index, is_default in self._connections():
             if source_index not in node_items or target_index not in node_items:
+                continue
+            if focus_visible is not None and (source_index not in focus_visible
+                                              or target_index not in focus_visible):
                 continue
             source = node_items[source_index]
             target = node_items[target_index]

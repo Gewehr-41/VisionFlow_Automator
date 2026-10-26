@@ -1834,8 +1834,13 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
 
     @Slot()
     def open_recognition_debug(self):
-        """打开「识别调试」窗口（单例；显示最近一次识别的画面与得分）。"""
+        """打开「识别调试」窗口（单例；独立窗口，可单独移动/关闭）。"""
         window = getattr(self, "recognition_debug_window", None)
+        if window is not None:
+            try:
+                window.isVisible()          # 探测底层对象是否已被销毁
+            except RuntimeError:
+                window = None
         if window is None:
             window = RecognitionDebugWindow(self)
             self.recognition_debug_window = window

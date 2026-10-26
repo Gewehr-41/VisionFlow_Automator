@@ -8,7 +8,7 @@ from unittest import mock
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
 import gui_pyside6 as g  # noqa: E402
 import main  # noqa: E402
@@ -82,11 +82,40 @@ class FrameConversionTests(unittest.TestCase):
 class DebugWindowTests(unittest.TestCase):
     def setUp(self):
         recognition_debug.clear()
-        self.window = RecognitionDebugWindow()
+        # 按真实调用方式构造：主窗口把它当子对象传 parent。若只传 parent 而不带
+        # Qt.Window 标志，它就会变成叠在主界面里的子控件（这正是本次修复的 bug）。
+        self._parent = QWidget()
+        self.window = RecognitionDebugWindow(self._parent)
 
     def tearDown(self):
         self.window.close()
+        self._parent.deleteLater()
         recognition_debug.clear()
+
+    def test_window_is_top_level_not_embedded(self):
+        """只传 parent 的 QWidget 是子控件：会叠在主界面上、没有标题栏也关不掉。
+
+        所有者 2026-10-26 实测反馈："界面直接叠加在了主界面上，而且无法关闭"。
+        """
+        from PySide6.QtCore import Qt
+
+        self.assertTrue(self.window.isWindow(), "必须是独立窗口，不能是父窗口里的子控件")
+        self.assertTrue(self.window.windowFlags() & Qt.WindowType.Window,
+                        "窗口标志里必须带 Qt.Window，否则没有标题栏/关闭按钮")
+
+    def test_close_button_closes_and_stops_timer(self):
+        self.window.show()
+        self.assertFalse(self.window.isHidden())
+        self.window.close_button.click()
+        self.assertFalse(self.window.isVisible())
+        self.assertFalse(self.window._timer.isActive(), "关掉以后不该继续空转刷新")
+
+    def test_reopening_restarts_timer(self):
+        self.window.show()
+        self.window.close()
+        self.assertFalse(self.window._timer.isActive())
+        self.window.show()
+        self.assertTrue(self.window._timer.isActive(), "重新打开应恢复自动刷新")
 
     def test_hit_shows_template_score_and_position(self):
         recognition_debug.record(_frame(), template="btn_ok", center=(50, 40), confidence=0.93,
@@ -119,12 +148,25 @@ class DebugWindowTests(unittest.TestCase):
         self.assertIn("#ef4444", colors, "命中位置应画红色标记")
 
     def test_pause_stops_auto_refresh(self):
+        """「暂停刷新」只停自动刷新，不影响手动「立即刷新」。
+
+        注意用 `_auto_refresh` 而不是 `refresh_from_snapshot(only_if_new=True)`：
+        后者按时间戳判断，而 Windows 的 `time.time()` 粒度约 15.6ms，两次记录
+        可能拿到相同时间戳，用它测暂停会变成"碰巧通过/碰巧失败"。
+        """
+        self.window.show()
         recognition_debug.record(_frame(), template="a", hit=True)
-        self.window.refresh_from_snapshot()
+        self.window._auto_refresh()
+        self.assertIn("a", self.window.info_label.text())
+
         self.window.pause_checkbox.setChecked(True)
         recognition_debug.record(_frame(), template="b", hit=True)
-        self.window.refresh_from_snapshot(only_if_new=True)
-        self.assertIn("a", self.window.info_label.text(), "暂停后不该跟着刷新")
+        self.window._auto_refresh()
+        self.assertIn("a", self.window.info_label.text(), "暂停后自动刷新不该动画面")
+
+        # 手动刷新应当仍然生效（暂停不等于冻结数据）
+        self.window.refresh_from_snapshot()
+        self.assertIn("b", self.window.info_label.text(), "「立即刷新」不受暂停影响")
 
     def test_clear_button_resets_panel(self):
         recognition_debug.record(_frame(), template="a", hit=True)

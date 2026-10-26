@@ -33,7 +33,9 @@ class RecognitionDebugWindow(QWidget):
     """最近一次识别的可视化面板（只读）。"""
 
     def __init__(self, parent=None):
-        super().__init__(parent)
+        # 必须显式带 Qt.Window：只传 parent 的 QWidget 是**子控件**，会被嵌在
+        # 主界面里画出来、没有标题栏也关不掉（所有者 2026-10-26 实测反馈）。
+        super().__init__(parent, Qt.WindowType.Window)
         self.setWindowTitle("识别调试（最近一次识别）")
         self.resize(960, 720)
         self._last_timestamp = 0.0
@@ -60,6 +62,11 @@ class RecognitionDebugWindow(QWidget):
         self.clear_button = QPushButton("清空")
         self.clear_button.clicked.connect(self._on_clear_clicked)
         row.addWidget(self.clear_button)
+        # 额外的「关闭」按钮：标题栏的 X 已经能关，但有些系统主题下标题栏不明显，
+        # 留一个显式出口（所有者反馈"关不掉"时补上的）。
+        self.close_button = QPushButton("关闭")
+        self.close_button.clicked.connect(self.close)
+        row.addWidget(self.close_button)
         row.addStretch(1)
         hint = QLabel("画面来自最近一次识别；红色方框=命中位置")
         row.addWidget(hint)
@@ -144,6 +151,13 @@ class RecognitionDebugWindow(QWidget):
             self.image_label.setPixmap(pixmap)
 
     # ---------- 生命周期 ----------
+
+    def showEvent(self, event):
+        """重新打开时恢复自动刷新（closeEvent 会把定时器停掉）。"""
+        super().showEvent(event)
+        if not self._timer.isActive():
+            self._timer.start(400)
+        self.refresh_from_snapshot()
 
     def closeEvent(self, event):
         self._timer.stop()

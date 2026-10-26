@@ -16,6 +16,7 @@ import config
 import preflight
 from core.hotkey import GlobalHotkey
 from core.input import release_all_inputs
+from preflight_dialog import PreflightDialog
 from tasks import TASKS
 from task_widgets import TaskWorker
 
@@ -47,38 +48,25 @@ class ExecutionControlMixin:
         指向已禁用步骤"就必须能同时看到禁用步骤，而且"自动修复"要落到用户真实数据上。
 
         行为约束：**没查出问题时什么都不做**（与加这个功能之前完全一致）；
-        查出问题时才多一个对话框，用户选"仍然开始"即与旧行为等价。
+        查出问题时才弹一个对话框，用户选"仍然开始"即与旧行为等价。
         """
         issues = preflight.check_tasks(TASKS)
         if not issues:
             return True
-        fatal = [issue for issue in issues if issue.level == preflight.FATAL]
-        fixable = [issue for issue in issues if issue.fixable]
-        self.append_log(f"执行前体检：发现 {len(issues)} 个配置问题（其中 {len(fatal)} 个会导致执行失败）。")
+        self.append_log(f"执行前体检：发现 {len(issues)} 个配置问题。")
         for issue in issues:
             self.append_log(f"  - {issue.describe()}")
-        box = QMessageBox(self)
-        box.setWindowTitle("执行前体检")
-        box.setIcon(QMessageBox.Icon.Warning if fatal else QMessageBox.Icon.Information)
-        box.setText(f"发现 {len(issues)} 个配置问题，其中 {len(fatal)} 个会导致执行失败。\n"
-                    "详情见「显示详情」；也可以先自动修复能安全修复的项。")
-        box.setDetailedText("\n".join(issue.describe() for issue in issues))
-        keep_button = box.addButton("仍然开始", QMessageBox.ButtonRole.AcceptRole)
-        fix_button = None
-        if fixable:
-            fix_button = box.addButton("自动修复可安全项并开始", QMessageBox.ButtonRole.ActionRole)
-        cancel_button = box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
-        box.setDefaultButton(cancel_button)
-        box.exec()
-        clicked = box.clickedButton()
-        if fix_button is not None and clicked is fix_button:
+        dialog = PreflightDialog(issues, self)
+        dialog.exec()
+        decision = dialog.decision()
+        if decision == PreflightDialog.FIX:
             fixes = preflight.apply_safe_fixes(TASKS)
             for line in fixes:
                 self.append_log(f"  已自动修复：{line}")
             self.save_current_tasks()
             self.refresh_task_list()
             return True
-        return clicked is keep_button
+        return decision == PreflightDialog.CONTINUE
 
     @Slot()
     def start_script(self):

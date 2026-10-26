@@ -25,6 +25,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 import gui_pyside6 as g  # noqa: E402
+import execution_control  # noqa: E402
 import main  # noqa: E402
 import preflight  # noqa: E402
 import tasks  # noqa: E402
@@ -301,53 +302,6 @@ class PreflightRuleTests(unittest.TestCase):
 # F2：开跑前的闸门（对话框交互）
 # ---------------------------------------------------------------------------
 
-class _FakeButton:
-    def __init__(self, text):
-        self.text = text
-
-
-class _FakeMessageBox:
-    """替代 QMessageBox：不阻塞、按类属性 choice 决定点了哪个按钮。
-
-    `addButton` 必须返回**同一个对象**并在 `clickedButton` 里返回它 —— 生产代码
-    用 `clicked is keep_button` 判断（真实 Qt 就是这么用的）。
-    """
-
-    choice = "cancel"
-    Icon = types.SimpleNamespace(Warning="warning", Information="information")
-    ButtonRole = types.SimpleNamespace(AcceptRole="accept", ActionRole="action", RejectRole="reject")
-
-    def __init__(self, *args, **kwargs):
-        self._buttons = {}
-
-    def setWindowTitle(self, *args):
-        pass
-
-    def setIcon(self, *args):
-        pass
-
-    def setText(self, *args):
-        pass
-
-    def setDetailedText(self, *args):
-        pass
-
-    def addButton(self, text, role=None):
-        button = _FakeButton(text)
-        self._buttons[text] = button
-        return button
-
-    def setDefaultButton(self, *args):
-        pass
-
-    def exec(self):
-        pass
-
-    def clickedButton(self):
-        wanted = {"cancel": "取消", "keep": "仍然开始", "fix": "自动修复可安全项并开始"}[type(self).choice]
-        return self._buttons.get(wanted)
-
-
 class _FakeSignal:
     def connect(self, *args, **kwargs):
         pass
@@ -409,17 +363,17 @@ class PreflightGateTests(unittest.TestCase):
         (tasks.PRESETS_FILE, tasks.TASKS_FILE, g.save_presets, g.save_tasks) = self._orig
         self._tmp.cleanup()
 
-    def _start(self, choice):
-        _FakeMessageBox.choice = choice
-        with mock.patch("execution_control.QMessageBox", _FakeMessageBox), \
-                mock.patch("execution_control.TaskWorker", _FakeWorker), \
+    def _start(self, decision):
+        with mock.patch("execution_control.TaskWorker", _FakeWorker), \
+                mock.patch.object(execution_control.PreflightDialog, "exec", lambda self: 0), \
+                mock.patch.object(execution_control.PreflightDialog, "decision", lambda self: decision), \
                 mock.patch.object(self.window, "selected_tasks", lambda: list(g.TASKS)):
             self.window._start_worker(None)
         return self.window.worker
 
     def test_clean_data_starts_without_dialog(self):
         g.TASKS[:] = [{"id": "ok", "type": "delay", "enabled": True, "duration": 0.1}]
-        with mock.patch("execution_control.QMessageBox", side_effect=AssertionError("不该弹窗")), \
+        with mock.patch("execution_control.PreflightDialog", side_effect=AssertionError("不该弹窗")), \
                 mock.patch("execution_control.TaskWorker", _FakeWorker), \
                 mock.patch.object(self.window, "selected_tasks", lambda: list(g.TASKS)):
             self.window._start_worker(None)
@@ -427,16 +381,16 @@ class PreflightGateTests(unittest.TestCase):
 
     def test_cancel_does_not_start(self):
         g.TASKS[:] = [{"id": "bad", "type": "normal", "enabled": True, "template": ""}]
-        self.assertIsNone(self._start("cancel"))
+        self.assertIsNone(self._start(execution_control.PreflightDialog.CANCEL))
 
     def test_keep_going_still_starts(self):
         g.TASKS[:] = [{"id": "bad", "type": "normal", "enabled": True, "template": ""}]
-        self.assertIsNotNone(self._start("keep"))
+        self.assertIsNotNone(self._start(execution_control.PreflightDialog.CONTINUE))
 
     def test_safe_fix_button_repairs_and_starts(self):
         g.TASKS[:] = [{"id": "bad", "type": "normal", "enabled": True, "template": "a",
                        "wait_for": "next_appear", "next_template": "None"}]
-        self.assertIsNotNone(self._start("fix"))
+        self.assertIsNotNone(self._start(execution_control.PreflightDialog.FIX))
         self.assertEqual(g.TASKS[0]["wait_for"], "time")
         self.assertNotIn("next_template", g.TASKS[0])
 

@@ -75,6 +75,7 @@ from task_widgets import TaskItemDelegate, TaskListWidget, TaskWorker
 from preset_manager import PresetManagerMixin
 from qt_translations import install_qt_translations
 from recognition_debug_window import RecognitionDebugWindow
+from update_ui import UpdateCheckRunner, notify_update, report_check_failure
 from execution_control import ExecutionControlMixin
 from task_list_manager import TaskListMixin
 from ui_common import (
@@ -1246,6 +1247,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             ("打开蓝图流程", self.open_blueprint),
             ("识别调试", self.open_recognition_debug),
             ("兜底处理", self.open_fallback_editor),
+            ("检查更新", self.check_updates),
         ]
         button_grid = QGridLayout()
         button_grid.setContentsMargins(0, 0, 0, 0)
@@ -1850,6 +1852,45 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         window.activateWindow()
         window.refresh_from_snapshot()
 
+    # ---------- 自动更新检查（F11） ----------
+
+    @Slot()
+    def check_updates(self):
+        """「检查更新」按钮：手动检查（失败会弹提示，自动检查则不弹）。"""
+        self.start_update_check(manual=True)
+
+    def start_update_check(self, manual=False):
+        """在后台线程检查 GitHub 最新版本（不阻塞界面，失败一律不抛异常）。"""
+        runner = getattr(self, "_update_runner", None)
+        if runner is not None and getattr(runner, "running", False):
+            if manual:
+                self.append_log("正在检查更新，请稍候…")
+            return
+        runner = UpdateCheckRunner(self)
+        runner.running = True
+        runner.finished.connect(lambda result: self._on_update_result(result, manual))
+        self._update_runner = runner
+        if manual:
+            self.append_log(f"正在检查更新（当前版本 {config.APP_VERSION}）…")
+        runner.start()
+
+    def _on_update_result(self, result, manual=False):
+        """检查结果回到 GUI 线程后的处理：有新版本就提示，失败按手动/自动区别对待。"""
+        runner = getattr(self, "_update_runner", None)
+        if runner is not None:
+            runner.running = False
+        if result.error:
+            self.append_log(f"更新检查未完成：{result.error}")
+            if manual:
+                report_check_failure(self, result)
+            return
+        if result.has_update:
+            self.append_log(f"发现新版本 {result.remote_version}（当前 {result.current_version}）："
+                            f"{result.download_url}")
+            notify_update(self, result)
+        else:
+            self.append_log(f"已是最新版本（{result.current_version}）。")
+
     @Slot()
     def open_blueprint(self):
         if self.blueprint_window is not None and self.blueprint_window.isVisible():
@@ -1995,8 +2036,12 @@ def main():
     # 标准文字才会是中文（否则固定显示英文，所有者 2026-10-26 反馈过）。
     install_qt_translations(app)
     app.setApplicationName("VisionFlow Automator")
+    app.setApplicationVersion(config.APP_VERSION)
     window = PySide6ScriptWindow()
     window.show()
+    # 启动后自动检查一次更新：后台线程，超时/断网/限流都不影响使用（F11）
+    if getattr(config, "CHECK_UPDATE_ON_START", True):
+        window.start_update_check(manual=False)
     return app.exec()
 
 

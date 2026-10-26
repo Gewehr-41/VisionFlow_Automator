@@ -451,6 +451,17 @@ class BlueprintGroupItem(QGraphicsRectItem):
             self.setZValue(5 if value else -2)
         return super().itemChange(change, value)
 
+    def boundingRect(self):
+        """包围盒要把画在 rect 外面的部分也算进去，否则拖动会留下残影。
+
+        收起态的输入/输出端口画在左右边框上（半径 5，一半在 rect 外），
+        展开态虚线边框也有 1~2px 溢出。Qt 移动图元时只重绘「旧包围盒 ∪ 新包围盒」，
+        包围盒没覆盖端口的话，旧位置的圆点不会被擦掉——就是所有者反馈的「重影」。
+        （普通步骤节点早就有 adjusted(-10,-10,10,10)，所以它不重影。）
+        """
+        margin = 8 if self.collapsed else 2
+        return self.rect().adjusted(-margin, -margin, margin, margin)
+
     def shape(self):
         path = QPainterPath()
         rect = self.rect()

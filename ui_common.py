@@ -11,7 +11,8 @@
 """
 import os
 
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel
 
 import config
@@ -147,3 +148,26 @@ def _capture_rect():
         return get_window_rect()
     screen = QApplication.primaryScreen().geometry()
     return {"left": screen.left(), "top": screen.top(), "width": screen.width(), "height": screen.height()}
+
+def _frame_to_pixmap(frame, max_width=0):
+    """把 BGR numpy 画面转成 QPixmap；可选按最大宽度等比缩小。
+
+    `recognition_debug` 记录的是 BGR 数组（与 cv2 一致），界面展示前必须转换。
+    转换失败（None / 形状不对）时返回 None，由调用方显示占位文字。
+    """
+    if frame is None:
+        return None
+    try:
+        height, width = frame.shape[:2]
+        channels = frame.shape[2] if getattr(frame, "ndim", 0) == 3 else 1
+        stride = int(frame.strides[0])
+    except (AttributeError, ValueError, IndexError):
+        return None
+    if channels not in (3, 4) or width <= 0 or height <= 0:
+        return None
+    fmt = QImage.Format.Format_BGR888 if channels == 3 else QImage.Format.Format_ARGB32
+    image = QImage(frame.data, width, height, stride, fmt)
+    pixmap = QPixmap.fromImage(image.copy())
+    if max_width and pixmap.width() > max_width:
+        pixmap = pixmap.scaledToWidth(int(max_width), Qt.SmoothTransformation)
+    return pixmap

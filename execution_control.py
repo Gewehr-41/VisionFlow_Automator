@@ -116,7 +116,7 @@ class ExecutionControlMixin:
         self.append_log(f"脚本启动，共 {len(tasks)} 个启用步骤。")
 
         self.worker_thread = QThread(self)
-        self.worker = TaskWorker(tasks, self.loop_checkbox.isChecked(), self.stop_event, self.pause_event, self.single_step_event, start_node_id)
+        self.worker = TaskWorker(tasks, self.loop_checkbox.isChecked(), self.stop_event, self.pause_event, self.single_step_event, start_node_id, self._fallback_steps_for_mode())
         self.worker.moveToThread(self.worker_thread)
         self.worker_thread.started.connect(self.worker.run)
         self.worker.log.connect(self.append_log)

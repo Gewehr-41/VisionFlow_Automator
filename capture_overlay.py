@@ -39,6 +39,70 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+# 「迂回」与「全局兜底处理」共用的步骤类型清单（与原迂回对话框保持一致）
+STEP_TYPE_OPTIONS = ["normal", "loop", "key_press", "keyboard_move", "drag", "click_until_gone", "delay"]
+
+
+def _build_step_list_editor(dialog, steps, layout, configure_callback, type_options=None):
+    """把一个「步骤列表 + 新增/设置/删除」编辑器挂到 layout 上。
+
+    「迂回步骤」和「全局兜底步骤」（F7）结构完全相同，抽出来一份，避免两套平行实现。
+        steps: 会被原地增删的步骤列表
+        configure_callback(step): 点「设置」时打开配置用的回调
+    返回 refresh_list 回调（外部改了 steps 后可手动刷新显示）。
+    """
+    type_options = list(type_options or STEP_TYPE_OPTIONS)
+    step_list = QListWidget()
+    layout.addWidget(step_list, 1)
+
+    def refresh_list():
+        step_list.clear()
+        for step in steps:
+            description = step.get("description") or step.get("template") or step.get("type", "步骤")
+            step_list.addItem(f"{step.get('type', 'normal')} - {description}")
+
+    refresh_list()
+
+    add_row = QHBoxLayout()
+    type_combo = QComboBox()
+    type_combo.addItems(type_options)
+    add_row.addWidget(type_combo, 1)
+
+    def add_step():
+        steps.append({"type": type_combo.currentText() or "normal"})
+        refresh_list()
+
+    add_button = QPushButton("新增步骤")
+    add_button.clicked.connect(add_step)
+    add_row.addWidget(add_button)
+    layout.addLayout(add_row)
+
+    action_row = QHBoxLayout()
+
+    def configure_step():
+        row = step_list.currentRow()
+        if 0 <= row < len(steps):
+            configure_callback(steps[row])
+            refresh_list()
+
+    config_button = QPushButton("设置")
+    config_button.clicked.connect(configure_step)
+    action_row.addWidget(config_button)
+
+    def delete_step():
+        row = step_list.currentRow()
+        if 0 <= row < len(steps):
+            steps.pop(row)
+            refresh_list()
+
+    delete_button = QPushButton("删除")
+    delete_button.clicked.connect(delete_step)
+    action_row.addWidget(delete_button)
+    action_row.addStretch(1)
+    layout.addLayout(action_row)
+    return refresh_list
+
+
 import config
 from main import MATCH_STRATEGIES, get_task_match_strategy, reload_templates
 from nodes import detour_active
@@ -799,49 +863,10 @@ class CaptureOverlayMixin:
         success_row.addWidget(success_jump_combo, 1)
         layout.addLayout(success_row)
 
-        step_list = QListWidget()
-        layout.addWidget(step_list, 1)
-
-        def refresh_list():
-            step_list.clear()
-            for step in detour_steps:
-                desc = step.get("description") or step.get("template") or step.get("type", "步骤")
-                step_list.addItem(f"{step.get('type', 'normal')} - {desc}")
-
-        refresh_list()
-
-        add_row = QHBoxLayout()
-        type_combo = QComboBox()
-        type_combo.addItems(["normal", "loop", "key_press", "keyboard_move", "drag", "click_until_gone", "delay"])
-        add_row.addWidget(type_combo, 1)
-        add_button = QPushButton("新增步骤")
-        add_button.clicked.connect(lambda: (detour_steps.append({"type": type_combo.currentText() or "normal"}), refresh_list()))
-        add_row.addWidget(add_button)
-        layout.addLayout(add_row)
-
-        action_row = QHBoxLayout()
-        config_button = QPushButton("设置")
-
-        def configure_step():
-            row = step_list.currentRow()
-            if 0 <= row < len(detour_steps):
-                self._configure_detour_step(detour_steps[row], dialog)
-                refresh_list()
-
-        config_button.clicked.connect(configure_step)
-        action_row.addWidget(config_button)
-        delete_button = QPushButton("删除")
-
-        def delete_step():
-            row = step_list.currentRow()
-            if 0 <= row < len(detour_steps):
-                detour_steps.pop(row)
-                refresh_list()
-
-        delete_button.clicked.connect(delete_step)
-        action_row.addWidget(delete_button)
-        action_row.addStretch(1)
-        layout.addLayout(action_row)
+        refresh_list = _build_step_list_editor(
+            dialog, detour_steps, layout,
+            lambda step: self._configure_detour_step(step, dialog),
+        )
 
         def save():
             task["detour_enabled"] = enabled_checkbox.isChecked()

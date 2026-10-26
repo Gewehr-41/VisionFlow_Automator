@@ -120,7 +120,7 @@ class TaskWorker(QObject):
     completed = Signal(str)
     finished = Signal()
 
-    def __init__(self, tasks, loop, stop_event, pause_event, single_step_event, start_node_id):
+    def __init__(self, tasks, loop, stop_event, pause_event, single_step_event, start_node_id, fallback_steps=None):
         super().__init__()
         self.tasks = tasks
         self.loop = loop
@@ -128,6 +128,7 @@ class TaskWorker(QObject):
         self.pause_event = pause_event
         self.single_step_event = single_step_event
         self.start_node_id = start_node_id
+        self.fallback_steps = fallback_steps or []
 
     @Slot()
     def run(self):
@@ -143,6 +144,7 @@ class TaskWorker(QObject):
                 single_step_flag=self.single_step_event,
                 start_node_id=self.start_node_id,
                 completion_callback=self.completed.emit,
+                fallback_steps=self.fallback_steps,
             )
         except Exception as exc:
             # 保留完整堆栈，便于定位真实出错位置（此前只记录异常消息，排障困难）。

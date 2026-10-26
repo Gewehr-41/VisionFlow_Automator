@@ -1,4 +1,4 @@
-# 任务与预设数据层：定义任务结构并负责 JSON 数据的加载、迁移和保存。
+﻿# 任务与预设数据层：定义任务结构并负责 JSON 数据的加载、迁移和保存。
 import json
 import os
 import tempfile
@@ -131,7 +131,7 @@ def _extract_task_list(payload):
             if isinstance(value, list):
                 return value
         for key, value in payload.items():
-            if key in ("custom", "__deleted__", "__group_metadata__"):
+            if key in ("custom", "__deleted__", "__group_metadata__", "__fallback__"):
                 continue
             if isinstance(value, list):
                 return value
@@ -240,7 +240,7 @@ def load_presets():
                 for name in DELETED_PRESET_NAMES:
                     presets.pop(str(name), None)
                 for name, preset_value in data.items():
-                    if name in ("custom", "__deleted__", "__group_metadata__"):
+                    if name in ("custom", "__deleted__", "__group_metadata__", "__fallback__"):
                         continue
                     if isinstance(preset_value, list):
                         presets[str(name)] = normalize_task_list(preset_value)
@@ -302,6 +302,33 @@ def load_blueprint_graphs():
 def save_blueprint_graphs(graphs):
     return dump_json_atomic(BLUEPRINT_GRAPH_FILE, graphs)
 
+
+def load_fallback_steps():
+    """读取「全局兜底处理步骤」（F7）：{模式名: [步骤...]}。
+
+    兜底步骤是**按预设/模式**保存的：custom 模式也有一份。文件里用保留键
+    `__fallback__`，与 `__group_metadata__` 同级，因此不参与预设枚举。
+    """
+    if not os.path.exists(PRESETS_FILE):
+        return {}
+
+    try:
+        with open(PRESETS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        fallback = data.get("__fallback__", {}) if isinstance(data, dict) else {}
+        if not isinstance(fallback, dict):
+            return {}
+        return {
+            str(name): [step for step in value if isinstance(step, dict)]
+            for name, value in fallback.items()
+            if isinstance(value, list)
+        }
+    except Exception as exc:
+        warn(f"警告: 读取 {PRESETS_FILE} 的全局兜底步骤失败（{exc}），兜底处理将不可用。")
+        return {}
+
+
+FALLBACK_STEPS = load_fallback_steps()
 
 PRESET_METADATA = load_preset_metadata()
 

@@ -62,6 +62,12 @@ class PresetManagerMixin:
             for name, value in deepcopy(self.mode_group_metadata).items()
             if str(name) in keep_names
         }
+        # 全局兜底步骤（F7）：与分组元数据同一套保留规则，只写有内容的模式
+        payload["__fallback__"] = {
+            name: value
+            for name, value in deepcopy(self.mode_fallback_steps).items()
+            if str(name) in keep_names and isinstance(value, list) and value
+        }
         save_presets(payload)
 
     def _refresh_mode_combo(self, selected=None):
@@ -167,6 +173,7 @@ class PresetManagerMixin:
         self.deleted_preset_names.add(name)
         # 同步清掉该预设的分组元数据，否则会留下永远无人引用的孤儿条目。
         self.mode_group_metadata.pop(name, None)
+        self.mode_fallback_steps.pop(name, None)
         self._save_presets()
         self._refresh_mode_combo("custom")
         self.on_mode_selected("custom")
@@ -187,6 +194,7 @@ class PresetManagerMixin:
             "preset_name": preset_name,
             "tasks": tasks,
             "group_metadata": deepcopy(self.mode_group_metadata.get(preset_name, {})),
+            "fallback_steps": deepcopy(self.mode_fallback_steps.get(preset_name, [])),
             "blueprint_layout": deepcopy(self.blueprint_layouts.get(preset_name, {})),
             "blueprint_graph": deepcopy(self.blueprint_graphs.get(preset_name, {})),
             "images": image_names,
@@ -244,6 +252,8 @@ class PresetManagerMixin:
 
         self.mode_tasks[target_name] = deepcopy(imported_tasks)
         self.mode_group_metadata[target_name] = deepcopy(payload.get("group_metadata") or {})
+        imported_fallback = payload.get("fallback_steps")
+        self.mode_fallback_steps[target_name] = deepcopy(imported_fallback) if isinstance(imported_fallback, list) else []
         self.blueprint_layouts[target_name] = deepcopy(payload.get("blueprint_layout") or {})
         self.blueprint_graphs[target_name] = deepcopy(payload.get("blueprint_graph") or {})
         self.deleted_preset_names.discard(target_name)

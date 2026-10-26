@@ -43,6 +43,7 @@ import paths
 from main import reload_templates
 from tasks import (
     DELETED_PRESET_NAMES,
+    FALLBACK_STEPS,
     PRESET_METADATA,
     TASKS,
     USER_PRESETS,
@@ -59,7 +60,7 @@ from nodes import JUMP_FIELD_LABELS, NodeGraph, fill_missing_connections, remap_
 # 说明：_load_template_pixmap 在 gui_pyside6 内部已无人使用，但为保持
 # `gui_pyside6.<名字>` 这一层兼容面完整，仍然一并导出。
 # ---- 已外移的模块（这里重新导出，保证 gui_pyside6.<名字> 的既有用法不变）----
-from capture_overlay import CaptureOverlay, CaptureOverlayMixin
+from capture_overlay import CaptureOverlay, CaptureOverlayMixin, _build_step_list_editor
 from blueprint_groups import BlueprintGroupMixin
 from blueprint_interaction import BlueprintInteractionMixin
 from blueprint_canvas import (
@@ -72,6 +73,7 @@ from blueprint_canvas import (
 )
 from task_widgets import TaskItemDelegate, TaskListWidget, TaskWorker
 from preset_manager import PresetManagerMixin
+from recognition_debug_window import RecognitionDebugWindow
 from execution_control import ExecutionControlMixin
 from task_list_manager import TaskListMixin
 from ui_common import (
@@ -1110,6 +1112,8 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.status_text = "待机"
         self.deleted_preset_names = set(DELETED_PRESET_NAMES)
         self.mode_group_metadata = deepcopy(PRESET_METADATA)
+        # 全局兜底处理步骤（F7）：按模式保存，结构与分组元数据同源
+        self.mode_fallback_steps = deepcopy(FALLBACK_STEPS)
         self.blueprint_layouts = load_blueprint_layouts()
         self.blueprint_graphs = load_blueprint_graphs()
         self.mode_tasks = {"custom": deepcopy(TASKS)}
@@ -1239,6 +1243,8 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             ("复制", self.copy_selected_item),
             ("删除", self.delete_selected_item),
             ("打开蓝图流程", self.open_blueprint),
+            ("识别调试", self.open_recognition_debug),
+            ("兜底处理", self.open_fallback_editor),
         ]
         button_grid = QGridLayout()
         button_grid.setContentsMargins(0, 0, 0, 0)
@@ -1777,6 +1783,66 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         elif titles:
             self.window_combo.setCurrentIndex(0)
         self.append_log(f"检测到 {len(titles)} 个可见窗口。")
+
+    def _fallback_steps_for_mode(self, mode=None):
+        """当前模式（预设）的「全局兜底处理步骤」副本（F7）。"""
+        mode = mode or self.mode_combo.currentText() or "custom"
+        steps = self.mode_fallback_steps.get(mode)
+        return deepcopy(steps) if isinstance(steps, list) else []
+
+    @Slot()
+    def open_fallback_editor(self):
+        """编辑「全局兜底处理」步骤（F7）：识别失败时先执行的通用恢复动作。
+
+        复用「迂回」那套步骤列表编辑器（`_build_step_list_editor`）与单步配置对话框
+        （`_configure_detour_step`），不做第二套编辑界面。
+        """
+        mode = self.mode_combo.currentText() or "custom"
+        steps = self._fallback_steps_for_mode(mode)
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"全局兜底处理 — {mode}")
+        dialog.resize(560, 480)
+        layout = QVBoxLayout(dialog)
+        hint = QLabel(
+            "识别失败（重试用完、且还没到迂回）时，按顺序执行下面的步骤；\n"
+            "其中**任一步骤成功**就重新识别当前步骤。适合放「关闭弹窗 / 点击继续 / 等待加载」这类通用恢复动作。\n"
+            "注意：每个步骤每次运行最多尝试一轮兜底，不会循环。"
+        )
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        _build_step_list_editor(
+            dialog, steps, layout,
+            lambda step: self._configure_detour_step(step, dialog),
+        )
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        cancel_button = QPushButton("取消")
+        cancel_button.clicked.connect(dialog.reject)
+        buttons.addWidget(cancel_button)
+        save_button = QPushButton("保存")
+        buttons.addWidget(save_button)
+        layout.addLayout(buttons)
+
+        def save():
+            self.mode_fallback_steps[mode] = deepcopy(steps)
+            self._save_presets()
+            self.append_log(f"已保存全局兜底处理：{len(steps)} 个步骤（{mode}）")
+            dialog.accept()
+
+        save_button.clicked.connect(save)
+        dialog.exec()
+
+    @Slot()
+    def open_recognition_debug(self):
+        """打开「识别调试」窗口（单例；显示最近一次识别的画面与得分）。"""
+        window = getattr(self, "recognition_debug_window", None)
+        if window is None:
+            window = RecognitionDebugWindow(self)
+            self.recognition_debug_window = window
+        window.show()
+        window.raise_()
+        window.activateWindow()
+        window.refresh_from_snapshot()
 
     @Slot()
     def open_blueprint(self):

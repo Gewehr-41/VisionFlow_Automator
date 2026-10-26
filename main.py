@@ -7,6 +7,7 @@ import uuid
 import numpy as np
 
 import config
+import recognition_debug
 from config import ICON_DIR, THRESHOLD, DEFAULT_TIMEOUT, DEFAULT_POLL_INTERVAL, DEFAULT_RETRY_INTERVAL, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP
 from core.screen import capture_screen, to_global_position, get_window_rect
 from core.template_match import StopExecution, load_templates, match_all_templates
@@ -895,7 +896,7 @@ def execute_event_task(task, stop_flag=None, log_callback=None):
     return {"execution_state": "timeout"}
 
 
-def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True):
+def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True, fallback_steps=None):
     """执行一个任务：识别 -> 点击 -> 等待状态变化。"""
     task_type = task.get("type", "normal")
     if task_type == "condition":
@@ -930,6 +931,10 @@ def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True):
     retry_limit = max(0, int(task.get("retry_count", 0) or 0))
     retry_interval = max(0.0, float(task.get("retry_interval", DEFAULT_RETRY_INTERVAL)))
     retries_used = 0
+    # 全局兜底处理（F7）：识别失败时先尝试一组"通用恢复步骤"（关弹窗 / 点继续 …），
+    # 每个步骤执行期间**最多触发一次**，避免"兜底成功→重新识别仍失败→再兜底"的死循环。
+    fallbacks = [step for step in (fallback_steps or []) if isinstance(step, dict)]
+    fallbacks_used = False
 
     log(f"\n>>> 任务: {description}", log_callback)
     start_time = time.time()
@@ -957,6 +962,17 @@ def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True):
         # 多张候选模板时按步骤自己的策略挑一张（默认"置信度最高"）
         matched_name, center, conf = find_match_by_strategy(
             results, template_names, get_task_match_strategy(task)
+        )
+        # 「识别调试」面板读的就是这里记下的快照（worker 线程写、GUI 线程读）
+        recognition_debug.record(
+            screen_img,
+            template=matched_name or tpl_name,
+            center=center,
+            confidence=conf,
+            threshold=get_task_threshold(task),
+            task=description,
+            hit=center is not None,
+            elapsed=time.time() - start_time,
         )
 
         if center is not None:
@@ -1052,6 +1068,33 @@ def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True):
                 return False
             continue
 
+        # 全局兜底处理（F7）：先尝试通用恢复步骤，成功则重新识别本步骤（每个步骤只试一次）
+        if fallbacks and not fallbacks_used:
+            fallbacks_used = True
+            log("  未识别到目标，尝试全局兜底处理……", log_callback)
+            handled = False
+            for fallback_index, fallback_step in enumerate(fallbacks, start=1):
+                if stop_flag is not None and stop_flag.is_set():
+                    return False
+                fallback_label = (fallback_step.get("description")
+                                  or fallback_step.get("template")
+                                  or f"第 {fallback_index} 个兜底步骤")
+                log(f"  兜底 {fallback_index}/{len(fallbacks)}：{fallback_label}", log_callback)
+                try:
+                    outcome = execute_task(dict(fallback_step), stop_flag=stop_flag,
+                                           log_callback=log_callback, allow_detour=False)
+                except Exception as exc:      # 兜底步骤本身出错不应中断主流程
+                    log(f"  兜底步骤出错（已跳过）：{exc}", log_callback)
+                    continue
+                if outcome:
+                    handled = True
+                    log("  兜底步骤已处理，重新识别当前步骤。", log_callback)
+                    break
+            if handled:
+                retries_used = 0
+                start_time = time.time()
+                continue
+
         if allow_detour and detour_active(task):
             log(f"  当前任务未识别到 '{tpl_name}'，执行迂回流程。", log_callback)
             if execute_detour_task(task, stop_flag=stop_flag, log_callback=log_callback):
@@ -1076,7 +1119,7 @@ def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True):
             return False
 
 
-def run_task_queue(tasks, loop=False, stop_flag=None, log_callback=None, execution_callback=None, execution_result_callback=None, pause_flag=None, single_step_flag=None, start_node_id=None, completion_callback=None, message_callback=None):
+def run_task_queue(tasks, loop=False, stop_flag=None, log_callback=None, execution_callback=None, execution_result_callback=None, pause_flag=None, single_step_flag=None, start_node_id=None, completion_callback=None, message_callback=None, fallback_steps=None):
     """按顺序执行任务列表。
 
     message_callback: 可选的成功提示回调（无参数）。GUI 调用方应传入它，
@@ -1098,7 +1141,15 @@ def run_task_queue(tasks, loop=False, stop_flag=None, log_callback=None, executi
             flow_chain = []
             for task in tasks:
                 task.setdefault("id", str(uuid.uuid4()))
-            graph = NodeGraph(tasks, executor=execute_task)
+            # 兜底步骤只在"本次运行"内生效；没有配置时保持原样（executor 就是 execute_task）
+            if fallback_steps:
+                def _executor_with_fallbacks(task, **context):
+                    return execute_task(task, fallback_steps=fallback_steps, **context)
+
+                executor = _executor_with_fallbacks
+            else:
+                executor = execute_task
+            graph = NodeGraph(tasks, executor=executor)
             step_number_to_index = {
                 int(task.get("_outer_step_number", task_index + 1)): task_index
                 for task_index, task in enumerate(tasks)
@@ -1138,7 +1189,7 @@ def run_task_queue(tasks, loop=False, stop_flag=None, log_callback=None, executi
                 if execution_callback:
                     execution_callback(task)
                 try:
-                    node = TaskNode(task, executor=execute_task)
+                    node = TaskNode(task, executor=executor)
                     node_errors = node.validate()
                     if node_errors:
                         raise RuntimeError("；".join(node_errors))

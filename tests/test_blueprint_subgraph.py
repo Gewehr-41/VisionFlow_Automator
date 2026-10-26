@@ -119,7 +119,8 @@ class SubgraphFocusTests(unittest.TestCase):
     def test_group_boxes_outside_focus_are_hidden(self):
         self.window.enter_group("g1")
         visible_groups = {gid for gid, box in self.window._group_items.items() if box.isVisible()}
-        self.assertIn("g1", visible_groups)
+        self.assertIn("g2", visible_groups, "子组的框仍要显示（作为子图内部的边界）")
+        self.assertNotIn("g1", visible_groups, "进入后不再画聚焦组自己的卡片，避免压住内部节点")
         self.assertNotIn("g3", visible_groups, "子图外的组框应隐藏")
 
     def test_focus_is_view_only_state(self):

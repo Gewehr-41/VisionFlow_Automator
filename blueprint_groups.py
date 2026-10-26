@@ -81,7 +81,9 @@ class BlueprintGroupMixin:
                 right = max(node_items[i].x() + node_items[i].rect().width() for i in indices) + 18
                 bottom = max(node_items[i].y() + node_items[i].rect().height() for i in indices) + 18
                 if str(group_id) in self.collapsed_groups:
-                    return left, top, left + 220, top + 18
+                    return (left, top,
+                            left + BlueprintGroupItem.COLLAPSED_WIDTH,
+                            top + BlueprintGroupItem.COLLAPSED_HEIGHT)
                 return left, top, right, bottom
             # 空组：使用存储位置显示组头
             pos = group_positions.get(str(group_id))
@@ -91,9 +93,23 @@ class BlueprintGroupMixin:
                 x, y = 80.0, 80.0 + 40.0 * len(group_positions)
             return x, y, x + 220, y + 18
 
+        def has_collapsed_ancestor(group_id):
+            parents = self._group_parents()
+            current = parents.get(str(group_id))
+            seen = set()
+            while current and str(current) not in seen and str(current) != "group_default":
+                seen.add(str(current))
+                if str(current) in self.collapsed_groups:
+                    return True
+                current = parents.get(str(current))
+            return False
+
         def render(group_id):
             group_id = str(group_id)
             if group_id == "group_default" or group_id in rendered:
+                return
+            if has_collapsed_ancestor(group_id):
+                # 上级组已收起成"群组节点"时，子组框不该再画出来（否则根层会多一个空框）
                 return
             rendered.add(group_id)
             bounds = bounds_for(group_id)
@@ -111,6 +127,7 @@ class BlueprintGroupMixin:
                     color=color,
                     info=f"{step_count} 步骤",
                 )
+                box.collapsed = str(group_id) in self.collapsed_groups
                 box.set_release_callback(self.save_layout)
                 box.set_move_callback(self._on_empty_group_moved)
                 self.scene.addItem(box)
@@ -203,10 +220,13 @@ class BlueprintGroupMixin:
         task = self.tasks[index]
         group_id = str(task.get("group_id") or "group_default")
         parents = self._group_parents()
+        focus = getattr(self, "focus_group", None)
         current = group_id
         seen = set()
         while current and current != "group_default" and current not in seen:
             seen.add(current)
+            if focus and str(current) == str(focus):
+                return None
             if current in self.collapsed_groups:
                 return current
             parent = parents.get(current)
@@ -233,7 +253,8 @@ class BlueprintGroupMixin:
             left = min(node.x() for node in nodes) - 18
             top = min(node.y() for node in nodes) - 36
             if str(group_id) in self.collapsed_groups:
-                box.setRect(left, top, 220, 18)
+                box.setRect(left, top, BlueprintGroupItem.COLLAPSED_WIDTH,
+                            BlueprintGroupItem.COLLAPSED_HEIGHT)
                 continue
             right = max(node.x() + node.rect().width() for node in nodes) + 18
             bottom = max(node.y() + node.rect().height() for node in nodes) + 18

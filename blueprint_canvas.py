@@ -417,6 +417,9 @@ class BlueprintScene(QGraphicsScene):
 
 class BlueprintGroupItem(QGraphicsRectItem):
     HEADER_HEIGHT = 18.0
+    # 收起后的"群组节点"尺寸：与普通步骤节点同量级，Blender 里 group 就是一个节点
+    COLLAPSED_WIDTH = 230.0
+    COLLAPSED_HEIGHT = 120.0
 
     def __init__(self, group_id, rect, node_items, name="", color="#38bdf8", info=""):
         super().__init__(*rect)
@@ -429,6 +432,8 @@ class BlueprintGroupItem(QGraphicsRectItem):
         self._name = name
         self._info = info
         self._color = QColor(color)
+        # 收起态：画成一个带输入/输出端口的群组节点（F14 第二轮）
+        self.collapsed = False
         self.setPen(Qt.NoPen)
         self.setBrush(Qt.NoBrush)
         self.setZValue(-2)
@@ -447,14 +452,29 @@ class BlueprintGroupItem(QGraphicsRectItem):
         return super().itemChange(change, value)
 
     def shape(self):
-        # 仅组头参与命中，透明组身不拦截点击，避免组置顶后挡住组内节点
         path = QPainterPath()
         rect = self.rect()
+        if self.collapsed:
+            # 收起时整块就是"一个节点"，任何位置都能点选/拖动
+            path.addRect(rect)
+            return path
+        # 仅组头参与命中，透明组身不拦截点击，避免组置顶后挡住组内节点
         path.addRect(QRectF(rect.left(), rect.top(), rect.width(), self.HEADER_HEIGHT))
         return path
 
+    def input_port_point(self):
+        rect = self.sceneBoundingRect()
+        return QPointF(rect.left(), rect.center().y())
+
+    def output_port_point(self):
+        rect = self.sceneBoundingRect()
+        return QPointF(rect.right(), rect.center().y())
+
     def paint(self, painter, option, widget=None):
         rect = self.rect()
+        if self.collapsed:
+            self._paint_collapsed_node(painter, rect)
+            return
         header_height = self.HEADER_HEIGHT
         color = self._color
         # 透明背景 + 虚线边框
@@ -472,6 +492,38 @@ class BlueprintGroupItem(QGraphicsRectItem):
         text = self._name if not self._info else f"{self._name} · {self._info}"
         painter.drawText(header_rect.adjusted(6, 0, -4, 0), Qt.AlignLeft | Qt.AlignVCenter, text)
 
+    def _paint_collapsed_node(self, painter, rect):
+        """收起态：圆角卡片 + 标题栏 + 步骤数 + 输入/输出端口，形似一个普通步骤节点。"""
+        radius = 8.0
+        body = QRectF(rect.left(), rect.top(), rect.width(), rect.height())
+        path = QPainterPath()
+        path.addRoundedRect(body, radius, radius)
+        painter.setBrush(QBrush(QColor("#111827")))
+        painter.setPen(QPen(self._color, 2))
+        painter.drawPath(path)
+        # 标题栏
+        header = QRectF(body.left(), body.top(), body.width(), 26.0)
+        header_path = QPainterPath()
+        header_path.addRoundedRect(header, radius, radius)
+        header_path.addRect(QRectF(header.left(), header.bottom() - radius, header.width(), radius))
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(self._color))
+        painter.drawPath(header_path)
+        painter.setPen(QPen(QColor("#0b1220")))
+        painter.setFont(QFont("Microsoft YaHei", 9, QFont.Bold))
+        painter.drawText(header.adjusted(10, 0, -10, 0), Qt.AlignLeft | Qt.AlignVCenter, self._name)
+        # 步骤数 + 提示
+        painter.setPen(QPen(QColor("#9ca3af")))
+        painter.setFont(QFont("Microsoft YaHei", 8))
+        painter.drawText(body.adjusted(12, 32, -12, 0),
+                         Qt.AlignLeft | Qt.AlignTop, f"{self._info} · 双击进入子图")
+        # 输入 / 输出端口
+        center_y = body.center().y()
+        painter.setPen(QPen(QColor("#e5e7eb"), 1))
+        painter.setBrush(QBrush(QColor("#4b5563")))
+        painter.drawEllipse(QPointF(body.left(), center_y), 5, 5)
+        painter.drawEllipse(QPointF(body.right(), center_y), 5, 5)
+
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             self._press_scene_pos = event.scenePos()
@@ -479,8 +531,10 @@ class BlueprintGroupItem(QGraphicsRectItem):
             if scene is not None:
                 scene.clearSelection()
             self.setSelected(True)
-            # 仅点击组头时才允许拖动整组，避免误拖动组内空白区域
-            self._drag_from_header = (event.pos().y() - self.rect().top() <= self.HEADER_HEIGHT)
+            # 仅点击组头时才允许拖动整组，避免误拖动组内空白区域；
+            # 收起成"群组节点"后整块都是组头，任何位置都能拖
+            self._drag_from_header = (self.collapsed
+                                      or event.pos().y() - self.rect().top() <= self.HEADER_HEIGHT)
             event.accept()
             return
         super().mousePressEvent(event)
@@ -518,6 +572,7 @@ class BlueprintView(QGraphicsView):
     connection_requested = Signal(int, int, str)
     interaction_finished = Signal()
     group_toggle_requested = Signal(str)
+    group_enter_requested = Signal(str)
     node_toggle_requested = Signal(int)
     wire_clicked = Signal(object)
     wires_cut = Signal(object)   # Ctrl+右键划过：携带被划中的 BlueprintWireItem 列表
@@ -892,6 +947,11 @@ class BlueprintView(QGraphicsView):
         scene_position = self.mapToScene(event.position().toPoint())
         item = self.scene().itemAt(scene_position, self.transform())
         if isinstance(item, BlueprintGroupItem):
+            if item.collapsed:
+                # 收起成群组节点后，双击 = 进入子图（Blender 的进入群组）
+                self.group_enter_requested.emit(item.group_id)
+                event.accept()
+                return
             scene_rect = item.sceneBoundingRect()
             if scene_position.y() - scene_rect.top() <= item.HEADER_HEIGHT:
                 self.group_toggle_requested.emit(item.group_id)

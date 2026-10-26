@@ -152,6 +152,7 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
         self.view.connection_requested.connect(self.connect_nodes)
         self.view.interaction_finished.connect(self.sync_positions)
         self.view.group_toggle_requested.connect(self.toggle_group)
+        self.view.group_enter_requested.connect(self.enter_group)
         self.view.node_toggle_requested.connect(self.toggle_collapse)
         self.view.wire_clicked.connect(self._on_wire_clicked)
         self.view.wires_cut.connect(self._on_wires_cut)
@@ -412,8 +413,8 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
             self._render_groups(node_items)
             # 子图视图里只显示聚焦组及其后代的组框（父组框会框住整个画面，隐藏）
             if focus_visible is not None:
-                allowed_groups = {str(self.focus_group)}
-                allowed_groups.update(str(gid) for gid in self._group_descendants(self.focus_group))
+                # 聚焦组自己的框不再画（已经进来了；画出来会压住内部节点），只留子组框
+                allowed_groups = {str(gid) for gid in self._group_descendants(self.focus_group)}
                 for group_id, box in self._group_items.items():
                     box.setVisible(str(group_id) in allowed_groups)
             self._render_connections(node_items)
@@ -441,6 +442,11 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
 
 
 
+
+    def _canvas_default_group(self):
+        """画布空白处新建内容时默认放进哪个组：子图视图内=当前聚焦组，否则根层(None)。"""
+        focus = getattr(self, "focus_group", None)
+        return str(focus) if focus else None
 
     def _edge_kind(self, output, is_default, source_type):
         if output == "output":
@@ -635,9 +641,11 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
 
         menu = QMenu(self)
         add_task_action = menu.addAction("新建步骤")
-        add_task_action.triggered.connect(lambda: self.add_task(None, (scene_position.x(), scene_position.y())))
+        add_task_action.triggered.connect(
+            lambda: self.add_task(self._canvas_default_group(), (scene_position.x(), scene_position.y())))
         add_group_action = menu.addAction("新增组")
-        add_group_action.triggered.connect(lambda: self.add_group(None, (scene_position.x(), scene_position.y())))
+        add_group_action.triggered.connect(
+            lambda: self.add_group(self._canvas_default_group(), (scene_position.x(), scene_position.y())))
         menu.addSeparator()
         if node is not None:
             selected_count = len([i for i in self.scene.selectedItems() if isinstance(i, BlueprintNodeItem)])

@@ -19,10 +19,15 @@ class BlueprintInteractionMixin:
     def _node_hidden(self, task):
         group_id = str(task.get("group_id") or "group_default")
         parents = self._group_parents()
+        focus = getattr(self, "focus_group", None)
         current = group_id
         seen = set()
         while current and current != "group_default" and current not in seen:
             seen.add(current)
+            # 已经进入该组内部（子图视图）：它自身的"收起"不该再藏自己组内的节点，
+            # 否则进入一个收起的组会看到空白画布。
+            if focus and str(current) == str(focus):
+                return False
             if current in self.collapsed_groups:
                 return True
             parent = parents.get(current)

@@ -226,6 +226,33 @@ class OrderSyncTests(MainInteractionBase):
         task_c = next(task for task in g.TASKS if task["id"] == "C")
         self.assertEqual(str(task_c.get("group_id")), GROUP_ID, "同级兄弟：留在父组里，只是排到子组前面")
 
+    def test_child_group_can_be_placed_between_parent_steps(self):
+        """子组可以插到父组的两个步骤之间（此前只能在最底部）。"""
+        g.TASKS[:] = [_task("A", GROUP_ID), _task("C", GROUP_ID), _task("B", CHILD_ID)]
+        self.window.refresh_task_list()
+        _APP.processEvents()
+        self.assertEqual(self._ids(), ["A", "C", "B"], "初始：子组在底部")
+        self.window.move_group_block(CHILD_ID, 0, True)   # 把子组拖到 A 之后
+        _APP.processEvents()
+        self.assertEqual(self._ids(), ["A", "B", "C"], "子组应插到 A、C 之间")
+        lines = self.tree_texts()
+        a_line = next(i for i, line in enumerate(lines) if "[T]" in line and "A" in line)
+        group_line = next(i for i, line in enumerate(lines) if "分组: 子组" in line)
+        c_line = next(i for i, line in enumerate(lines) if "[T]" in line and "C" in line)
+        self.assertLess(a_line, group_line, "子组应在 A 之后")
+        self.assertLess(group_line, c_line, "子组应在 C 之前")
+
+    def test_group_up_down_crosses_parent_steps(self):
+        """同层没有别的组时，上移/下移越过父组自己的步骤。"""
+        self.window.task_list.clearSelection()
+        self.group_item(CHILD_ID).setSelected(True)
+        self.window.move_selected_item(-1)
+        _APP.processEvents()
+        self.assertEqual(self._ids(), ["B", "A", "C"], "子组上移后应排到父组步骤 A 前面")
+        lines = self.tree_texts()
+        self.assertLess(next(i for i, line in enumerate(lines) if "分组: 子组" in line),
+                        next(i for i, line in enumerate(lines) if "A" in line and "[T]" in line))
+
     def test_reparent_group_moves_execution_block(self):
         self.window.reparent_group(CHILD_ID, OTHER_ID)
         _APP.processEvents()

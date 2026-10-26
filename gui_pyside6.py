@@ -1284,6 +1284,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.task_list.task_before_group_requested.connect(self.move_task_before_group)
         self.task_list.task_to_root_requested.connect(self.move_task_to_root)
         self.task_list.group_reparent_requested.connect(self.reparent_group)
+        self.task_list.group_reorder_requested.connect(self.move_group_block)
         # 组折叠/展开状态需要持久化：此前只读取元数据里的 expanded，从不写入，
         # 导致在界面上折叠组后重启即恢复展开（gui.py 的对应实现是完整的）。
         self.task_list.itemDoubleClicked.connect(self._on_task_item_double_clicked)
@@ -1808,6 +1809,76 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         return [index for index, task in enumerate(TASKS)
                 if str(task.get("group_id") or "group_default") in member_ids]
 
+    def _rebuild_tasks_with_block(self, block_indices, insert_at, old_index_by_id):
+        """把 block_indices 的步骤整块搬到 insert_at（相对"去掉块之后"的列表），再重编号跳转。"""
+        block_tasks = [TASKS[index] for index in block_indices]
+        rest = [task for index, task in enumerate(TASKS) if index not in set(block_indices)]
+        insert_at = max(0, min(int(insert_at), len(rest)))
+        TASKS[:] = rest[:insert_at] + block_tasks + rest[insert_at:]
+        remap_jump_targets(TASKS, _jump_index_map([old_index_by_id[str(t.get("id"))] for t in TASKS]))
+
+    def move_group_block(self, group_id, target_index, insert_after):
+        """把某个组（含后代）的步骤块移到 target_index 这个步骤的前/后。
+
+        跨到别的组时同时改归属（等价于"把子组拖到那个组里的某一步旁边"）。
+        这样**子组可以插到父组的两个步骤之间**，不再只能待在底部。
+        """
+        if not (0 <= target_index < len(TASKS)):
+            return
+        mode = self.mode_combo.currentText() or "custom"
+        metadata = self.mode_group_metadata.setdefault(mode, {})
+        names = metadata.setdefault("names", {})
+        parents = metadata.setdefault("parents", {})
+        children = metadata.setdefault("children", {})
+        order = metadata.setdefault("order", [])
+        group_id = str(group_id)
+        if group_id not in names:
+            return
+        members = set(self._group_member_indices(metadata, group_id))
+        if not members or target_index in members:
+            return
+        target_task = TASKS[target_index]
+        target_group = str(target_task.get("group_id") or "group_default")
+        current_parent = parents.get(group_id)
+        current_parent = str(current_parent) if current_parent else None
+        target_parent = target_group if target_group != "group_default" else None
+        old_index_by_id = {str(task.get("id")): index for index, task in enumerate(TASKS)}
+        block_indices = [index for index in range(len(TASKS)) if index in members]
+        target_id = str(target_task.get("id"))
+        if target_parent != current_parent:
+            if target_parent and target_parent in self._group_descendants(metadata, group_id):
+                return          # 不能挂到自己的后代里
+            if current_parent:
+                siblings = children.setdefault(current_parent, [])
+                if group_id in siblings:
+                    siblings.remove(group_id)
+            else:
+                if group_id in order:
+                    order.remove(group_id)
+            parents[group_id] = target_parent
+            if target_parent:
+                children.setdefault(target_parent, [])
+                if group_id not in children[target_parent]:
+                    children[target_parent].append(group_id)
+            else:
+                if group_id not in order:
+                    order.append(group_id)
+        rest = [task for index, task in enumerate(TASKS) if index not in members]
+        target_position = next((position for position, task in enumerate(rest)
+                                if str(task.get("id")) == target_id), None)
+        if target_position is None:
+            return
+        insert_at = target_position + (1 if insert_after else 0)
+        self._rebuild_tasks_with_block(block_indices, insert_at, old_index_by_id)
+        self.save_current_tasks()
+        self._save_presets()
+        self.refresh_task_list()
+        group_item = self._group_items().get(group_id)
+        if group_item is not None:
+            self.task_list.clearSelection()
+            group_item.setSelected(True)
+        self.append_log(f"已移动分组: {names.get(group_id, group_id)}")
+
     def _swap_group_blocks(self, metadata, group_id, other_id, put_self_first):
         """把两个组的步骤块在 TASKS 里对调（组排序 = 执行顺序）。"""
         self_indices = self._group_member_indices(metadata, group_id)
@@ -1831,6 +1902,35 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         TASKS[:] = new_tasks
         remap_jump_targets(TASKS, _jump_index_map([old_index_by_id[str(t.get("id"))] for t in TASKS]))
 
+    def _nudge_group_across_steps(self, metadata, group_id, direction):
+        """同层没有相邻组时，让组块越过父组自己的一个步骤（实现"子组插到两步之间"）。"""
+        group_id = str(group_id)
+        parents = metadata.get("parents") or {}
+        parent = parents.get(group_id)
+        parent = str(parent) if parent else "group_default"
+        member_ids = {str(gid) for gid in self._group_descendants(metadata, group_id)}
+        block = [index for index, task in enumerate(TASKS)
+                 if str(task.get("group_id") or "group_default") in member_ids]
+        if not block:
+            return False
+        sibling_indices = [index for index, task in enumerate(TASKS)
+                           if str(task.get("group_id") or "group_default") == parent
+                           and index not in set(block)]
+        if direction < 0:
+            candidates = [index for index in sibling_indices if index < min(block)]
+            if not candidates:
+                return False
+            target_index = max(candidates)
+            insert_after = False
+        else:
+            candidates = [index for index in sibling_indices if index > max(block)]
+            if not candidates:
+                return False
+            target_index = min(candidates)
+            insert_after = True
+        self.move_group_block(group_id, target_index, insert_after)
+        return True
+
     def _move_group(self, group_id, direction):
         """在同一层级内移动分组：元数据顺序 + TASKS 里的步骤块一起换，执行顺序才会跟着变。"""
         mode = self.mode_combo.currentText() or "custom"
@@ -1844,6 +1944,9 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         position = siblings.index(group_id)
         target = position + direction
         if not (0 <= target < len(siblings)):
+            # 同层没有相邻的组可换：试着越过父组自己的步骤（子组可以排在两步之间）
+            if self._nudge_group_across_steps(metadata, group_id, direction):
+                return
             return
         other_id = siblings[target]
         self._swap_group_blocks(metadata, group_id, other_id, put_self_first=direction < 0)

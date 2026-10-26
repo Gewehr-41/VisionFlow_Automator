@@ -62,6 +62,7 @@ class TaskListWidget(QTreeWidget):
     task_before_group_requested = Signal(int, str)                # 步骤 -> 放到某个组前面
     task_to_root_requested = Signal(int)                          # 步骤 -> 移到根层末尾
     group_reparent_requested = Signal(str, object)                # 组 -> 挂到某个组（None=根层）
+    group_reorder_requested = Signal(str, int, bool)              # 组 -> 移到某步骤前/后
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -125,6 +126,18 @@ class TaskListWidget(QTreeWidget):
             return
         if source.data(0, Qt.UserRole) == "group":
             source_group = str(source.data(0, Qt.UserRole + 1))
+            if target is not None and target.data(0, Qt.UserRole) != "group":
+                # 拖到某个**步骤**上：把整组插到这个步骤的前/后（可插进父组两步之间）
+                target_index = target.data(0, Qt.UserRole + 1)
+                if target_index is None:
+                    event.ignore()
+                    return
+                target_rect = self.visualItemRect(target)
+                insert_after = event.position().y() >= target_rect.center().y()
+                event.accept()
+                QTimer.singleShot(0, lambda: self.group_reorder_requested.emit(
+                    source_group, int(target_index), insert_after))
+                return
             target_group = self._group_id_of(target) if target is not None else ""
             event.accept()
             QTimer.singleShot(0, lambda: self.group_reparent_requested.emit(

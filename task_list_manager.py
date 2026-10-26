@@ -195,6 +195,9 @@ class TaskListMixin:
         for group_id, group in groups.items():
             group.setExpanded(bool(group_expanded.get(group_id, True)))
 
+        # 按元数据顺序重排组（上移/下移、拖拽改变父子关系后界面要跟着变）
+        self._apply_group_meta_order(group_metadata)
+
         self.task_list.blockSignals(False)
         if TASKS:
             target_index = min(max(self.current_task_index, 0), len(TASKS) - 1)
@@ -220,6 +223,67 @@ class TaskListMixin:
         finally:
             self._suppress_group_expand_sync = False
         self._restore_group_expansion(snapshot)
+
+    def _apply_group_meta_order(self, group_metadata):
+        """按元数据把「组」排成 order / children 里的顺序。
+
+        主界面的树按创建顺序拼出来，分组上移/下移、拖拽改变父子之后必须按元数据重排，
+        否则界面顺序和保存的数据对不上。只重排**组项**，步骤项的相对位置不动。
+        """
+        if not isinstance(group_metadata, dict):
+            return
+        order = [str(gid) for gid in (group_metadata.get("order") or [])]
+        children = group_metadata.get("children") or {}
+
+        def is_tree(container):
+            return hasattr(container, "topLevelItemCount")
+
+        def level_count(container):
+            return container.topLevelItemCount() if is_tree(container) else container.childCount()
+
+        def level_item(container, index):
+            return container.topLevelItem(index) if is_tree(container) else container.child(index)
+
+        def level_take(container, index):
+            return container.takeTopLevelItem(index) if is_tree(container) else container.takeChild(index)
+
+        def level_insert(container, index, item):
+            if is_tree(container):
+                container.insertTopLevelItem(index, item)
+            else:
+                container.insertChild(index, item)
+
+        def sort_level(container, ranked):
+            ranked_index = {group_id: position for position, group_id in enumerate(ranked)}
+            items = [level_item(container, index) for index in range(level_count(container))]
+            group_positions = [index for index, item in enumerate(items)
+                               if item.data(0, Qt.UserRole) == "group"]
+            if len(group_positions) < 2:
+                return
+            group_items = [items[index] for index in group_positions]
+            current_ids = [str(item.data(0, Qt.UserRole + 1)) for item in group_items]
+            desired = [gid for gid in ranked if gid in current_ids]
+            desired += [gid for gid in current_ids if gid not in desired]
+            if current_ids == desired:
+                # 已经有序就不要 take/insert：从树里取出再放回会把展开状态弄乱
+                return
+            expanded_state = {gid: item.isExpanded() for gid, item in zip(current_ids, group_items)}
+            for position in reversed(group_positions):
+                level_take(container, position)
+            ordered_items = [group_items[current_ids.index(gid)] for gid in desired]
+            for position, item in zip(group_positions, ordered_items):
+                level_insert(container, position, item)
+            # 重排后恢复每组的展开/折叠状态（setExpanded 期间信号已被 refresh 阻塞）
+            for position in group_positions:
+                item = level_item(container, position)
+                gid = str(item.data(0, Qt.UserRole + 1))
+                if gid in expanded_state:
+                    item.setExpanded(expanded_state[gid])
+
+        sort_level(self.task_list, order)
+        for group_id, item in self._group_items().items():
+            if item is not None:
+                sort_level(item, [str(child) for child in (children.get(group_id) or [])])
 
     def _group_items(self):
         """当前树里所有组项：group_id -> QTreeWidgetItem（含嵌套）。"""
@@ -321,21 +385,104 @@ class TaskListMixin:
         return TASKS
     @Slot()
     def copy_selected_item(self):
+        """复制选中的步骤 / 分组。
+
+        - 多选步骤：全部复制（此前只复制最后一个）
+        - 选中分组：组内全部步骤（含子组）+ 分组结构一起复制，生成新组 id、名称加「副本」，
+          嵌套关系在副本内部保持，父组在复制范围外时副本落到根层
+        - 复制范围内部的跳转改指向副本，指向范围外的跳转清除
+        """
         indices = self._selected_task_indices()
-        if not indices:
+        group_ids = self._selected_group_ids()
+        if not indices and not group_ids:
             return
-        index = indices[-1]
-        cloned = deepcopy(TASKS[index])
-        cloned["id"] = str(uuid.uuid4())
-        cloned["description"] = f"{cloned.get('description', '步骤')} 副本"
-        cloned.pop("flow_next", None)
-        cloned.pop("flow_next_disabled", None)
-        TASKS.insert(index + 1, cloned)
-        self.current_task_index = index + 1
+        mode = self.mode_combo.currentText() or "custom"
+        metadata = self.mode_group_metadata.setdefault(mode, {})
+        names = metadata.setdefault("names", {})
+        colors = metadata.setdefault("colors", {})
+        parents = metadata.setdefault("parents", {})
+        children = metadata.setdefault("children", {})
+        order = metadata.setdefault("order", [])
+
+        affected_groups = []
+        for group_id in group_ids:
+            for child in self._group_descendants(metadata, group_id):
+                if str(child) not in affected_groups:
+                    affected_groups.append(str(child))
+        source_indices = set(indices)
+        for index, task in enumerate(TASKS):
+            if str(task.get("group_id") or "group_default") in affected_groups:
+                source_indices.add(index)
+        ordered = sorted(source_indices)
+        if not ordered:
+            return
+
+        copies = []
+        id_map = {}
+        index_map = {}
+        for position, index in enumerate(ordered):
+            cloned = deepcopy(TASKS[index])
+            old_id = str(cloned.get("id"))
+            new_id = str(uuid.uuid4())
+            id_map[old_id] = new_id
+            index_map[index] = position
+            cloned["id"] = new_id
+            cloned["description"] = f"{cloned.get('description', '步骤')} 副本"
+            copies.append(cloned)
+
+        group_id_map = {group_id: f"group_{uuid.uuid4().hex[:8]}" for group_id in affected_groups}
+        for cloned in copies:
+            old_group = str(cloned.get("group_id") or "group_default")
+            new_group = group_id_map.get(old_group)
+            if new_group:
+                cloned["group_id"] = new_group
+                cloned["group_name"] = ""       # 建好组元数据后再填名字
+        # 复制范围内部的 flow_next / 跳转到副本，范围外的清掉
+        for cloned in copies:
+            flow_target = cloned.get("flow_next")
+            if flow_target is not None:
+                mapped = id_map.get(str(flow_target))
+                if mapped is None:
+                    cloned.pop("flow_next", None)
+                else:
+                    cloned["flow_next"] = mapped
+        remap_jump_targets(copies, index_map)
+
+        insert_at = ordered[-1] + 1
+        # 插入点之后现有步骤的跳转整体后移
+        remap_jump_targets(TASKS, {
+            old_index: (old_index + len(copies) if old_index >= insert_at else old_index)
+            for old_index in range(len(TASKS))
+        })
+        TASKS[insert_at:insert_at] = copies
+
+        # 复制分组的元数据（父组在复制范围外 → 副本落到根层）
+        for old_group, new_group in group_id_map.items():
+            names[new_group] = f"{names.get(old_group, old_group)} 副本"
+            colors[new_group] = str(colors.get(old_group) or self._group_default_color())
+            old_parent = parents.get(old_group)
+            new_parent = group_id_map.get(str(old_parent)) if old_parent else None
+            parents[new_group] = new_parent
+            children.setdefault(new_group, [])
+            if new_parent:
+                children.setdefault(new_parent, [])
+                if new_group not in children[new_parent]:
+                    children[new_parent].append(new_group)
+            else:
+                order.append(new_group)
+        for cloned in copies:
+            new_group = cloned.get("group_id")
+            if new_group in names:
+                cloned["group_name"] = names[new_group]
+
+        if group_id_map:
+            self._save_presets()
+        self.current_task_index = insert_at
         self.save_current_tasks()
         self.refresh_task_list()
-        self.select_task_index(self.current_task_index)
-        self.append_log(f"已复制步骤: {cloned['description']}")
+        self.select_task_index(insert_at)
+        group_note = f"，{len(group_id_map)} 个分组" if group_id_map else ""
+        self.append_log(f"已复制 {len(copies)} 个步骤{group_note}。")
     @Slot()
     def delete_selected_item(self):
         indices = set(self._selected_task_indices())

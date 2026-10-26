@@ -84,7 +84,7 @@ class TaskPanelRightClickTests(unittest.TestCase):
     def test_empty_area_menu_has_creation_actions(self):
         menu = self.window._build_task_list_menu(None)
         actions = {action.text(): action for action in menu.actions() if action.text()}
-        for label in ("新增步骤", "新增组", "全选", "清空", "打开蓝图流程"):
+        for label in ("新增步骤", "新增组", "全部启用", "全部停用", "打开蓝图流程"):
             self.assertIn(label, actions)
 
     def test_step_menu_has_edit_actions_enabled(self):

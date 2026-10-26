@@ -57,8 +57,10 @@ class TaskItemDelegate(QStyledItemDelegate):
 class TaskListWidget(QTreeWidget):
     toggle_requested = Signal()
     order_changed = Signal()
-    task_drop_requested = Signal(int, int, bool)
-    task_drop_to_end_requested = Signal(int)
+    task_drop_requested = Signal(int, int, bool, object)          # 源下标, 目标下标, 是否插到后面, 目标所属组
+    task_into_group_requested = Signal(int, str)                  # 步骤 -> 放进某个组
+    task_to_root_requested = Signal(int)                          # 步骤 -> 移到根层末尾
+    group_reparent_requested = Signal(str, object)                # 组 -> 挂到某个组（None=根层）
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -78,32 +80,68 @@ class TaskListWidget(QTreeWidget):
         if event.button() == Qt.LeftButton:
             pos = event.position().toPoint()
             item = self.itemAt(pos)
-            if item is not None and item.data(0, Qt.UserRole) != "group":
-                rect = self.visualItemRect(item)
-                if pos.x() >= rect.right() - 30:
-                    self._drag_handle_pressed = True
+            if item is not None:
+                if item.data(0, Qt.UserRole) == "group":
+                    # 组没有右侧手柄：整行都能拖（拖动=调整分组归属/层级）
                     self._drag_source_item = item
+                else:
+                    rect = self.visualItemRect(item)
+                    if pos.x() >= rect.right() - 30:
+                        self._drag_handle_pressed = True
+                        self._drag_source_item = item
         super().mousePressEvent(event)
 
     def startDrag(self, supportedActions):
-        if not self._drag_handle_pressed:
+        source = self._drag_source_item
+        if not self._drag_handle_pressed and not (
+                source is not None and source.data(0, Qt.UserRole) == "group"):
             return
         super().startDrag(supportedActions)
 
+    def _group_id_of(self, item):
+        """某个树项所属的组 id：组项返回自己的 id，步骤项返回父组 id，根层返回 ""。"""
+        if item is None:
+            return ""
+        if item.data(0, Qt.UserRole) == "group":
+            return str(item.data(0, Qt.UserRole + 1))
+        parent = item.parent()
+        if parent is not None and parent.data(0, Qt.UserRole) == "group":
+            return str(parent.data(0, Qt.UserRole + 1))
+        return ""
+
     def dropEvent(self, event):
+        """拖放语义：
+        · 组 → 组：把整组挂到目标组下面（拖到空白=回根层）
+        · 组 → 步骤：挂到该步骤所在的组
+        · 步骤 → 组：加入该组（空组也可以）
+        · 步骤 → 步骤：插到目标步骤前后，并改为目标所在的组
+        · 步骤 → 空白：移到根层末尾（此前只调整顺序、留在原组，等于无法拖出组）
+        """
         target = self.itemAt(event.position().toPoint())
         source = self._drag_source_item or self.currentItem()
-        if source is None or source.data(0, Qt.UserRole) == "group":
+        if source is None:
             event.ignore()
+            return
+        if source.data(0, Qt.UserRole) == "group":
+            source_group = str(source.data(0, Qt.UserRole + 1))
+            target_group = self._group_id_of(target) if target is not None else ""
+            event.accept()
+            QTimer.singleShot(0, lambda: self.group_reparent_requested.emit(
+                source_group, target_group or None))
             return
         source_index = source.data(0, Qt.UserRole + 1)
         if source_index is None:
             event.ignore()
             return
-        if target is None or target.data(0, Qt.UserRole) == "group":
-            # 拖到空白处或组头：移动到末尾
+        if target is not None and target.data(0, Qt.UserRole) == "group":
+            target_group = str(target.data(0, Qt.UserRole + 1))
             event.accept()
-            QTimer.singleShot(0, lambda: self.task_drop_to_end_requested.emit(int(source_index)))
+            QTimer.singleShot(0, lambda: self.task_into_group_requested.emit(
+                int(source_index), target_group))
+            return
+        if target is None:
+            event.accept()
+            QTimer.singleShot(0, lambda: self.task_to_root_requested.emit(int(source_index)))
             return
         target_index = target.data(0, Qt.UserRole + 1)
         if target_index is None:
@@ -111,8 +149,10 @@ class TaskListWidget(QTreeWidget):
             return
         target_rect = self.visualItemRect(target)
         insert_after = event.position().y() >= target_rect.center().y()
+        target_group = self._group_id_of(target)
         event.accept()
-        QTimer.singleShot(0, lambda: self.task_drop_requested.emit(int(source_index), int(target_index), insert_after))
+        QTimer.singleShot(0, lambda: self.task_drop_requested.emit(
+            int(source_index), int(target_index), insert_after, target_group or None))
 class TaskWorker(QObject):
     log = Signal(str)
     execution_started = Signal(dict)

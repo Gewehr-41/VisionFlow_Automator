@@ -1280,9 +1280,12 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.task_list.toggle_requested.connect(self.toggle_selected_tasks)
         self.task_list.order_changed.connect(self.persist_task_order)
         self.task_list.task_drop_requested.connect(self.reorder_task_from_tree)
-        self.task_list.task_drop_to_end_requested.connect(self.move_task_to_end)
+        self.task_list.task_into_group_requested.connect(self.move_task_into_group)
+        self.task_list.task_to_root_requested.connect(self.move_task_to_root)
+        self.task_list.group_reparent_requested.connect(self.reparent_group)
         # 组折叠/展开状态需要持久化：此前只读取元数据里的 expanded，从不写入，
         # 导致在界面上折叠组后重启即恢复展开（gui.py 的对应实现是完整的）。
+        self.task_list.itemDoubleClicked.connect(self._on_task_item_double_clicked)
         self.task_list.itemExpanded.connect(self._on_group_expanded_changed)
         self.task_list.itemCollapsed.connect(self._on_group_expanded_changed)
         # 按钮区已经**全部撤掉**（所有者 2026-10-26："右键菜单有的就不要放到项目列表上了"）：
@@ -1505,6 +1508,12 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         return "无模板预览"
 
 
+    @Slot(object, int)
+    def _on_task_item_double_clicked(self, item, _column):
+        """双击组行 = 折叠/展开（蓝图里组头双击也是这个语义，主界面此前没有入口）。"""
+        if item is not None and item.data(0, Qt.UserRole) == "group":
+            item.setExpanded(not item.isExpanded())
+
     def _on_group_expanded_changed(self, item):
         """把组的展开/折叠状态写入分组元数据并落盘。
 
@@ -1633,28 +1642,56 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             if state == Qt.CheckState.PartiallyChecked:
                 return
             checked = state == Qt.CheckState.Checked
+            # 级联到**所有后代分组**：父组勾选框代表整棵子树（此前只改了直属步骤，
+            # 子组里的步骤会保持原状态，导致"取消勾选父组但子组步骤还在跑"）。
+            metadata = self.mode_group_metadata.get(self.mode_combo.currentText() or "custom", {})
+            affected = {group_id} | {str(gid) for gid in self._group_descendants(metadata, group_id)}
             for task in TASKS:
-                if str(task.get("group_id") or "group_default") == group_id:
+                if str(task.get("group_id") or "group_default") in affected:
                     task["enabled"] = checked
+            self.task_list.blockSignals(True)
+            try:
+                for child_gid, child_item in self._group_items().items():
+                    if child_gid in affected and child_gid != group_id:
+                        child_item.setCheckState(
+                            0, Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
+            finally:
+                self.task_list.blockSignals(False)
             self._schedule_task_list_commit()
 
 
 
     @Slot()
     def persist_task_order(self):
+        """按树里的显示顺序重排 TASKS。
+
+        原实现只遍历"顶层组 → 直接子项"两层：嵌套组里的步骤不在 ordered_ids 里，
+        一旦这个钩子被触发就会把深层步骤**丢掉**。现在递归遍历所有层级，
+        并把树里没出现的步骤保留在末尾（宁可顺序不对，也不能吞步骤）。
+        """
         ordered_ids = []
-        for group_index in range(self.task_list.topLevelItemCount()):
-            group = self.task_list.topLevelItem(group_index)
-            for child_index in range(group.childCount()):
-                ordered_ids.append(str(group.child(child_index).data(0, Qt.UserRole)))
+
+        def walk(parent):
+            count = parent.childCount() if hasattr(parent, "childCount") else parent.topLevelItemCount()
+            for position in range(count):
+                child = parent.child(position) if hasattr(parent, "child") else parent.topLevelItem(position)
+                if child.data(0, Qt.UserRole) == "group":
+                    walk(child)
+                else:
+                    ordered_ids.append(str(child.data(0, Qt.UserRole)))
+
+        walk(self.task_list)
         task_by_id = {str(task.get("id", index)): task for index, task in enumerate(TASKS)}
-        TASKS[:] = [task_by_id[task_id] for task_id in ordered_ids if task_id in task_by_id]
+        ordered = [task_by_id[task_id] for task_id in ordered_ids if task_id in task_by_id]
+        kept = {id(task) for task in ordered}
+        ordered.extend(task for task in TASKS if id(task) not in kept)
+        TASKS[:] = ordered
         self.current_task_index = -1
         self.save_current_tasks()
         self.refresh_task_list()
 
     @Slot(int, int, bool)
-    def reorder_task_from_tree(self, source_index, target_index, insert_after):
+    def reorder_task_from_tree(self, source_index, target_index, insert_after, target_group=None):
         if source_index == target_index or not (0 <= source_index < len(TASKS)) or not (0 <= target_index < len(TASKS)):
             return
         # 先按 id 记录每个步骤的旧下标——列表重排后 id 顺序即等于新顺序。
@@ -1664,6 +1701,13 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             target_index -= 1
         insert_index = target_index + (1 if insert_after else 0)
         insert_index = max(0, min(insert_index, len(TASKS)))
+        # 拖到别的组里的步骤上：一起把归属改过去（此前只改顺序，看起来"拖了没反应"）
+        if target_group is not None:
+            if str(task.get("group_id") or "group_default") != str(target_group):
+                task["group_id"] = str(target_group)
+                mode = self.mode_combo.currentText() or "custom"
+                metadata = self.mode_group_metadata.get(mode, {})
+                task["group_name"] = str((metadata.get("names") or {}).get(str(target_group), target_group))
         TASKS.insert(insert_index, task)
         # 步骤下标已改变，必须同步重编号跳转目标，否则迂回/超时跳转会指向错误的步骤。
         remap_jump_targets(TASKS, _jump_index_map([old_index_by_id[str(t.get("id"))] for t in TASKS]))
@@ -1686,10 +1730,18 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         return ids
 
     def _group_descendants(self, metadata, group_id):
+        """组及其全部后代（带环检测：元数据被写坏成环时不至于递归到栈溢出）。"""
         children = metadata.get("children", {}) if isinstance(metadata, dict) else {}
-        out = [str(group_id)]
-        for child in children.get(str(group_id), []):
-            out.extend(self._group_descendants(metadata, str(child)))
+        out = []
+        stack = [str(group_id)]
+        seen = set()
+        while stack:
+            current = stack.pop(0)
+            if current in seen:
+                continue
+            seen.add(current)
+            out.append(current)
+            stack.extend(str(child) for child in (children.get(current) or []))
         return out
 
     @Slot()
@@ -1749,9 +1801,38 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.refresh_task_list()
         self.append_log("已停用全部步骤。")
 
+    def _move_group(self, group_id, direction):
+        """在同一层级内移动分组（根层看 order，子组看父组的 children 顺序）。"""
+        mode = self.mode_combo.currentText() or "custom"
+        metadata = self.mode_group_metadata.setdefault(mode, {})
+        parents = metadata.setdefault("parents", {})
+        children = metadata.setdefault("children", {})
+        parent = parents.get(group_id)
+        siblings = children.setdefault(str(parent), []) if parent else metadata.setdefault("order", [])
+        if group_id not in siblings:
+            siblings.append(group_id)
+        position = siblings.index(group_id)
+        target = position + direction
+        if not (0 <= target < len(siblings)):
+            return
+        siblings[position], siblings[target] = siblings[target], siblings[position]
+        self._save_presets()
+        self.refresh_task_list()
+        # 刷新会重建树项、清掉选中：把这一组重新选中，连续点「上移/下移」才不会失效
+        group_item = self._group_items().get(group_id)
+        if group_item is not None:
+            self.task_list.clearSelection()
+            group_item.setSelected(True)
+            self.task_list.setCurrentItem(group_item)
+        self.append_log(f"已移动分组: {metadata.get('names', {}).get(group_id, group_id)}")
+
     @Slot()
     def move_selected_item(self, direction):
+        group_ids = self._selected_group_ids()
         indices = self._selected_task_indices()
+        if group_ids and not indices:
+            self._move_group(group_ids[0], direction)
+            return
         if not indices:
             return
         index = indices[0]
@@ -1765,19 +1846,108 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.refresh_task_list()
         self.select_task_index(target)
 
-    @Slot()
-    def add_group(self):
+    def _move_task_with_group(self, source_index, insert_index, group_id, log_text):
+        """把步骤移到指定位置并（可选）改归属，统一做跳转重编号与刷新。"""
+        if not (0 <= source_index < len(TASKS)):
+            return
+        old_index_by_id = {str(t.get("id")): i for i, t in enumerate(TASKS)}
+        task = TASKS.pop(source_index)
+        if group_id is not None:
+            group_id = str(group_id)
+            mode = self.mode_combo.currentText() or "custom"
+            metadata = self.mode_group_metadata.get(mode, {})
+            task["group_id"] = group_id
+            task["group_name"] = str((metadata.get("names") or {}).get(group_id, group_id))
+        elif str(task.get("group_id") or "") != "":
+            # 拖到空白：移出分组，回到根层
+            task.pop("group_id", None)
+            task.pop("group_name", None)
+        insert_index = max(0, min(int(insert_index), len(TASKS)))
+        TASKS.insert(insert_index, task)
+        remap_jump_targets(TASKS, _jump_index_map([old_index_by_id[str(t.get("id"))] for t in TASKS]))
+        self.current_task_index = insert_index
+        self.save_current_tasks()
+        self.refresh_task_list()
+        self.select_task_index(insert_index)
+        self.append_log(log_text)
+
+    @Slot(int, str)
+    def move_task_into_group(self, source_index, group_id):
+        """拖到组头：加入该组（放在该组现有步骤的末尾；空组也能放进去）。"""
+        members = [index for index, task in enumerate(TASKS)
+                   if str(task.get("group_id") or "group_default") == str(group_id)]
+        insert_index = (max(members) + 1) if members else len(TASKS)
+        if source_index < insert_index:
+            insert_index -= 1
+        self._move_task_with_group(source_index, insert_index, group_id, "已把步骤移入分组。")
+
+    @Slot(int)
+    def move_task_to_root(self, source_index):
+        """拖到空白：移到根层末尾（拖出分组）。"""
+        self._move_task_with_group(source_index, len(TASKS), None, "已把步骤移出分组到根层。")
+
+    @Slot(str, object)
+    def reparent_group(self, group_id, parent_group_id):
+        """拖动分组：挂到目标组下面（None=根层）；不允许挂到自己的后代里（会成环）。"""
         mode = self.mode_combo.currentText() or "custom"
         metadata = self.mode_group_metadata.setdefault(mode, {})
-        group_id = f"group_{uuid.uuid4().hex[:8]}"
-        metadata.setdefault("names", {})[group_id] = f"组 {len(metadata.get('names', {})) + 1}"
-        metadata.setdefault("colors", {})[group_id] = "#eab308"
-        metadata.setdefault("parents", {})[group_id] = None
-        metadata.setdefault("children", {})[group_id] = []
-        metadata.setdefault("order", []).append(group_id)
+        names = metadata.setdefault("names", {})
+        parents = metadata.setdefault("parents", {})
+        children = metadata.setdefault("children", {})
+        order = metadata.setdefault("order", [])
+        group_id = str(group_id)
+        parent = str(parent_group_id) if parent_group_id else None
+        if group_id not in names:
+            return
+        if parent == group_id:
+            return
+        if parent:
+            if parent not in names or parent in self._group_descendants(metadata, group_id):
+                return
+        current_parent = parents.get(group_id)
+        current_siblings = children.setdefault(str(current_parent), []) if current_parent else order
+        if group_id in current_siblings:
+            current_siblings.remove(group_id)
+        parents[group_id] = parent
+        if parent:
+            children.setdefault(parent, [])
+            if group_id not in children[parent]:
+                children[parent].append(group_id)
+        else:
+            if group_id not in order:
+                order.append(group_id)
         self._save_presets()
         self.refresh_task_list()
-        self.append_log(f"已新增组: {metadata['names'][group_id]}")
+        self.append_log(f"已移动分组: {names.get(group_id, group_id)}")
+
+    @Slot()
+    def add_group(self, parent_group_id=None):
+        """新增分组；父组为空时建在根层，否则挂到该父组下面（右键「在此组中新增子组」）。"""
+        mode = self.mode_combo.currentText() or "custom"
+        metadata = self.mode_group_metadata.setdefault(mode, {})
+        names = metadata.setdefault("names", {})
+        children = metadata.setdefault("children", {})
+        parent = str(parent_group_id) if parent_group_id else None
+        if parent and parent not in names:
+            parent = None
+        group_id = f"group_{uuid.uuid4().hex[:8]}"
+        # 唯一名称：此前用 len(names)+1，删过组之后会出现重名
+        number = len(names) + 1
+        while f"组 {number}" in names.values():
+            number += 1
+        names[group_id] = f"组 {number}"
+        metadata.setdefault("colors", {})[group_id] = "#eab308"
+        metadata.setdefault("parents", {})[group_id] = parent
+        children[group_id] = []
+        if parent:
+            children.setdefault(parent, [])
+            if group_id not in children[parent]:
+                children[parent].append(group_id)
+        else:
+            metadata.setdefault("order", []).append(group_id)
+        self._save_presets()
+        self.refresh_task_list()
+        self.append_log(f"已新增组: {names[group_id]}")
 
     @Slot()
     def add_task(self):
@@ -1787,6 +1957,9 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             return
         group_ids = self._selected_group_ids()
         group_id = group_ids[0] if group_ids else None
+        if group_id is None and 0 <= self.current_task_index < len(TASKS):
+            # 选中的是组内步骤：新步骤跟它同组（此前会掉到根层，看起来像"加错地方"）
+            group_id = TASKS[self.current_task_index].get("group_id")
         mode = self.mode_combo.currentText() or "custom"
         new_task = {
             "id": str(uuid.uuid4()),
@@ -1931,13 +2104,17 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         parent_id = str(parent_id) if parent_id else None
         if parent_id and str(parent_id) == str(group_id):
             parent_id = None
-        # 子分组挂到上一级（保持原有先后）
+        # 子分组挂到上一级（保持原有先后）；父组为空时子组变顶层，要补登记 order
         for child_id in [str(child) for child in (children_map.get(group_id) or [])]:
             parents[child_id] = parent_id
             if parent_id:
                 siblings = children_map.setdefault(parent_id, [])
                 if child_id not in siblings:
                     siblings.append(child_id)
+            else:
+                order_list = metadata.setdefault("order", [])
+                if child_id not in order_list:
+                    order_list.append(child_id)
         if parent_id:
             children_map[parent_id] = [
                 child for child in (children_map.get(parent_id) or [])
@@ -1992,7 +2169,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
                            lambda: context_item.setExpanded(not expanded))
             menu.addSeparator()
             menu.addAction("在此组中新增步骤", self.add_task)
-            menu.addAction("在此组中新增子组", self.add_group)
+            menu.addAction("在此组中新增子组", lambda: self.add_group(group_id))
             # 两种删除语义（所有者 2026-10-26）：连步骤一起删 / 只删组、步骤移到上一级
             delete_all = menu.addAction("删除该组及其步骤…", self.delete_selected_item)
             delete_only = menu.addAction("仅删除该组（步骤移到上一级）…",
@@ -2015,8 +2192,8 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
                 action.setEnabled(bool(selected))
             menu.addSeparator()
 
-        menu.addAction("全选", self.select_all_tasks)
-        clear_action = menu.addAction("清空", self.clear_tasks)
+        menu.addAction("全部启用", self.select_all_tasks)
+        clear_action = menu.addAction("全部停用", self.clear_tasks)
         clear_action.setEnabled(bool(TASKS))
         menu.addSeparator()
         menu.addAction("打开蓝图流程", self.open_blueprint)
@@ -2085,8 +2262,11 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         if not snippet:
             return
         snippet_tasks, _groups, _order = snippet_store.normalize_payload(snippet)
-        if not snippet_tasks:
+        if not snippet_tasks and not _groups:
             return
+        if not snippet_tasks:
+            # 只有分组、没有步骤的片段：建出分组结构（此前直接 return，用户以为功能坏了）
+            self.append_log(f"片段「{name}」只含分组（{len(_groups)} 个），将只创建分组结构。")
         # 插入位置：选中步骤 → 紧接在它后面；选中分组 → 接在该组最后一个步骤后面
         selected_indices = self._selected_task_indices()
         selected_groups = self._selected_group_ids()

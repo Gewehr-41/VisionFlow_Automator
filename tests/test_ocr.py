@@ -242,6 +242,14 @@ class EditorPanelTests(unittest.TestCase):
         (tasks.PRESETS_FILE, tasks.TASKS_FILE, g.save_presets, g.save_tasks) = self._orig
         self._tmp.cleanup()
 
+    def test_options_are_in_a_titled_group_box(self):
+        """所有者 2026-10-26 反馈：勾选后出现的 OCR 设置没有分界线，要和「识别区域」一样的小框。"""
+        from PySide6.QtWidgets import QGroupBox
+
+        self.assertIsInstance(self.window.ocr_options, QGroupBox,
+                              "OCR 选项应放在带标题的 QGroupBox 里（才有边框分界）")
+        self.assertEqual(self.window.ocr_options.title(), "文字识别（OCR）")
+
     def test_options_visibility_follows_checkbox(self):
         # 先切到识别型步骤（否则 OCR 选项所在的识别组整体隐藏）
         self.window._update_editor_visibility({"type": "normal", "template": "a"})

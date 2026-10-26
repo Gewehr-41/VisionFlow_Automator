@@ -970,7 +970,7 @@ class CaptureOverlayMixin:
         normal_form.addRow(editor_labels["retry_interval"], retry_interval_edit)
         # OCR 识别方式（F12）：与主界面字段逐字一致（契约测试会比对标签集合）
         ocr_checkbox = QCheckBox("用文字识别代替模板（OCR）")
-        ocr_options = QWidget()
+        ocr_options = QGroupBox("文字识别（OCR）")
         ocr_options_form = QFormLayout(ocr_options)
         ocr_options_form.setContentsMargins(0, 0, 0, 0)
         ocr_text_edit = QLineEdit(str(detour_task.get("ocr_text") or ""))
@@ -1459,7 +1459,8 @@ class CaptureOverlayMixin:
         self.retry_interval_edit = QLineEdit()
         # OCR 识别方式（F12）：勾选后用「目标文字」而不是模板图来判定，其余流程完全复用。
         self.ocr_checkbox = QCheckBox("用文字识别代替模板（OCR）")
-        self.ocr_options = QWidget()
+        # 与「识别区域」等分组一致：带标题的边框分组，而不是和别的设置混在一起
+        self.ocr_options = QGroupBox("文字识别（OCR）")
         ocr_options_form = QFormLayout(self.ocr_options)
         ocr_options_form.setContentsMargins(0, 0, 0, 0)
         self.ocr_text_edit = QLineEdit()

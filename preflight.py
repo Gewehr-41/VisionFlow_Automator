@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import config
+import ocr
 from nodes import CONNECTION_OUTPUT_FIELDS
 
 FATAL = "fatal"       # 会导致执行失败 / 中断
@@ -134,18 +135,40 @@ def check_tasks(tasks, icon_dir=None, screen_size=None):
         # ---------- 模板 ----------
         if task_type in _RECOGNITION_TYPES:
             names = _template_names(task.get("templates") or task.get("template"))
+            use_ocr_recognition = bool(task.get("ocr_enabled", False))
             # 「持续点击」勾了"画面变化视为成功"时，引擎允许不配模板（见 execute_click_until_gone_task）
-            allow_untemplated = task_type in _TEMPLATE_OPTIONAL_TYPES and bool(task.get("stop_on_change", False))
+            allow_untemplated = (task_type in _TEMPLATE_OPTIONAL_TYPES and bool(task.get("stop_on_change", False))) \
+                or use_ocr_recognition
             if not names and not allow_untemplated:
                 issues.append(Issue(FATAL, "template_unset", step,
                                     "没有配置任何模板图片，引擎会直接报错「步骤至少需要配置一张绑定图片」"))
-            for name in names:
+            for name in ([] if use_ocr_recognition else names):
                 if name in ("None", "null", "new_step"):
                     issues.append(Issue(WARNING, "template_placeholder", step,
                                         f"模板名是占位值 '{name}'，识别永远不会命中"))
                 elif name not in available:
                     issues.append(Issue(WARNING, "template_missing", step,
                                         f"模板 '{name}' 在图标目录里找不到（{Path(icon_dir) / (name + '.png')}）"))
+
+        # ---------- OCR 识别方式（F12） ----------
+        if task.get("ocr_enabled"):
+            if not str(task.get("ocr_text") or "").strip():
+                issues.append(Issue(FATAL, "ocr_text_missing", step,
+                                    "勾选了「用文字识别」但没填「目标文字」，引擎会直接报错"))
+            if not ocr.available():
+                issues.append(Issue(FATAL, "ocr_backend_missing", step,
+                                    f"本机没有 OCR 后端（{ocr.INSTALL_COMMAND}），该步骤无法执行"))
+            mode = str(task.get("ocr_match") or "contains")
+            if mode not in ("contains", "exact", "regex"):
+                issues.append(Issue(WARNING, "ocr_match_invalid", step,
+                                    f"匹配方式 {mode!r} 不认识，运行时按「包含文字」处理"))
+            try:
+                confidence = float(task.get("ocr_min_confidence", 0))
+            except (TypeError, ValueError):
+                confidence = None
+            if confidence is None or not 0 <= confidence <= 1:
+                issues.append(Issue(WARNING, "ocr_confidence_invalid", step,
+                                    "「最低置信度」应在 0~1 之间"))
 
         # ---------- 等待方式与下一模板 ----------
         wait_for = str(task.get("wait_for", "time"))

@@ -50,6 +50,14 @@ VisionFlow Automator 通过识别屏幕或指定窗口中的 PNG 模板，自动
 
 ```powershell
 python -m pip install -r requirements.txt
+
+可选：文字识别（OCR）。需要"点文字按钮"的功能要先装后端（不装也能正常用其它功能）：
+
+```powershell
+python -m pip install -r requirements-ocr.txt
+```
+
+装的是 `rapidocr-onnxruntime`（onnxruntime + 内置中文模型，约 15 MB，纯 CPU、离线运行）。装好后重启程序即可在识别型步骤里勾选「用文字识别代替模板（OCR）」。
 ```
 
 `requirements.txt` 锁的是本工程实际验证过的版本。如果不使用它、直接安装最新版也可以，但**行为可能与已验证版本不同**：
@@ -326,6 +334,7 @@ icons/back_to_main_menu.png -> back_to_main_menu
 - **步骤名称**（任务字段 `description`）：列表和日志中显示的名称。
 - **模板名**：对应 `icons` 中的 PNG 文件名。
 - **匹配阈值(0-1)**：模板识别所需的最低匹配置信度。未设置独立值时继承 `config.py` 的 `THRESHOLD`。
+- **用文字识别代替模板（OCR）**：勾选后这一步不再需要模板图，改用「目标文字」判断——支持用 `|` 分隔多个候选、三种匹配方式（包含 / 完全匹配 / 正则）、区分大小写与最低置信度。命中后点击文字中心，其余流程（点击开关、识别区域、超时、重试、迂回、兜底、识别调试）与模板步骤完全一致。**OCR 是可选依赖**，需要先装后端（见 §2.1）；它比模板匹配慢很多（实测约 1.2~2.1 秒/帧），建议配合「识别区域」把范围框小，并且只给"只有文字、没有稳定图标"的步骤使用。
 - **点击X/点击Y**：备用固定点击坐标。
 - **清空点击点**：删掉当前步骤记录的备用点击坐标（点完立即生效并保存）；清空后该步骤按**识别到的位置**点击。
 - **区域选择**：当前步骤已框选的识别区域列表（每项带坐标），可切换当前要操作的那一段。
@@ -464,6 +473,7 @@ VisionFlow_Automator/
 ├─ diagnostics.py         运行期诊断消息的集中收集点
 ├─ config.py              全局识别、超时和窗口配置
 ├─ requirements.txt       Python 依赖清单
+├─ requirements-ocr.txt   可选：文字识别（OCR）后端依赖
 ├─ VisionFlow_Automator.spec  PyInstaller 打包规格（构建说明见 docs/项目接手文档.md §10）
 ├─ build_package.py       一键打包脚本（构建 → 部署 → 校验，见 §2.3）
 ├─ saved_tasks.json       custom 自定义任务

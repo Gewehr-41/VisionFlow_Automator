@@ -143,7 +143,8 @@ class TaskListMixin:
             description = task.get("description", task.get("template", "未命名步骤"))
             task_type = task.get("type", "normal")
             detour_status = " · 已启用迂回" if detour_active(task) else ""
-            item = QTreeWidgetItem([f"{index + 1:02d}. [{task_type}] {description}{detour_status}"])
+            ocr_status = " · 文字识别" if task.get("ocr_enabled") else ""
+            item = QTreeWidgetItem([f"{index + 1:02d}. [{task_type}] {description}{ocr_status}{detour_status}"])
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsDragEnabled)
             item.setData(0, Qt.UserRole, str(task.get("id", index)))
             item.setData(0, Qt.UserRole + 1, index)

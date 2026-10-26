@@ -6,7 +6,10 @@ import uuid
 
 import numpy as np
 
+import re
+
 import config
+import ocr
 import recognition_debug
 from config import ICON_DIR, THRESHOLD, DEFAULT_TIMEOUT, DEFAULT_POLL_INTERVAL, DEFAULT_RETRY_INTERVAL, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP
 from core.screen import capture_screen, to_global_position, get_window_rect
@@ -896,6 +899,62 @@ def execute_event_task(task, stop_flag=None, log_callback=None):
     return {"execution_state": "timeout"}
 
 
+def _ocr_text_matches(text, pattern, mode="contains", case_sensitive=False):
+    """判断一块 OCR 文字是否命中目标。
+
+    支持三种匹配方式（`模式`字段 ocr_match）：
+      - contains（默认）：包含即算命中；可用 `|` 分隔多个候选
+      - exact：完全相等（忽略首尾空白）；同样支持多候选
+      - regex：正则搜索（多候选请自己在正则里用 |）
+    """
+    text = str(text or "")
+    pattern = str(pattern or "")
+    if not text or not pattern:
+        return False
+    haystack = text if case_sensitive else text.casefold()
+    if mode == "regex":
+        flags = 0 if case_sensitive else re.IGNORECASE
+        try:
+            return re.search(pattern, text, flags) is not None
+        except re.error:
+            return False
+    candidates = [item.strip() for item in pattern.split("|") if item.strip()]
+    if not candidates:
+        return False
+    if not case_sensitive:
+        candidates = [item.casefold() for item in candidates]
+    if mode == "exact":
+        return haystack.strip() in candidates
+    return any(candidate in haystack for candidate in candidates)
+
+
+def _recognize_text_step(task, screen_img):
+    """OCR 版"找目标"：返回 (命中的文字, 中心坐标, 置信度)，未命中返回 (None, None, 0.0)。
+
+    - 有识别区域（match_rects）时只识别区域内部，命中就直接返回（区域越小越快：实测
+      520×90 全图约 1.9s，200×60 裁剪约 1.2~1.8s）
+    - 多个文字块都命中时取**置信度最高**的那块（与模板匹配的默认策略一致）
+    """
+    pattern = str(task.get("ocr_text") or "").strip()
+    mode = str(task.get("ocr_match") or "contains")
+    case_sensitive = bool(task.get("ocr_case_sensitive", False))
+    min_confidence = float(task.get("ocr_min_confidence", 0.0) or 0.0)
+    rects = resolve_search_rects(task) or [None]
+    for rect in rects:
+        blocks = ocr.recognize(screen_img, rect)
+        best = (None, None, 0.0)
+        for block in blocks:
+            if block.score < min_confidence:
+                continue
+            if not _ocr_text_matches(block.text, pattern, mode, case_sensitive):
+                continue
+            if best[1] is None or block.score > best[2]:
+                best = (block.text, block.center, block.score)
+        if best[1] is not None:
+            return best
+    return (None, None, 0.0)
+
+
 def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True, fallback_steps=None):
     """执行一个任务：识别 -> 点击 -> 等待状态变化。"""
     task_type = task.get("type", "normal")
@@ -916,10 +975,21 @@ def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True, fal
     if task_type == "click_until_gone":
         return execute_click_until_gone_task(task, stop_flag=stop_flag, log_callback=log_callback)
 
+    # 识别方式：默认"模板匹配"；勾了 ocr_enabled 就改用 OCR 文字识别（F12）。
+    # 两者共用后面同一套循环，因此重试 / 超时 / 跳转 / 迂回 / 兜底 / 调试面板全部照旧生效。
+    use_ocr = bool(task.get("ocr_enabled", False))
     template_names = normalize_template_names(task.get("templates") or task.get("template"))
-    if not template_names:
-        raise ValueError("步骤至少需要配置一张绑定图片。")
-    tpl_name = template_names[0]
+    if use_ocr:
+        ocr_text = str(task.get("ocr_text") or "").strip()
+        if not ocr_text:
+            raise ValueError("该步骤勾选了「用文字识别」，但没有填写目标文字。")
+        if not ocr.available():
+            raise RuntimeError(ocr.install_hint())
+        tpl_name = ocr_text
+    else:
+        if not template_names:
+            raise ValueError("步骤至少需要配置一张绑定图片。")
+        tpl_name = template_names[0]
     timeout = task.get("timeout", DEFAULT_TIMEOUT)
     click_requires_match = bool(task.get("click_requires_match", True))
     optional = bool(task.get("optional", not bool(task.get("required", True))))
@@ -958,11 +1028,14 @@ def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True, fal
             return False
 
         screen_img = capture_screen()
-        results = match_task_templates(task, screen_img, template_names, stop_flag=stop_flag)
-        # 多张候选模板时按步骤自己的策略挑一张（默认"置信度最高"）
-        matched_name, center, conf = find_match_by_strategy(
-            results, template_names, get_task_match_strategy(task)
-        )
+        if use_ocr:
+            matched_name, center, conf = _recognize_text_step(task, screen_img)
+        else:
+            results = match_task_templates(task, screen_img, template_names, stop_flag=stop_flag)
+            # 多张候选模板时按步骤自己的策略挑一张（默认"置信度最高"）
+            matched_name, center, conf = find_match_by_strategy(
+                results, template_names, get_task_match_strategy(task)
+            )
         # 「识别调试」面板读的就是这里记下的快照（worker 线程写、GUI 线程读）
         recognition_debug.record(
             screen_img,
@@ -991,6 +1064,11 @@ def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True, fal
                 log(f"  已点击{click_source}: ({screen_x + offset[0]}, {screen_y + offset[1]})", log_callback)
 
             wait_mode = task.get("wait_for", "time")
+            if use_ocr and wait_mode != "time":
+                # OCR 步骤没有"等模板出现/消失"的语义：退化为固定等待（原配置保留在数据里，
+                # 将来换回模板识别时仍然有效）
+                log("  文字识别步骤按固定等待处理（忽略「等待方式」）。", log_callback)
+                wait_mode = "time"
             wait_succeeded = True
             if wait_mode == "disappear":
                 wait_result = wait_until_template_disappears(tpl_name, timeout=get_task_timeout(task, 12), stop_flag=stop_flag, threshold=get_task_threshold(task))

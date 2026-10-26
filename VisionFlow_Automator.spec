@@ -82,11 +82,22 @@ def _translation_datas():
             for name in ("qt_zh_CN.qm", "qtbase_zh_CN.qm")
             if os.path.isfile(os.path.join(source, name))]
 
+
+# OCR 后端（可选）：装了 rapidocr-onnxruntime 才收集它的模型文件；
+# 没装时返回空列表，打包照常进行（只是打包版没有 OCR 能力）。
+def _ocr_datas():
+    try:
+        from PyInstaller.utils.hooks import collect_data_files
+        return collect_data_files("rapidocr_onnxruntime")
+    except Exception:
+        return []
+
+
 a = Analysis(
     ['gui_pyside6.py'],
     pathex=[],
     binaries=[],
-    datas=[('icons', 'icons')] + _translation_datas(),
+    datas=[('icons', 'icons')] + _translation_datas() + _ocr_datas(),
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

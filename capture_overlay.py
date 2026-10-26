@@ -968,6 +968,29 @@ class CaptureOverlayMixin:
         normal_form.addRow(editor_labels["retry_count"], retry_count_edit)
         retry_interval_edit = QLineEdit(str(detour_task.get("retry_interval", config.DEFAULT_RETRY_INTERVAL)))
         normal_form.addRow(editor_labels["retry_interval"], retry_interval_edit)
+        # OCR 识别方式（F12）：与主界面字段逐字一致（契约测试会比对标签集合）
+        ocr_checkbox = QCheckBox("用文字识别代替模板（OCR）")
+        ocr_options = QWidget()
+        ocr_options_form = QFormLayout(ocr_options)
+        ocr_options_form.setContentsMargins(0, 0, 0, 0)
+        ocr_text_edit = QLineEdit(str(detour_task.get("ocr_text") or ""))
+        ocr_match_combo = QComboBox()
+        for value, label in (("contains", "包含文字"), ("exact", "完全匹配"), ("regex", "正则表达式")):
+            ocr_match_combo.addItem(label, value)
+        ocr_mode_index = ocr_match_combo.findData(str(detour_task.get("ocr_match") or "contains"))
+        ocr_match_combo.setCurrentIndex(max(0, ocr_mode_index))
+        ocr_case_checkbox = QCheckBox("区分大小写")
+        ocr_case_checkbox.setChecked(bool(detour_task.get("ocr_case_sensitive", False)))
+        ocr_confidence_edit = QLineEdit(str(detour_task.get("ocr_min_confidence", config.OCR_MIN_CONFIDENCE)))
+        ocr_options_form.addRow("目标文字:", ocr_text_edit)
+        ocr_options_form.addRow("匹配方式:", ocr_match_combo)
+        ocr_options_form.addRow("", ocr_case_checkbox)
+        ocr_options_form.addRow("最低置信度(0-1):", ocr_confidence_edit)
+        ocr_checkbox.setChecked(bool(detour_task.get("ocr_enabled", False)))
+        ocr_options.setVisible(ocr_checkbox.isChecked())
+        ocr_checkbox.toggled.connect(ocr_options.setVisible)
+        normal_form.addRow(ocr_checkbox)
+        normal_form.addRow(ocr_options)
         after_wait_edit = QLineEdit(str(detour_task.get("after_wait", 0.25)))
         normal_form.addRow("完成后等待(秒):", after_wait_edit)
 
@@ -1244,6 +1267,12 @@ class CaptureOverlayMixin:
                     detour_task["retry_count"] = max(0, 0 if detour_retry_count is None else detour_retry_count)
                     detour_task["retry_interval"] = max(0.0, self._float(
                         retry_interval_edit.text(), config.DEFAULT_RETRY_INTERVAL))
+                    detour_task["ocr_enabled"] = ocr_checkbox.isChecked()
+                    detour_task["ocr_text"] = ocr_text_edit.text().strip()
+                    detour_task["ocr_match"] = ocr_match_combo.currentData() or "contains"
+                    detour_task["ocr_case_sensitive"] = ocr_case_checkbox.isChecked()
+                    detour_task["ocr_min_confidence"] = min(1.0, max(0.0, self._float(
+                        ocr_confidence_edit.text(), config.OCR_MIN_CONFIDENCE)))
                     detour_task["after_wait"] = self._float(
                         after_wait_edit.text(), detour_task.get("after_wait", 0.25)
                     )
@@ -1428,6 +1457,24 @@ class CaptureOverlayMixin:
         # 只放在识别组里 —— 延迟/按键/移动等步骤不做识别，重试对它们没有意义。
         self.retry_count_edit = QLineEdit()
         self.retry_interval_edit = QLineEdit()
+        # OCR 识别方式（F12）：勾选后用「目标文字」而不是模板图来判定，其余流程完全复用。
+        self.ocr_checkbox = QCheckBox("用文字识别代替模板（OCR）")
+        self.ocr_options = QWidget()
+        ocr_options_form = QFormLayout(self.ocr_options)
+        ocr_options_form.setContentsMargins(0, 0, 0, 0)
+        self.ocr_text_edit = QLineEdit()
+        self.ocr_text_edit.setPlaceholderText("多个候选文字用 | 分隔")
+        self.ocr_match_combo = QComboBox()
+        for value, label in (("contains", "包含文字"), ("exact", "完全匹配"), ("regex", "正则表达式")):
+            self.ocr_match_combo.addItem(label, value)
+        self.ocr_case_checkbox = QCheckBox("区分大小写")
+        self.ocr_confidence_edit = QLineEdit()
+        ocr_options_form.addRow("目标文字:", self.ocr_text_edit)
+        ocr_options_form.addRow("匹配方式:", self.ocr_match_combo)
+        ocr_options_form.addRow("", self.ocr_case_checkbox)
+        ocr_options_form.addRow("最低置信度(0-1):", self.ocr_confidence_edit)
+        self.ocr_options.setVisible(False)
+        self.ocr_checkbox.toggled.connect(self.ocr_options.setVisible)
         self.after_wait_edit = QLineEdit()
         self.click_checkbox = QCheckBox("执行点击")
         self.match_required_checkbox = QCheckBox("必须识别到图片再点击")
@@ -1450,6 +1497,9 @@ class CaptureOverlayMixin:
         add_row = partial(_add_form_row, recognition_layout)
         add_coordinate_row = partial(_add_coordinate_row, recognition_layout)
         add_row("模板名:", self.template_edit)
+        # OCR 识别方式紧跟在模板名之后：勾了就不再需要模板图（二选一）
+        recognition_layout.addWidget(self.ocr_checkbox)
+        recognition_layout.addWidget(self.ocr_options)
         # 字段顺序与蓝图窗口保持一致。此前主窗口把匹配阈值放在坐标之后、超时放在
         # 「下一模板」之后、完成后等待与等待方式挤在同一行，同一个数据在两个窗口里
         # 的阅读顺序完全不同。
@@ -1794,6 +1844,13 @@ class CaptureOverlayMixin:
         self.timeout_edit.setText(self._editor_timeout_text(task))
         self.retry_count_edit.setText(str(int(task.get("retry_count", 0) or 0)))
         self.retry_interval_edit.setText(str(task.get("retry_interval", config.DEFAULT_RETRY_INTERVAL)))
+        # OCR 识别方式（F12）
+        self.ocr_checkbox.setChecked(bool(task.get("ocr_enabled", False)))
+        self.ocr_text_edit.setText(str(task.get("ocr_text") or ""))
+        ocr_mode_index = self.ocr_match_combo.findData(str(task.get("ocr_match") or "contains"))
+        self.ocr_match_combo.setCurrentIndex(max(0, ocr_mode_index))
+        self.ocr_case_checkbox.setChecked(bool(task.get("ocr_case_sensitive", False)))
+        self.ocr_confidence_edit.setText(str(task.get("ocr_min_confidence", config.OCR_MIN_CONFIDENCE)))
         self.after_wait_edit.setText(str(task.get("after_wait", 0.25)))
         self.click_checkbox.setChecked(bool(task.get("click", True)))
         self.match_required_checkbox.setChecked(bool(task.get("click_requires_match", True)))
@@ -1832,6 +1889,14 @@ class CaptureOverlayMixin:
         task["retry_interval"] = max(0.0, self._float(
             self.retry_interval_edit.text(),
             self._editor_float_fallback("retry_interval", task, config.DEFAULT_RETRY_INTERVAL)))
+        # OCR 识别方式：关闭时保留字段（切回模板识别后再切回来不用重填）
+        task["ocr_enabled"] = self.ocr_checkbox.isChecked()
+        task["ocr_text"] = self.ocr_text_edit.text().strip()
+        task["ocr_match"] = self.ocr_match_combo.currentData() or "contains"
+        task["ocr_case_sensitive"] = self.ocr_case_checkbox.isChecked()
+        task["ocr_min_confidence"] = min(1.0, max(0.0, self._float(
+            self.ocr_confidence_edit.text(),
+            config.OCR_MIN_CONFIDENCE)))
         task["after_wait"] = self._float(self.after_wait_edit.text(),
                                          self._editor_float_fallback("after_wait", task, 0.25))
         task["click"] = self.click_checkbox.isChecked()

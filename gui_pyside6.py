@@ -670,9 +670,11 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
         self.selected_label.setText("未选择步骤")
         # 没选步骤时不该显示"步骤名称 / 启用状态 / 多模板时"
         self.name_block.setVisible(False)
-        for edit in (self.template_edit, self.description_edit, self.threshold_edit, self.timeout_edit, self.retry_count_edit, self.retry_interval_edit, self.after_wait_edit, self.click_x_edit, self.click_y_edit, self.next_template_edit):
+        for edit in (self.template_edit, self.description_edit, self.threshold_edit, self.timeout_edit, self.retry_count_edit, self.retry_interval_edit, self.ocr_text_edit, self.ocr_confidence_edit, self.after_wait_edit, self.click_x_edit, self.click_y_edit, self.next_template_edit):
             edit.clear()
         self.click_checkbox.setChecked(False)
+        # 取消 OCR 勾选（toggled 会把「目标文字」等选项一起隐藏）
+        self.ocr_checkbox.setChecked(False)
         self.match_required_checkbox.setChecked(False)
         self.optional_checkbox.setChecked(False)
         self.enabled_checkbox.setChecked(False)
@@ -1502,7 +1504,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.editor_actions.setVisible(False)
         # 没选步骤时不该显示"步骤名称 / 启用状态 / 多模板时"
         self.name_block.setVisible(False)
-        for editor in (self.description_edit, self.template_edit, self.threshold_edit, self.timeout_edit, self.retry_count_edit, self.retry_interval_edit, self.after_wait_edit):
+        for editor in (self.description_edit, self.template_edit, self.threshold_edit, self.timeout_edit, self.retry_count_edit, self.retry_interval_edit, self.ocr_text_edit, self.ocr_confidence_edit, self.after_wait_edit):
             editor.clear()
         self.click_until_template_edit.clear()
         self.click_until_interval_edit.clear()
@@ -1511,6 +1513,8 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.click_until_continue_checkbox.setChecked(False)
         self.click_until_stop_on_change_checkbox.setChecked(False)
         self.click_checkbox.setChecked(False)
+        # 取消 OCR 勾选（toggled 会把「目标文字」等选项一起隐藏）
+        self.ocr_checkbox.setChecked(False)
         self.match_required_checkbox.setChecked(False)
         self.optional_checkbox.setChecked(False)
         self.enabled_checkbox.setChecked(False)

@@ -1,0 +1,3 @@
+# 可选：文字识别（OCR）后端。不装也能正常运行，只是勾了「用文字识别」的步骤会报错。
+# 安装：pip install -r requirements-ocr.txt
+rapidocr-onnxruntime==1.4.4

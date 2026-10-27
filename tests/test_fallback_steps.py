@@ -225,7 +225,8 @@ class FallbackWorkerPlumbingTests(unittest.TestCase):
                 pass
 
         with mock.patch("execution_control.TaskWorker", _Worker), \
-                mock.patch.object(self.window, "selected_tasks", lambda: list(g.TASKS)):
+                mock.patch.object(self.window, "selected_tasks", lambda: list(g.TASKS)), \
+                mock.patch.object(self.window, "_target_window_exists", lambda title: True):
             self.window._start_worker(None)
         self.assertEqual(len(captured["args"]), 7, "TaskWorker 应收到 7 个参数（含兜底步骤）")
         self.assertEqual(captured["args"][6][0]["type"], "delay")

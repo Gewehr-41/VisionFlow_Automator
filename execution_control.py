@@ -9,6 +9,7 @@
 会失效并真的启动 worker —— 与"数据落盘隔离缝"是同一类问题）。
 """
 import diagnostics
+import pygetwindow as gw
 from PySide6.QtCore import Qt, QThread, QTimer, Slot
 from PySide6.QtWidgets import QMessageBox
 
@@ -84,12 +85,36 @@ class ExecutionControlMixin:
     def start_script(self):
         self._start_worker(None)
 
+    def _target_window_exists(self, title):
+        """开始执行前校验目标窗口是否真的存在。
+
+        空标题表示"使用当前前台窗口"（config.USE_WINDOW_MODE=False），不校验。
+        校验用与运行时相同的 `pygetwindow.getWindowsWithTitle()`，避免两边判断不一致。
+        """
+        if not title:
+            return True
+        try:
+            return bool(gw.getWindowsWithTitle(title))
+        except Exception:
+            return False
+
     def _start_worker(self, start_node_id):
         if self.worker_thread and self.worker_thread.isRunning():
             return
         tasks = self.selected_tasks()
         if not tasks:
             QMessageBox.warning(self, "无法执行", "没有启用的任务步骤。")
+            return
+        # H1：目标窗口不存在就直接阻止，绝不因为"找不到"而退回前台窗口去误点
+        target_title = self.window_combo.currentText().strip()
+        if target_title and not self._target_window_exists(target_title):
+            QMessageBox.warning(
+                self,
+                "目标窗口不存在",
+                f"目标窗口「{target_title}」当前不存在或已关闭，脚本没有启动。\n\n"
+                "请点「刷新窗口」后重新选择；如果确实想对当前前台窗口操作，请把目标窗口留空。",
+            )
+            self.append_log(f"启动已取消：目标窗口「{target_title}」不存在（请刷新后重选，或清空目标窗口使用前台窗口）。")
             return
         if not self._preflight_before_run():
             return
@@ -98,7 +123,7 @@ class ExecutionControlMixin:
         self.execution_states.clear()
         if self.blueprint_window is not None:
             self.blueprint_window.reset_execution_states()
-        window_title = self.window_combo.currentText().strip()
+        window_title = target_title
         # 运行期改写 config 是为了让引擎按指定窗口识别；但这两个字段是模块级
         # 全局，此前改完就不管了 —— 脚本停止后 config 仍指向上次的目标窗口，
         # 影响所有在此之后读取它的代码。这里记下原值，收尾时还原

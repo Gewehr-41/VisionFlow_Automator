@@ -173,6 +173,8 @@ class ConfigRestoreWiringTests(_GuiTestCase):
         g.TaskWorker = _FakeWorker
         self.window._start_stop_hotkey = lambda: None
         self.window._stop_stop_hotkey = lambda: None
+        # 这些用例用不存在的「测试目标窗口」验证 config 快照/还原；H1 的窗口校验在这里放行
+        self.window._target_window_exists = lambda title: True
         self.orig_title = config.TARGET_WINDOW_TITLE
         self.orig_mode = config.USE_WINDOW_MODE
 

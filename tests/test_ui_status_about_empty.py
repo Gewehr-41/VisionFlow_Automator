@@ -172,6 +172,45 @@ class EmptyStateTests(UiStateBase):
         _APP.processEvents()
         self.assertEqual(self.window.task_stack.currentIndex(), 0)
 
+    def test_empty_list_right_click_opens_create_menu(self):
+        """空预设时右键引导页要能呼出「新增步骤/新增组」菜单（不真的弹模态框）。"""
+        from PySide6.QtCore import Qt
+
+        self.assertEqual(self.window.task_empty_page.contextMenuPolicy(),
+                         Qt.ContextMenuPolicy.CustomContextMenu,
+                         "空状态页必须接受右键菜单事件")
+        self.assertTrue(hasattr(self.window, "_show_empty_list_menu"))
+        menu = self.window._build_task_list_menu(None)
+        labels = [action.text() for action in menu.actions() if action.text()]
+        self.assertIn("新增步骤", labels)
+        self.assertIn("新增组", labels)
+        # 触发「新增步骤」应能在空预设里创建第一个步骤并切回列表页
+        with mock.patch.object(g.QInputDialog, "getItem", staticmethod(lambda *a, **k: ("normal", True))):
+            next(action for action in menu.actions() if action.text() == "新增步骤").trigger()
+            _APP.processEvents()
+        self.assertEqual(len(g.TASKS), 1, "空列表右键「新增步骤」应能创建第一个步骤")
+        self.assertEqual(self.window.task_stack.currentIndex(), 0, "创建后应切回列表页")
+
+    def test_empty_list_menu_handler_executes_menu(self):
+        """右键事件处理确实会弹出菜单（用假菜单替换 exec，避免模态阻塞）。"""
+        from PySide6.QtCore import QPoint
+
+        class FakeMenu:
+            def __init__(self):
+                self.exec_positions = []
+
+            def exec(self, position):
+                self.exec_positions.append(position)
+
+        fake = FakeMenu()
+        original = self.window._build_task_list_menu
+        self.window._build_task_list_menu = lambda context_item=None: fake
+        try:
+            self.window._show_empty_list_menu(QPoint(3, 4))
+        finally:
+            self.window._build_task_list_menu = original
+        self.assertEqual(len(fake.exec_positions), 1, "空列表右键应执行菜单")
+
     def test_editor_empty_page_toggles(self):
         g.TASKS[:] = [_task("A")]
         self.window.refresh_task_list()

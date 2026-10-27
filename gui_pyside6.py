@@ -1408,6 +1408,10 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.task_empty_page.setObjectName("emptyState")
         self.task_empty_page.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.task_empty_page.setWordWrap(True)
+        # 空预设时列表区显示的是引导页（task_list 被隐藏）；右键也要能呼出
+        # 「新增步骤 / 新增组」菜单，否则一个步骤都没有时无法创建第一个步骤。
+        self.task_empty_page.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.task_empty_page.customContextMenuRequested.connect(self._show_empty_list_menu)
         self.task_stack.addWidget(self.task_empty_page)
         task_layout.addWidget(self.task_stack, 1)
         splitter.addWidget(task_panel)
@@ -2630,6 +2634,10 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         menu.addSeparator()
         menu.addAction("打开蓝图流程", self.open_blueprint)
         return menu
+
+    def _show_empty_list_menu(self, position):
+        """空列表引导页的右键菜单（与列表空白处同一份菜单，含新增步骤/新增组）。"""
+        self._build_task_list_menu(None).exec(self.task_empty_page.mapToGlobal(position))
 
     def show_task_list_menu(self, position):
         """右键：先按被点的对象选中它（步骤 → 复制/删除作用于它；分组 → 右侧切到组设置），再弹菜单。"""

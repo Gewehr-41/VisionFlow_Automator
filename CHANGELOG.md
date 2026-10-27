@@ -15,6 +15,11 @@
 ## 2026-10-27
 
 ### 修复
+- **打包版支持自定义图标**：把 `app.ico` 放到工程根目录（或 `icons/app.ico`）后重新打包，
+  exe、窗口标题栏与任务栏都会使用它；没有该文件时保持默认图标。`.spec` 同时会把 `app.ico`
+  放进 `_internal` 供运行时读取。
+
+
 - **打包默认产出纯净分发包**：`打包.bat` 双击即构建 + 部署 + 打 zip；zip 与安装目录都不再包含用户数据——
   `saved_*.json`（预设/步骤/蓝图，片段存在 `saved_presets.json` 里）、`saved_settings.json`、用户抓图
   `captured_*.png`、`_data_backup_*` 全部剔除；`.spec` 的 icons 也改为过滤打包（保留程序自带图标）。

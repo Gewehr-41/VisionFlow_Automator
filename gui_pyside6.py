@@ -10,7 +10,7 @@ os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.window=false")
 
 import pygetwindow as gw
 from PySide6.QtCore import QThread, QTimer, QUrl, Signal, Slot, Qt
-from PySide6.QtGui import QAction, QColor, QDesktopServices, QKeySequence, QPainter, QPixmap, QBrush
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QKeySequence, QPainter, QPixmap, QBrush
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -3466,12 +3466,23 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         event.accept()
 
 
+def _apply_window_icon(app):
+    """打包版有 app.ico 时，窗口/任务栏也用同一个图标；源码运行没有就跳过。"""
+    icon_path = os.path.join(paths.resource_root(), "app.ico")
+    if not os.path.exists(icon_path):
+        return
+    icon = QIcon(icon_path)
+    if not icon.isNull():
+        app.setWindowIcon(icon)
+
+
 def main():
     app = QApplication(sys.argv)
     # 加载 Qt 官方中文翻译：QMessageBox 的「显示详细信息」、是/否/确定/取消等
     # 标准文字才会是中文（否则固定显示英文，所有者 2026-10-26 反馈过）。
     install_qt_translations(app)
     app.setApplicationName("VisionFlow Automator")
+    _apply_window_icon(app)
     app.setApplicationVersion(config.APP_VERSION)
     window = PySide6ScriptWindow()
     window.show()

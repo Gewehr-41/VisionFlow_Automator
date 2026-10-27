@@ -108,11 +108,26 @@ def _icon_datas():
     return entries
 
 
+def _app_icon():
+    """自定义 exe 图标：工程根目录放 app.ico 即可（也可放 icons/app.ico）。没有就返回 None（用默认图标）。"""
+    for candidate in (os.path.join(os.getcwd(), "app.ico"),
+                      os.path.join(os.getcwd(), "icons", "app.ico")):
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def _runtime_icon_datas():
+    """把 app.ico 一并放进 _internal，供运行时的窗口/任务栏图标使用。"""
+    icon = _app_icon()
+    return [(icon, ".")] if icon else []
+
+
 a = Analysis(
     ['gui_pyside6.py'],
     pathex=[],
     binaries=[],
-    datas=_icon_datas() + _translation_datas() + _ocr_datas(),
+    datas=_icon_datas() + _runtime_icon_datas() + _translation_datas() + _ocr_datas(),
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -138,6 +153,7 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name='VisionFlow_Automator',
+    icon=_app_icon(),
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

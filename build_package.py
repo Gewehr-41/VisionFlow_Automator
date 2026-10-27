@@ -445,6 +445,11 @@ def main(argv=None):
             log("  ✗ 构建失败")
             return EXIT_BUILD
     files, size = dir_stats(bundle)
+    custom_icon = ROOT / "app.ico"
+    if custom_icon.exists():
+        log(f"  ✓ 使用自定义图标：{custom_icon}")
+    else:
+        log("  提示：工程根目录放 app.ico 可自定义 exe / 窗口图标（没有就用默认图标）")
     png, svg = count_icons(bundle)
     log(f"  ✓ 产物就绪：{files} 个程序文件 / {size / 1024 / 1024:.1f} MB，模板 {png} 张 PNG + {svg} 张 SVG")
 

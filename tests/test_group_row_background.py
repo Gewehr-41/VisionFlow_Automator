@@ -14,6 +14,7 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 import gui_pyside6 as g  # noqa: E402
@@ -89,12 +90,76 @@ class GroupRowBackgroundTests(unittest.TestCase):
                          "选中组行应显示选中色（组颜色只作为行底，不能盖住选中态）")
 
 
+class GroupCheckboxContrastTests(unittest.TestCase):
+    """组行颜色和复选框同色时，复选框不能"消失"（所有者 2026-10-27 反馈：只有悬浮才显示）。"""
+
+    _SAME_BLUE = "#0284c7"
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls._orig = (tasks.PRESETS_FILE, tasks.TASKS_FILE, g.save_presets, g.save_tasks)
+        tasks.PRESETS_FILE = os.path.join(cls._tmp.name, "saved_presets.json")
+        tasks.TASKS_FILE = os.path.join(cls._tmp.name, "saved_tasks.json")
+        g.save_presets, g.save_tasks = tasks.save_presets, tasks.save_tasks
+        cls._tasks_snapshot = copy.deepcopy(g.TASKS)
+        g.TASKS[:] = []
+        cls.window = g.PySide6ScriptWindow()
+        cls.window.show()
+        _APP.processEvents()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.window.close()
+        g.TASKS[:] = cls._tasks_snapshot
+        (tasks.PRESETS_FILE, tasks.TASKS_FILE, g.save_presets, g.save_tasks) = cls._orig
+        cls._tmp.cleanup()
+
+    def setUp(self):
+        self.window.mode_combo.setCurrentText("custom")
+        self.window.mode_group_metadata["custom"] = {
+            "names": {"g1": "蓝组"},
+            "colors": {"g1": self._SAME_BLUE},
+            "parents": {"g1": None},
+            "children": {"g1": []},
+            "order": ["g1"],
+        }
+        g.TASKS[:] = [
+            {"id": "A", "type": "normal", "description": "步骤A", "template": "1",
+             "enabled": True, "group_id": "g1"},
+        ]
+        self.window.refresh_task_list()
+        _APP.processEvents()
+        self.window.task_list.clearSelection()
+        _APP.processEvents()
+
+    def test_checked_checkbox_has_white_outline_on_same_color_row(self):
+        item = self.window._group_items()["g1"]
+        self.assertEqual(item.checkState(0), Qt.CheckState.Checked)
+        rect = self.window.task_list.visualItemRect(item)
+        image = self.window.task_list.viewport().grab().toImage()
+        cy = rect.center().y()
+        # 复选框外框在 viewport x=27..46；左侧 2px 是描边
+        border = image.pixelColor(28, cy).name()
+        fill = image.pixelColor(36, cy).name()
+        row_background = image.pixelColor(4, cy).name()
+        self.assertEqual(row_background, self._SAME_BLUE, "组行底色应和复选框同色（复现条件）")
+        self.assertEqual(border, "#ffffff", "复选框必须有白色描边，否则和组行同色时看不见")
+        self.assertEqual(fill, self._SAME_BLUE, "复选框内部仍是蓝色底")
+
+
 class GroupRowBackgroundGuardTests(unittest.TestCase):
     def test_draw_row_implementation_markers(self):
         source = open("task_widgets.py", encoding="utf-8").read()
         self.assertIn("def drawRow(self, painter, options, index):", source)
         self.assertIn("painter.fillRect(options.rect, color)", source)
         self.assertIn("Qt.UserRole) == \"group\"", source)
+
+    def test_checked_indicator_has_white_border(self):
+        source = open("gui_pyside6.py", encoding="utf-8").read()
+        self.assertIn(
+            "QTreeWidget::indicator:checked {{ border-color: #ffffff; background: #0284c7;",
+            source, "勾选态需要白色描边，避免和同色的组行背景混在一起")
 
 
 if __name__ == "__main__":

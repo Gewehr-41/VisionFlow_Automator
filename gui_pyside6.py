@@ -1592,9 +1592,11 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             "QTreeWidget::item:selected { background: #dbeafe; color: #0f172a; }"
             "QTreeWidget::indicator { width: 16px; height: 16px; border: 2px solid #94a3b8; border-radius: 4px; background: #ffffff; }"
             "QTreeWidget::indicator:hover { border-color: #0284c7; background: #f0f9ff; }"
-            f'QTreeWidget::indicator:checked {{ border-color: #0284c7; background: #0284c7; image: url("{checked_indicator}"); }}'
-            "QTreeWidget::indicator:checked:hover { border-color: #0369a1; background: #0369a1; }"
-            f'QTreeWidget::indicator:indeterminate {{ border-color: #0284c7; background: #bae6fd; image: url("{indeterminate_indicator}"); }}'
+            # 勾选态用**白色描边**：组行可以设成和复选框同色（比如蓝色组），
+            # 没有描边时复选框会"消失"、只有鼠标悬浮变深才看得见（所有者 2026-10-27 反馈）。
+            f'QTreeWidget::indicator:checked {{ border-color: #ffffff; background: #0284c7; image: url("{checked_indicator}"); }}'
+            "QTreeWidget::indicator:checked:hover { border-color: #ffffff; background: #0369a1; }"
+            f'QTreeWidget::indicator:indeterminate {{ border-color: #ffffff; background: #38bdf8; image: url("{indeterminate_indicator}"); }}'
             "QSplitter::handle { background: #cbd5e1; }"
         )
 

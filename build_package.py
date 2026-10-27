@@ -47,6 +47,11 @@ EXE_NAME = f"{PRODUCT}.exe"
 # 分发目录与工程**同级**（不要放进工程目录，否则会被 git 看到、也可能被误提交）
 TARGET_DIR = ROOT.parent / f"{PRODUCT}_打包版"
 DATA_FILE_NAMES = tuple(paths.DATA_FILE_NAMES)
+# 用户数据：给用户的包里一律不能出现（预设/步骤/蓝图/片段都在 saved_presets.json 内，
+# 片段不是独立文件；saved_settings.json 是代理等本地设置；captured_* 是用户抓图）。
+USER_DATA_NAMES = DATA_FILE_NAMES + ("saved_settings.json",)
+USER_ICON_PREFIXES = ("captured_",)
+BACKUP_PREFIX = "_data_backup_"
 
 # 控制台可能是 GBK（直接运行）或 UTF-8（打包.bat 里 chcp 65001 + PYTHONIOENCODING）；
 # 两种情况都不要因为个别字符编不出来就崩掉。
@@ -272,6 +277,9 @@ def verify(dist_dir, target_dir, before_hashes, strict=True):
         if not (target / relative).exists():
             problems.append(f"缺少 {relative} —— {why}")
 
+    for problem in purity_problems(dist):
+        problems.append("构建产物不纯净：" + problem)
+
     png, svg = count_icons(target)
     if png == 0:
         problems.append("模板库是空的（_internal/icons 里没有 PNG）")
@@ -299,11 +307,73 @@ def sync_data(target_dir, source_dir, log_callback=log):
     return {"backup": backup, "copied": copied}
 
 
-def make_zip(target_dir):
+def user_data_entries(directory):
+    """目录里属于用户数据的内容（预设/片段/设置/用户抓图/数据备份）。"""
+    base = Path(directory)
+    found = []
+    for name in USER_DATA_NAMES:
+        path = base / name
+        if path.exists():
+            found.append(path)
+    for item in sorted(base.glob(BACKUP_PREFIX + "*")):
+        found.append(item)
+    icon_dir = base / "_internal" / "icons"
+    if icon_dir.is_dir():
+        for item in sorted(icon_dir.iterdir()):
+            if item.is_file() and item.name.startswith(USER_ICON_PREFIXES):
+                found.append(item)
+    return found
+
+
+def purity_problems(directory):
+    """给用户的包是否混进了用户数据；返回问题列表（空=纯净）。"""
+    base = Path(directory)
+    problems = []
+    for name in USER_DATA_NAMES:
+        if (base / name).exists():
+            problems.append(f"包含用户数据：{name}")
+    backups = sorted(item.name for item in base.glob(BACKUP_PREFIX + "*"))
+    if backups:
+        problems.append("包含数据备份目录：" + "、".join(backups))
+    icon_dir = base / "_internal" / "icons"
+    captured = (sorted(item.name for item in icon_dir.glob("captured_*"))
+                if icon_dir.is_dir() else [])
+    if captured:
+        problems.append(f"包含用户抓图 {len(captured)} 张（captured_*.png）")
+    return problems
+
+
+def make_zip(target_dir, log_callback=log):
+    """打一个**纯净**分发包：剔除 saved_*.json / saved_settings.json / 用户抓图 / 数据备份。
+
+    分发目录是开发机上的"工作版"，里面会保留用户数据；直接整目录压会把这些带给别人。
+    所以先复制到临时目录并过滤，再压这个干净副本；原分发目录不动。
+    """
     target = Path(target_dir)
-    archive = target.parent / f"{target.name}_{time.strftime('%Y%m%d')}"
-    return Path(shutil.make_archive(str(archive), "zip",
-                                    root_dir=str(target.parent), base_dir=target.name))
+    staging_root = Path(tempfile.mkdtemp(prefix="vf_zip_"))
+    try:
+        staging = staging_root / target.name
+        excluded = user_data_entries(target)
+        ignore = shutil.ignore_patterns(
+            *USER_DATA_NAMES,
+            BACKUP_PREFIX + "*",
+            *(prefix + "*" for prefix in USER_ICON_PREFIXES),
+        )
+        shutil.copytree(target, staging, ignore=ignore)
+        problems = purity_problems(staging)
+        if problems:
+            raise RuntimeError("分发包仍含用户数据：" + "；".join(problems))
+        if excluded:
+            names = "、".join(item.name for item in excluded[:8])
+            if len(excluded) > 8:
+                names += f" 等 {len(excluded)} 项"
+            log_callback(f"  已从分发包剔除用户数据：{names}")
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        archive = target.parent / f"{target.name}_{stamp}"
+        return Path(shutil.make_archive(str(archive), "zip",
+                                        root_dir=str(staging.parent), base_dir=staging.name))
+    finally:
+        shutil.rmtree(staging_root, ignore_errors=True)
 
 
 def preflight(target_dir):
@@ -412,7 +482,9 @@ def main(argv=None):
 
     rule("5/5 收尾")
     if args.zip:
-        archive = make_zip(target)
+        if user_data_entries(target):
+            log(f"  分发目录里有 {len(user_data_entries(target))} 项用户数据（本地保留），zip 时会剔除")
+        archive = make_zip(target, log_callback=log)
         log(f"  ✓ 已打包：{archive}（{archive.stat().st_size / 1024 / 1024:.1f} MB）")
     if work_root is None:
         log("  （--from-dist：本次没有构建中间物）")

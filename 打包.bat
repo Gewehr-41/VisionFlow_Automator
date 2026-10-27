@@ -1,8 +1,10 @@
 @echo off
 rem ---------------------------------------------------------------
 rem  One-click packaging entry. Double-click this file.
-rem  All messages (Chinese) come from build_package.py, which is
-rem  UTF-8; chcp 65001 + PYTHONIOENCODING keep them readable.
+rem  Builds the app, deploys it, and produces a CLEAN zip for users:
+rem  saved presets / steps / snippets / settings / captured images
+rem  are NOT included in the zip.
+rem  Use --sync-data only for local debugging (it copies your data).
 rem ---------------------------------------------------------------
 chcp 65001 >nul
 setlocal
@@ -12,7 +14,7 @@ set "PYTHONIOENCODING=utf-8"
 set "PY=python"
 where python >nul 2>nul || set "PY=py -3"
 
-%PY% build_package.py %*
+%PY% build_package.py --zip %*
 set "CODE=%ERRORLEVEL%"
 
 echo.

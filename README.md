@@ -122,17 +122,18 @@ VisionFlow_Automator_打包版\
 - 启动后日志框会打印 `[打包运行] 资源目录=…；数据目录=…`，可据此确认它读的是哪份数据。
 - 详细的构建/裁剪方法见 `docs/项目接手文档.md` §10；`.spec` 就是构建规格。
 
-**改完代码后重新打包（一键）**：双击 `打包.bat`，或在本目录执行 `python build_package.py`。脚本按「预检 → 构建 → 部署 → 校验 → 收尾」五步走：
+**改完代码后重新打包（一键）**：双击 `打包.bat`（默认构建 + 部署 + 打**纯净分发包**），或在本目录执行 `python build_package.py`。脚本按「预检 → 构建 → 部署 → 校验 → 收尾」五步走：
 
 - 构建中间物放在 `%TEMP%` 下，**不污染工程目录**；
 - 部署时**只替换程序部分**（exe 与 `_internal`），分发目录里的 4 个数据文件**逐字节保留**；
-- 校验内容：数据文件哈希未变、exe 与构建产物一致、勾选框所需的 SVG 插件 / 软件 OpenGL / `tkinter` 都在位、模板库非空；
+- 校验内容：数据文件哈希未变、exe 与构建产物一致、勾选框所需的 SVG 插件 / 软件 OpenGL / `tkinter` 都在位、模板库非空、**构建产物不得含用户数据**；
+- **给用户的 zip 是纯净的**：`saved_tasks.json` / `saved_presets.json`（含片段）/ `saved_blueprint_*.json` / `saved_settings.json` / 用户抓图 `captured_*.png` / `_data_backup_*` 都不会进 zip；开发机分发目录里那份用户数据原样保留。`spec` 也只打包程序自带图标，不打包 `captured_*.png`；
 - 任何一项不过就以非 0 退出码结束并列出问题（`2`=预检 `3`=构建 `4`=校验）。
 
 ```powershell
 python build_package.py                             # 构建 + 部署
-python build_package.py --zip                       # 顺便打一个 zip，便于发给别人
-python build_package.py --sync-data                 # 把工程里的数据文件同步到分发目录（先备份原有那份）
+python build_package.py --zip                       # 打一个纯净 zip 发给别人（不含预设/片段/抓图/设置）
+python build_package.py --sync-data                 # 【仅本机调试】把工程数据同步到分发目录（先备份；同步进去的数据也不会进 zip）
 python build_package.py --build-only                # 只构建，不动分发目录
 python build_package.py --from-dist <已有产物目录>   # 跳过构建，只更新分发目录
 ```

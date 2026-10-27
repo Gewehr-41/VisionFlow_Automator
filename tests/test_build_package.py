@@ -195,16 +195,73 @@ class CommandLineTests(unittest.TestCase):
         code = bp.main(["--from-dist", str(empty), "--target", str(self.target)])
         self.assertEqual(code, bp.EXIT_PREFLIGHT)
 
-    def test_zip_output_contains_program_and_data(self):
+    def test_zip_is_clean_and_keeps_local_user_data(self):
+        """给用户的 zip 必须纯净；开发机分发目录里的用户数据不能被删。"""
+        write(self.target / "_internal" / "icons" / "captured_deadbeef.png", "user-image")
+        write(self.target / "saved_settings.json", "{}")
+        backup = self.target / "_data_backup_20260101_000000"
+        write(backup / bp.DATA_FILE_NAMES[0], "backup")
         bp.main(["--from-dist", str(self.dist), "--target", str(self.target)])
         archive = bp.make_zip(self.target)
         self.assertTrue(archive.exists())
         import zipfile
         with zipfile.ZipFile(archive) as package:
             names = package.namelist()
-        self.assertTrue(any(name.endswith(bp.EXE_NAME) for name in names))
-        self.assertTrue(any(name.endswith(bp.DATA_FILE_NAMES[0]) for name in names))
+        self.assertTrue(any(name.endswith(bp.EXE_NAME) for name in names), "程序本体要进包")
+        self.assertFalse([n for n in names if n.endswith(tuple(bp.USER_DATA_NAMES))],
+                         f"分发包不能含预设/步骤/设置：{names}")
+        self.assertFalse([n for n in names if "captured_" in n], "分发包不能含用户抓图")
+        self.assertFalse([n for n in names if bp.BACKUP_PREFIX in n], "分发包不能含数据备份")
+        # 本地分发目录里的用户数据原样保留（只是不进 zip）
+        self.assertTrue((self.target / bp.DATA_FILE_NAMES[0]).exists())
+        self.assertTrue((self.target / "saved_settings.json").exists())
+        self.assertTrue((backup / bp.DATA_FILE_NAMES[0]).exists())
         archive.unlink()
+
+
+class PurityTests(unittest.TestCase):
+    """给用户的包不能混进 saved_*.json / saved_settings.json / 用户抓图 / 数据备份。"""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.dist = fake_dist(self.root)
+        self.target = fake_target(self.root)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_clean_bundle_has_no_purity_problems(self):
+        self.assertEqual(bp.purity_problems(self.dist), [])
+        self.assertEqual(bp.user_data_entries(self.dist), [])
+
+    def test_detects_each_kind_of_user_data(self):
+        write(self.target / bp.DATA_FILE_NAMES[0], "data")
+        write(self.target / "saved_settings.json", "{}")
+        write(self.target / "_internal" / "icons" / "captured_deadbeef.png", "user")
+        backup = self.target / "_data_backup_20260101_000000"
+        backup.mkdir(parents=True)
+        problems = bp.purity_problems(self.target)
+        text = "\n".join(problems)
+        self.assertIn("包含用户数据", text)
+        self.assertIn("包含数据备份目录", text)
+        self.assertIn("包含用户抓图", text)
+
+    def test_verify_rejects_impure_build_output(self):
+        write(self.dist / "_internal" / "icons" / "captured_deadbeef.png", "user")
+        before = bp.snapshot_data(self.target)
+        bp.deploy(self.dist, self.target, log_callback=lambda *a, **k: None)
+        problems = bp.verify(self.dist, self.target, before)
+        self.assertTrue(any("构建产物不纯净" in p for p in problems), problems)
+
+    def test_package_entry_points_are_pure_by_default(self):
+        bat = open("打包.bat", encoding="utf-8").read()
+        spec = open("VisionFlow_Automator.spec", encoding="utf-8").read()
+        self.assertIn("build_package.py --zip", bat, "双击打包.bat 应产出纯净 zip")
+        self.assertIn("def _icon_datas()", spec)
+        self.assertIn("captured_", spec, "spec 要过滤用户抓图")
+        self.assertIn("datas=_icon_datas()", spec, "spec 应使用过滤后的图标列表")
+        self.assertNotIn("datas=[('icons', 'icons')]", spec, "spec 不能再整目录打包 icons")
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ r"""VisionFlow Automator 的 PyInstaller 规格（onedir + 无控制台窗口）
 
 三条不显然、但改动前必须先读的实测结论
 --------------------------------------
-1) ``datas=[('icons', 'icons')]`` 是必需的：
+1) ``datas=_icon_datas()`` 是必需的：
    ``config.ICON_DIR`` 由 ``paths.resource_root()`` 推导，打包后等于 ``sys._MEIPASS``，
    即 ``<dist>\VisionFlow_Automator\_internal``，所以 icons 必须落在
    ``_internal\icons``。少了它 → 模板库全空、识别全失效。
@@ -93,16 +93,33 @@ def _ocr_datas():
         return []
 
 
+def _icon_datas():
+    """只打包程序自带图标；`captured_*.png` 是用户自己抓的图，属于用户数据，不打进安装包。"""
+    icon_root = os.path.join(os.getcwd(), "icons")
+    if not os.path.isdir(icon_root):
+        return []
+    entries = []
+    for name in sorted(os.listdir(icon_root)):
+        if name.startswith("captured_"):
+            continue
+        path = os.path.join(icon_root, name)
+        if os.path.isfile(path):
+            entries.append((path, os.path.join("icons", name)))
+    return entries
+
+
 a = Analysis(
     ['gui_pyside6.py'],
     pathex=[],
     binaries=[],
-    datas=[('icons', 'icons')] + _translation_datas() + _ocr_datas(),
+    datas=_icon_datas() + _translation_datas() + _ocr_datas(),
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['PySide6.QtNetwork', 'PySide6.QtQml', 'PySide6.QtQuick', 'PySide6.QtQuick3D', 'PySide6.QtQuickWidgets', 'PySide6.QtQuickControls2', 'PySide6.QtWebEngineCore', 'PySide6.QtWebEngineWidgets', 'PySide6.QtWebEngineQuick', 'PySide6.Qt3DCore', 'PySide6.Qt3DRender', 'PySide6.Qt3DInput', 'PySide6.Qt3DLogic', 'PySide6.Qt3DAnimation', 'PySide6.Qt3DExtras', 'PySide6.QtCharts', 'PySide6.QtGraphs', 'PySide6.QtDataVisualization', 'PySide6.QtMultimedia', 'PySide6.QtMultimediaWidgets', 'PySide6.QtPdf', 'PySide6.QtPdfWidgets', 'PySide6.QtDesigner', 'PySide6.QtSql', 'PySide6.QtTest', 'PySide6.QtSensors', 'PySide6.QtSerialPort', 'PySide6.QtPositioning', 'PySide6.QtLocation', 'PySide6.QtBluetooth', 'PySide6.QtNfc', 'PySide6.QtRemoteObjects', 'PySide6.QtScxml', 'PySide6.QtSpatialAudio', 'PySide6.QtTextToSpeech', 'PySide6.QtWebSockets', 'PySide6.QtWebChannel', 'PySide6.QtHelp', 'PySide6.QtUiTools', 'PySide6.QtOpenGL', 'PySide6.QtOpenGLWidgets', 'PySide6.QtConcurrent', 'PyQt5', 'PyQt6', 'PySide2', 'matplotlib', 'pandas', 'scipy', 'IPython', 'pytest', 'docutils', 'setuptools'],
+    excludes=['PySide6.QtNetwork', 'PySide6.QtQml', 'PySide6.QtQuick', 'PySide6.QtQuick3D', 'PySide6.QtQuickWidgets', 'PySide6.QtQuickControls2', 'PySide6.QtWebEngineCore', 'PySide6.QtWebEngineWidgets', 'PySide6.QtWebEngineQuick', 'PySide6.Qt3DCore', 'PySide6.Qt3DRender', 'PySide6.Qt3DInput', 'PySide6.Qt3DLogic', 'PySide6.Qt3DAnimation', 'PySide6.Qt3DExtras', 'PySide6.QtCharts', 'PySide6.QtGraphs', 'PySide6.QtDataVisualization', 'PySide6.QtMultimedia', 'PySide6.QtMultimediaWidgets', 'PySide6.QtPdf', 'PySide6.QtPdfWidgets', 'PySide6.QtDesigner', 'PySide6.QtSql', 'PySide6.QtTest', 'PySide6.QtSensors', 'PySide6.QtSerialPort', 'PySide6.QtPositioning', 'PySide6.QtLocation', 'PySide6.QtBluetooth', 'PySide6.QtNfc', 'PySide6.QtRemoteObjects', 'PySide6.QtScxml', 'PySide6.QtSpatialAudio', 'PySide6.QtTextToSpeech', 'PySide6.QtWebSockets', 'PySide6.QtWebChannel', 'PySide6.QtHelp', 'PySide6.QtUiTools', 'PySide6.QtOpenGL', 'PySide6.QtOpenGLWidgets', 'PySide6.QtConcurrent', 'PyQt5', 'PyQt6', 'PySide2', 'matplotlib', 'pandas', 'scipy', 'IPython', 'pytest', 'docutils', 'setuptools',
+              # onnxruntime 的 optional 探测会 import 它们，装了就会被打进 1GB+ 的无用负载：
+              'tensorflow', 'keras', 'tensorboard', 'torch', 'torchvision', 'jax', 'flax'],
     noarchive=False,
     optimize=0,
 )

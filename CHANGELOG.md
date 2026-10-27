@@ -7,6 +7,13 @@
 ## 2026-10-27
 
 ### 修复
+- **打包默认产出纯净分发包**：`打包.bat` 双击即构建 + 部署 + 打 zip；zip 与安装目录都不再包含用户数据——
+  `saved_*.json`（预设/步骤/蓝图，片段存在 `saved_presets.json` 里）、`saved_settings.json`、用户抓图
+  `captured_*.png`、`_data_backup_*` 全部剔除；`.spec` 的 icons 也改为过滤打包（保留程序自带图标）。
+  构建产物校验新增「不纯净」检查，开发机分发目录里的用户数据仍然逐字节保留。
+  另：`.spec` 排除 `tensorflow` / `torch` / `keras` 等「onnxruntime 可选探测」误带进来的大依赖，避免安装包被撑到 1.9GB（这些包没有被本程序使用）。
+
+
 - **组行启用复选框只在悬浮时出现（彻底修复）**：根因有两个——① Windows 11 原生样式下 QSS 的
   `QTreeWidget::indicator` 在组行上不会常驻绘制；② delegate 里 `Qt.CheckStateRole` 取到的是 **int**，
   与 `Qt.CheckState.Checked` 比较恒为 False（之前靠 QSS 的 SVG 白勾"碰巧"显示正常）。

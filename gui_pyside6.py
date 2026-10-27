@@ -2411,8 +2411,8 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         metadata = self.mode_group_metadata.get(mode, {})
         # 选中分组时会把组内步骤（含子组）全部收进片段，分组结构一起保存
         snippet = snippet_store.extract_snippet(TASKS, indices, metadata, group_ids)
-        if not snippet.get("tasks"):
-            QMessageBox.warning(self, "无法保存", "选中的分组里还没有步骤，片段会是空的。")
+        if not snippet.get("tasks") and not snippet.get("groups"):
+            QMessageBox.warning(self, "无法保存", "选中的内容里没有步骤或分组。")
             return
         self.snippets[name] = snippet
         self._save_presets()
@@ -2439,6 +2439,8 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             # 只有分组、没有步骤的片段：建出分组结构（此前直接 return，用户以为功能坏了）
             self.append_log(f"片段「{name}」只含分组（{len(_groups)} 个），将只创建分组结构。")
         # 插入位置：选中步骤 → 紧接在它后面；选中分组 → 接在该组最后一个步骤后面
+        mode = self.mode_combo.currentText() or "custom"
+        metadata = self.mode_group_metadata.get(mode, {})
         selected_indices = self._selected_task_indices()
         selected_groups = self._selected_group_ids()
         parent_group = None
@@ -2448,9 +2450,26 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             anchor_task = TASKS[anchor] if anchor < len(TASKS) else {}
             parent_group = str(anchor_task.get("group_id")) if anchor_task.get("group_id") else None
         elif selected_groups:
-            parent_group = str(selected_groups[0])
-            members = [index for index, task in enumerate(TASKS)
-                       if str(task.get("group_id") or "group_default") == parent_group]
+            # 多选了多个组时选"最外层"的那个（不会把组塞进它自己的后代里），
+            # 仍是多个候选就按组内第一个步骤的位置取最靠前的——保证结果稳定可预期。
+            candidates = [str(gid) for gid in selected_groups]
+
+            def is_inside(other, gid):
+                return str(other) != str(gid) and str(gid) in self._group_descendants(metadata, other)
+
+            outermost = [gid for gid in candidates
+                         if not any(is_inside(other, gid) for other in candidates)] or candidates
+
+            def first_member_index(gid):
+                members = self._group_member_indices(metadata, gid)
+                return min(members) if members else len(TASKS)
+
+            parent_group = sorted(outermost, key=first_member_index)[0]
+            if len(candidates) > 1:
+                self.append_log(
+                    f"插入了 {len(candidates)} 个分组的选择，按最外层/最前原则使用「"
+                    f"{metadata.get('names', {}).get(parent_group, parent_group)}」作为父组。")
+            members = self._group_member_indices(metadata, parent_group)
             position = (max(members) + 1) if members else len(TASKS)
         else:
             position = len(TASKS)
@@ -2460,16 +2479,31 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         TASKS[:] = new_tasks
         # 片段里的分组登记进当前预设（新 id，顶层组挂到插入点所在的组下面）
         if new_groups:
-            mode = self.mode_combo.currentText() or "custom"
             metadata = self.mode_group_metadata.setdefault(mode, {})
             names_map = metadata.setdefault("names", {})
             colors_map = metadata.setdefault("colors", {})
             parents_map = metadata.setdefault("parents", {})
             children_map = metadata.setdefault("children", {})
             order = metadata.setdefault("order", [])
+            taken_names = set(str(name) for name in names_map.values())
+
+            def unique_group_name(base_name):
+                """插入同名片段时自动加「副本」/编号，避免出现两个一模一样的组名。"""
+                candidate = str(base_name or "分组")
+                if candidate in taken_names:
+                    candidate = f"{candidate} 副本"
+                index = 2
+                while candidate in taken_names:
+                    candidate = f"{base_name} 副本{index}"
+                    index += 1
+                taken_names.add(candidate)
+                return candidate
+
+            renamed = {}
             for group in new_groups:
                 group_id = group["id"]
-                names_map[group_id] = group["name"]
+                renamed[group_id] = unique_group_name(group["name"])
+                names_map[group_id] = renamed[group_id]
                 colors_map[group_id] = group["color"] or self._group_default_color()
                 parents_map[group_id] = group["parent"]
                 children_map.setdefault(group_id, [])
@@ -2480,13 +2514,34 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
                         children_map[parent].append(group_id)
                 else:
                     order.append(group_id)
+            # 插入的步骤里写的 group_name 要跟着改名后的组名走
+            for task in TASKS:
+                task_group = str(task.get("group_id") or "")
+                if task_group in renamed:
+                    task["group_name"] = renamed[task_group]
+            # 插进"收起的组"里时自动展开目标组链路，否则用户看不到插入结果
+            expanded_map = metadata.setdefault("expanded", {})
+            chain = []
+            current = parent_group
+            while current and str(current) not in chain:
+                chain.append(str(current))
+                current = (metadata.get("parents") or {}).get(str(current))
+            for group_id in chain:
+                expanded_map[group_id] = True
         self.current_task_index = position
         self.save_current_tasks()
         self._save_presets()
         self.refresh_task_list()
         self.select_task_index(position)
         group_note = f"，{len(new_groups)} 个分组" if new_groups else ""
-        self.append_log(f"已插入片段「{name}」：{inserted} 个步骤{group_note}（插入点之后的跳转已自动后移）。")
+        if parent_group:
+            group_label = str(self.mode_group_metadata.get(mode, {}).get("names", {}).get(
+                str(parent_group), parent_group))
+            target_note = f"，插入到分组「{group_label}」下"
+        else:
+            target_note = "，插入到根层"
+        self.append_log(
+            f"已插入片段「{name}」：{inserted} 个步骤{group_note}{target_note}（插入点之后的跳转已自动后移）。")
 
     def delete_snippet(self):
         names = sorted(getattr(self, "snippets", {}) or {})

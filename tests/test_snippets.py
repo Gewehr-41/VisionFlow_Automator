@@ -22,6 +22,7 @@ from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 import gui_pyside6 as g  # noqa: E402
@@ -277,7 +278,8 @@ class SnippetGuiTests(unittest.TestCase):
         self.assertEqual(stored["version"], 2)
         self.assertEqual(set(stored["groups"]), {"g1", "g2"})
 
-    def test_save_empty_group_warns(self):
+    def test_save_empty_group_is_allowed(self):
+        """现在允许保存「只有分组、没有步骤」的片段（与插入端语义一致）。"""
         self.window.mode_group_metadata[self.mode] = {"names": {"empty": "空组"}, "colors": {}, "parents": {"empty": None},
                                                       "children": {"empty": []}, "order": ["empty"]}
         g.TASKS[:] = [_task("A")]
@@ -286,8 +288,10 @@ class SnippetGuiTests(unittest.TestCase):
                 mock.patch.object(g.QInputDialog, "getText", staticmethod(lambda *a, **k: ("空片段", True))), \
                 mock.patch.object(g.QMessageBox, "warning", return_value=None) as warning:
             self.window.save_selection_as_snippet()
-        self.assertTrue(warning.called)
-        self.assertNotIn("空片段", self.window.snippets)
+        self.assertFalse(warning.called, "保存空组片段不该再弹警告")
+        self.assertIn("空片段", self.window.snippets)
+        self.assertEqual(self.window.snippets["空片段"]["tasks"], [])
+        self.assertEqual(list(self.window.snippets["空片段"]["groups"]), ["empty"])
 
     def test_insert_after_selected_step(self):
         self.window.snippets = {"常用组": [_task("S0"), _task("S1")]}
@@ -344,6 +348,172 @@ class SnippetGuiTests(unittest.TestCase):
                 mock.patch.object(g.QMessageBox, "warning", return_value=None) as warning:
             self.window.save_selection_as_snippet()
         self.assertTrue(warning.called)
+
+    def _metadata(self):
+        metadata = {
+            "names": {"g1": "外层", "g2": "子组"},
+            "colors": {},
+            "parents": {"g1": None, "g2": "g1"},
+            "children": {"g1": ["g2"], "g2": []},
+            "order": ["g1"],
+        }
+        self.window.mode_group_metadata[self.mode] = metadata
+        return metadata
+
+    def _tree_lines(self):
+        lines = []
+
+        def walk(item, depth):
+            kind = "G" if item.data(0, Qt.UserRole) == "group" else "T"
+            lines.append("  " * depth + f"[{kind}] {item.text(0)}")
+            for i in range(item.childCount()):
+                walk(item.child(i), depth + 1)
+
+        for i in range(self.window.task_list.topLevelItemCount()):
+            walk(self.window.task_list.topLevelItem(i), 0)
+        return lines
+
+    def _save_group(self, group_id, name):
+        self.window.task_list.clearSelection()
+        self.window._group_items()[group_id].setSelected(True)
+        with mock.patch.object(g.QInputDialog, "getText", staticmethod(lambda *a, **k: (name, True))):
+            self.window.save_selection_as_snippet()
+        _APP.processEvents()
+
+    def _insert(self, name, keep_selection=False):
+        if not keep_selection:
+            self.window.task_list.clearSelection()
+        with mock.patch.object(g.QInputDialog, "getItem", staticmethod(lambda *a, **k: (name, True))):
+            self.window.insert_snippet_at_selection()
+        _APP.processEvents()
+
+    def _group(self, group_id):
+        return self.window._group_items()[group_id]
+
+    # ---------- #1 组名去重 ----------
+
+    def test_insert_twice_dedupes_group_names(self):
+        self._metadata()
+        g.TASKS[:] = [_task("A", "g1"), _task("B", "g2")]
+        self.window.refresh_task_list()
+        _APP.processEvents()
+        self._save_group("g1", "带组片段")
+        self._insert("带组片段")
+        self._insert("带组片段")
+        names = list(self.window.mode_group_metadata[self.mode]["names"].values())
+        self.assertEqual(len(names), len(set(names)), f"插入两次后组名不能重复: {names}")
+        self.assertTrue(any("副本" in name for name in names), "重复插入的组名应带「副本」后缀")
+
+    # ---------- #2 多选组取最外层 ----------
+
+    def test_multiple_selected_groups_uses_outermost(self):
+        metadata = self._metadata()
+        g.TASKS[:] = [_task("A", "g1"), _task("B", "g2"), _task("C", "g1")]
+        self.window.refresh_task_list()
+        _APP.processEvents()
+        self._save_group("g1", "带组片段")
+        self.window.task_list.clearSelection()
+        self._group("g1").setSelected(True)
+        self._group("g2").setSelected(True)
+        self._insert("带组片段", keep_selection=True)
+        new_top_groups = [gid for gid, name in self.window.mode_group_metadata[self.mode]["names"].items()
+                          if name.startswith("外层") and gid not in ("g1", "g2")]
+        parents = self.window.mode_group_metadata[self.mode]["parents"]
+        self.assertTrue(new_top_groups, "应插入一个新外层组")
+        self.assertEqual(str(parents[new_top_groups[0]]), "g1", "多选时用最外层父组（g1），不能塞进子组")
+        self.assertIn("最外层", self._logs(), "多选时应记录使用的是哪个父组")
+
+    # ---------- #3 折叠组自动展开 ----------
+
+    def test_insert_into_collapsed_group_expands_it(self):
+        metadata = self._metadata()
+        metadata["expanded"] = {"g1": False}
+        g.TASKS[:] = [_task("A", "g1"), _task("B", "g2")]
+        self.window.refresh_task_list()
+        _APP.processEvents()
+        self._save_group("g1", "带组片段")
+        self._group("g1").setExpanded(False)
+        _APP.processEvents()
+        self.window.task_list.clearSelection()
+        self._group("g1").setSelected(True)
+        self._insert("带组片段", keep_selection=True)
+        self.assertEqual(self.window.mode_group_metadata[self.mode]["expanded"].get("g1"), True,
+                         "往折叠组里插入后应自动展开，否则看不到结果")
+
+    # ---------- #4 蓝图布局字段不带走 ----------
+
+    def test_snippet_drops_blueprint_layout_fields(self):
+        self._metadata()
+        g.TASKS[:] = [_task("A", "g1", blueprint_bends={"flow": [[10, 20]]}, blueprint_collapsed=True)]
+        self.window.refresh_task_list()
+        _APP.processEvents()
+        self._save_group("g1", "带折线片段")
+        payload = self.window.snippets["带折线片段"]
+        saved = payload["tasks"][0]
+        self.assertNotIn("blueprint_bends", saved, "折线坐标依赖连线对象，不能跨片段带走")
+        self.assertNotIn("blueprint_collapsed", saved)
+        self._insert("带折线片段")
+        inserted = [task for task in g.TASKS if task["id"] != "A"]
+        self.assertTrue(inserted)
+        self.assertNotIn("blueprint_bends", inserted[0])
+
+    # ---------- #5 只有分组的片段可保存 ----------
+
+    def test_save_group_only_snippet(self):
+        metadata = self._metadata()
+        metadata["names"]["empty"] = "空组"
+        metadata["parents"]["empty"] = None
+        metadata["children"]["empty"] = []
+        metadata["order"].append("empty")
+        g.TASKS[:] = [_task("A", "g1"), _task("C")]
+        self.window.refresh_task_list()
+        _APP.processEvents()
+        self._save_group("empty", "空组片段")
+        self.assertIn("空组片段", self.window.snippets, "只有分组的片段应该能保存")
+        payload = self.window.snippets["空组片段"]
+        self.assertEqual(payload["tasks"], [])
+        self.assertEqual(list(payload["groups"]), ["empty"])
+        names_before = set(self.window.mode_group_metadata[self.mode]["names"].values())
+        self._insert("空组片段")
+        names_after = set(self.window.mode_group_metadata[self.mode]["names"].values())
+        self.assertGreater(len(names_after), len(names_before), "插入后应建出分组")
+
+    # ---------- 顺序往返：组与步骤的交错关系 ----------
+
+    def test_roundtrip_preserves_group_step_interleaving(self):
+        self._metadata()
+        g.TASKS[:] = [_task("A", "g1"), _task("B", "g2"), _task("C", "g1")]
+        self.window.refresh_task_list()
+        _APP.processEvents()
+        before = [line.strip() for line in self._tree_lines()]
+        self._save_group("g1", "交错片段")
+        g.TASKS[:] = []
+        # 模拟插入到一个"全新预设"：清掉源分组元数据，否则它们会作为空组渲染在末尾
+        self.window.mode_group_metadata[self.mode] = {
+            "names": {}, "colors": {}, "parents": {}, "children": {}, "order": [], "expanded": {},
+        }
+        self.window.refresh_task_list()
+        _APP.processEvents()
+        self._insert("交错片段")
+        lines = [line for line in self._tree_lines()]
+        kinds = [("G" if "[G]" in line else "T") for line in lines]
+        # 原图：G 外层 / T A / G 子组 / T B / T C -> 插入后应保持同样的 G,T,G,T,T 顺序
+        self.assertEqual(kinds, ["G", "T", "G", "T", "T"], f"组与步骤交错顺序被破坏: {lines}")
+        self.assertIn("A", lines[1])
+        self.assertIn("子组", lines[2])
+        self.assertIn("B", lines[3])
+        self.assertIn("C", lines[4])
+
+    def test_insert_log_reports_target_group(self):
+        self._metadata()
+        g.TASKS[:] = [_task("A", "g1")]
+        self.window.refresh_task_list()
+        _APP.processEvents()
+        self._save_group("g1", "目标组片段")
+        self.window.task_list.clearSelection()
+        self._group("g1").setSelected(True)
+        self._insert("目标组片段", keep_selection=True)
+        self.assertIn("插入到分组", self._logs(), "日志要说明插到了哪个组")
 
     def test_tool_button_exists(self):
         self.assertIn("片段", self.window.tool_actions)

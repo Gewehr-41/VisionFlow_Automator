@@ -31,10 +31,18 @@ _INTERNAL_PREFIX = "_"
 _GROUP_DEFAULT = "group_default"
 
 
+# 片段不该带走的字段：
+#   · `_` 开头的运行时字段（如 _outer_step_number）
+#   · 蓝图**布局/路由**字段：折线转折点坐标是按"这条边连到谁"算的，跨预设复制后连接对象变了，
+#     旧折线会画错位置；节点折叠状态也只对原图有意义（颜色/注释属于样式，保留）
+_DROP_WHEN_SAVING = ("blueprint_bends", "blueprint_collapsed")
+
+
 def _strip_internal(task):
-    """去掉以 `_` 开头的运行时内部字段。"""
-    for key in [key for key in task if str(key).startswith(_INTERNAL_PREFIX)]:
-        task.pop(key, None)
+    """去掉运行时内部字段与蓝图布局字段。"""
+    for key in list(task.keys()):
+        if str(key).startswith(_INTERNAL_PREFIX) or str(key) in _DROP_WHEN_SAVING:
+            task.pop(key, None)
     return task
 
 
@@ -90,7 +98,7 @@ def extract_snippet(tasks, indices, group_metadata=None, group_ids=()):
         group_id = str(task.get("group_id") or _GROUP_DEFAULT)
         if group_id in selected_groups:
             selected.add(index)
-    if not selected:
+    if not selected and not selected_groups:
         return {"version": SNIPPET_VERSION, "tasks": [], "groups": {}, "group_order": []}
 
     ordered = sorted(selected)

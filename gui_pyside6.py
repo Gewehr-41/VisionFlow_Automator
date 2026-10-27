@@ -3068,9 +3068,32 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self._update_download_runner = runner
         self.append_log(f"开始下载更新包：{result.asset_name or result.asset_url}")
         self._set_status("running", "下载更新")
+        self._set_update_download_progress(0, 0)   # 底部进度条改为「下载进度」
         runner.start(result.asset_url, destination)
 
+    def _set_update_download_progress(self, downloaded, total):
+        """把底部进度条临时切换成更新包下载进度（下载结束后恢复步骤进度）。"""
+        bar = getattr(self, "progress_bar", None)
+        if bar is None:
+            return
+        megabytes = downloaded / 1024 / 1024
+        if total and total > 0:
+            percent = min(100, int(downloaded * 100 / total))
+            bar.setRange(0, 100)
+            bar.setValue(percent)
+            bar.setFormat(f"更新包下载 {percent}%（{megabytes:.1f}/{total / 1024 / 1024:.1f} MB）")
+        else:
+            bar.setRange(0, 0)          # 总大小未知：不确定进度动画
+            bar.setFormat(f"更新包下载中… {megabytes:.1f} MB")
+
+    def _restore_step_progress(self):
+        """下载结束后把底部进度条恢复成「步骤进度」。"""
+        bar = getattr(self, "progress_bar", None)
+        if bar is not None:
+            self._refresh_idle_progress()
+
     def _on_update_download_progress(self, downloaded, total):
+        self._set_update_download_progress(downloaded, total)
         if total:
             percent = int(downloaded * 100 / total)
             if percent < self._update_download_logged + 10 and percent < 100:
@@ -3088,6 +3111,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self._set_status("idle")
         if outcome.get("error"):
             self.append_log(f"更新包下载失败：{outcome['error']}")
+            self._restore_step_progress()
             QMessageBox.warning(self, "下载失败",
                                 f"更新包下载失败：\n{outcome['error']}\n\n也可以打开发布页手动下载。")
             return
@@ -3098,6 +3122,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             update_root = extract_update_zip(zip_path, stage_root)
         except RuntimeError as exc:
             self.append_log(f"更新包校验失败：{exc}")
+            self._restore_step_progress()
             QMessageBox.warning(self, "更新包无效", str(exc))
             return
         version = getattr(self._update_info, "remote_version", "")
@@ -3110,6 +3135,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             QMessageBox.StandardButton.Yes)
         if answer != QMessageBox.StandardButton.Yes:
             self.append_log(f"已取消安装；更新包保留在 {zip_path}")
+            self._restore_step_progress()
             return
         self._install_update(update_root)
 
@@ -3120,6 +3146,9 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         except OSError as exc:
             QMessageBox.warning(self, "更新失败", f"无法创建更新脚本：{exc}")
             return
+        if hasattr(self, "progress_bar"):
+            self.progress_bar.setRange(0, 0)
+            self.progress_bar.setFormat("正在安装更新…")
         self.append_log("即将退出并安装更新，完成后会自动重新打开程序…")
         QApplication.processEvents()
         try:

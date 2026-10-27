@@ -571,17 +571,64 @@ class BlueprintGroupItem(QGraphicsRectItem):
             painter.setPen(QPen(QColor("#ffffff"), 2))
             painter.drawRoundedRect(body, radius, radius)
 
+    def _restore_drag_mode(self):
+        restore = getattr(self, "_restore_view_drag_mode", None)
+        self._restore_view_drag_mode = None
+        if restore is None:
+            return
+        scene = self.scene()
+        if scene is not None and scene.views():
+            scene.views()[0].setDragMode(restore)
+
+    def _drag_targets(self):
+        """整块拖动时的移动目标：所有**选中**组里的成员节点并集 + 选中的步骤。
+
+        选中多个组时不能逐组移动各自的 node_items——父子组会包含同一批节点，
+        逐组移动会把同一节点移动两次。这里按节点去重；空组没有节点，单独返回。
+        """
+        scene = self.scene()
+        nodes = []
+        seen = set()
+        empty_groups = []
+        if scene is not None:
+            for item in scene.selectedItems():
+                if isinstance(item, BlueprintGroupItem):
+                    if item.node_items:
+                        for node in item.node_items:
+                            if id(node) not in seen:
+                                seen.add(id(node))
+                                nodes.append(node)
+                    else:
+                        empty_groups.append(item)
+                elif isinstance(item, BlueprintNodeItem):
+                    if id(item) not in seen:
+                        seen.add(id(item))
+                        nodes.append(item)
+        if not nodes and not empty_groups:
+            nodes = list(self.node_items)
+        return nodes, empty_groups
+
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             self._press_scene_pos = event.scenePos()
+            self._did_drag = False
             scene = self.scene()
-            if scene is not None:
+            if scene is not None and not self.isSelected():
+                # 只有点"未选中"的组才清空选择；点已选中的组保留多选，才能整块拖动
                 scene.clearSelection()
-            self.setSelected(True)
-            # 仅点击组头时才允许拖动整组，避免误拖动组内空白区域；
-            # 收起成"群组节点"后整块都是组头，任何位置都能拖
+                self.setSelected(True)
+            # 拖组头（或收起的群组节点任意处）＝整体移动组内步骤
             self._drag_from_header = (self.collapsed
                                       or event.pos().y() - self.rect().top() <= self.HEADER_HEIGHT)
+            # 关键：视图是 RubberBandDrag，而组不是 Qt 的 ItemIsMovable——Qt 会把"按住组拖动"
+            # 当成橡皮筋拖动，并在移动中 clearSelection()，多选瞬间只剩一个组。
+            # 拖动组期间临时切到 NoDrag，由组自己处理整块移动；松手恢复（见 mouseReleaseEvent）。
+            self._restore_view_drag_mode = None
+            scene = self.scene()
+            if scene is not None and scene.views():
+                view = scene.views()[0]
+                self._restore_view_drag_mode = view.dragMode()
+                view.setDragMode(QGraphicsView.DragMode.NoDrag)
             event.accept()
             return
         super().mousePressEvent(event)
@@ -589,15 +636,21 @@ class BlueprintGroupItem(QGraphicsRectItem):
     def mouseMoveEvent(self, event):
         if self._press_scene_pos is not None and self._drag_from_header:
             delta = event.scenePos() - self._press_scene_pos
-            if self.node_items:
-                for node in self.node_items:
-                    node.moveBy(delta.x(), delta.y())
-            else:
-                # 空组：直接移动组头并持久化位置
+            nodes, empty_groups = self._drag_targets()
+            for node in nodes:
+                node.moveBy(delta.x(), delta.y())
+            # 空组没有成员节点：直接移动组头位置并持久化
+            for group in empty_groups:
+                rect = group.rect()
+                group.setRect(rect.left() + delta.x(), rect.top() + delta.y(),
+                              rect.width(), rect.height())
+                if group._move_callback is not None:
+                    group._move_callback(group, delta.x(), delta.y())
+            if not nodes and not empty_groups:
                 rect = self.rect()
-                self.setRect(rect.left() + delta.x(), rect.top() + delta.y(), rect.width(), rect.height())
-                if self._move_callback is not None:
-                    self._move_callback(self, delta.x(), delta.y())
+                self.setRect(rect.left() + delta.x(), rect.top() + delta.y(),
+                             rect.width(), rect.height())
+            self._did_drag = True
             self._press_scene_pos = event.scenePos()
             event.accept()
             return
@@ -605,8 +658,17 @@ class BlueprintGroupItem(QGraphicsRectItem):
 
     def mouseReleaseEvent(self, event):
         if self._press_scene_pos is not None:
+            did_drag = getattr(self, "_did_drag", False)
             self._press_scene_pos = None
             self._drag_from_header = False
+            self._did_drag = False
+            self._restore_drag_mode()
+            if not did_drag:
+                # 单击多选里的某组（没拖动）：把选择收敛成它自己，跟 Qt 默认单击一致
+                scene = self.scene()
+                if scene is not None and len(scene.selectedItems()) > 1:
+                    scene.clearSelection()
+                    self.setSelected(True)
             if self._release_callback is not None:
                 self._release_callback()
             event.accept()

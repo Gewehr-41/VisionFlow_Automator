@@ -141,7 +141,7 @@ class GroupCheckboxContrastTests(unittest.TestCase):
         cy = rect.center().y()
         # 复选框外框在 viewport x=27..46；左侧 2px 是描边
         border = image.pixelColor(28, cy).name()
-        fill = image.pixelColor(36, cy).name()
+        fill = image.pixelColor(40, cy).name()   # 避让中间的白勾笔画
         row_background = image.pixelColor(4, cy).name()
         self.assertEqual(row_background, self._SAME_BLUE, "组行底色应和复选框同色（复现条件）")
         self.assertEqual(border, "#ffffff", "复选框必须有白色描边，否则和组行同色时看不见")
@@ -155,11 +155,18 @@ class GroupRowBackgroundGuardTests(unittest.TestCase):
         self.assertIn("painter.fillRect(options.rect, color)", source)
         self.assertIn("Qt.UserRole) == \"group\"", source)
 
-    def test_checked_indicator_has_white_border(self):
-        source = open("gui_pyside6.py", encoding="utf-8").read()
+    def test_checkbox_is_self_drawn_with_white_border(self):
+        """Windows 11 原生样式不常驻绘制 QSS indicator，复选框必须由 delegate 自绘。"""
+        widget_source = open("task_widgets.py", encoding="utf-8").read()
+        gui_source = open("gui_pyside6.py", encoding="utf-8").read()
+        self.assertIn("def _paint_checkbox", widget_source)
+        self.assertIn('border = QColor("#ffffff")', widget_source)
+        self.assertIn("Qt.CheckState(int(state))", widget_source,
+                      "CheckStateRole 是 int，必须转枚举，否则勾选态会按未选中画")
         self.assertIn(
-            "QTreeWidget::indicator:checked {{ border-color: #ffffff; background: #0284c7;",
-            source, "勾选态需要白色描边，避免和同色的组行背景混在一起")
+            "QTreeWidget::indicator { width: 20px; height: 20px; background: transparent;"
+            " border: none; image: none; }",
+            gui_source, "QSS indicator 只应保留占位，不应再依赖它画复选框")
 
 
 if __name__ == "__main__":

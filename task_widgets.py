@@ -8,14 +8,58 @@ TaskWorker 负责在线程里跑 run_task_queue，并把日志 / 状态转成信
 """
 import traceback
 
-from PySide6.QtCore import QObject, QRect, QTimer, Qt, Signal, Slot
-from PySide6.QtGui import QColor, QPen
-from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem, QTreeWidget
+from PySide6.QtCore import QObject, QRect, QRectF, QTimer, Qt, Signal, Slot
+from PySide6.QtGui import QBrush, QColor, QPainter, QPen
+from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem, QTreeWidget
 
 from main import run_task_queue
 
 class TaskItemDelegate(QStyledItemDelegate):
     HANDLE_WIDTH = 30
+
+    @staticmethod
+    def _checkbox_rect(option_rect):
+        """复选框外框：20x20，位置与原 QSS indicator 一致（item 左缘 +7）。"""
+        return QRect(option_rect.left() + 7, option_rect.center().y() - 10, 20, 20)
+
+    def _paint_checkbox(self, painter, option, index):
+        """自绘启用复选框（未选中/选中/半选），支持悬浮态，任何主题下都常驻可见。"""
+        state = index.data(Qt.CheckStateRole)
+        try:
+            # Qt 返回的是 int（例如 2），而 `2 == Qt.CheckState.Checked` 在 PySide6 里是 False；
+            # 必须显式转成枚举，否则勾选态永远按"未选中"画——之前 QSS SVG 掩盖了这个 bug，
+            # Windows 11 原生样式不画 QSS indicator 时就完全看不到勾（所有者 2026-10-27 反馈）。
+            state = Qt.CheckState(int(state))
+        except (TypeError, ValueError):
+            return
+        box = self._checkbox_rect(option.rect)
+        hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        checked = state == Qt.CheckState.Checked
+        partial = state == Qt.CheckState.PartiallyChecked
+        if checked:
+            fill = QColor("#0369a1") if hovered else QColor("#0284c7")
+            border = QColor("#ffffff")
+        elif partial:
+            fill = QColor("#0ea5e9") if hovered else QColor("#38bdf8")
+            border = QColor("#ffffff")
+        else:
+            fill = QColor("#f0f9ff") if hovered else QColor("#ffffff")
+            border = QColor("#0284c7") if hovered else QColor("#94a3b8")
+        painter.save()
+        try:
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            painter.setPen(QPen(border, 2))
+            painter.setBrush(QBrush(fill))
+            painter.drawRoundedRect(QRectF(box.adjusted(1, 1, -1, -1)), 4, 4)
+            if checked:
+                painter.setPen(QPen(QColor("#ffffff"), 2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+                painter.drawLine(box.left() + 5, box.center().y(), box.left() + 8, box.bottom() - 7)
+                painter.drawLine(box.left() + 8, box.bottom() - 7, box.right() - 5, box.top() + 7)
+            elif partial:
+                painter.setPen(QPen(QColor("#0369a1"), 2, Qt.SolidLine, Qt.RoundCap))
+                painter.drawLine(box.left() + 6, box.center().y(), box.right() - 6, box.center().y())
+        finally:
+            painter.restore()
 
     def paint(self, painter, option, index):
         is_group = index.data(Qt.UserRole) == "group"
@@ -30,21 +74,13 @@ class TaskItemDelegate(QStyledItemDelegate):
                 option.rect.height(),
             )
             super().paint(painter, text_option, index)
-        rect = option.rect
-        painter.save()
-        indicator_rect = QRect(rect.left() + 6, rect.center().y() - 8, 16, 16)
-        state = index.data(Qt.CheckStateRole)
-        if state == Qt.CheckState.Checked:
-            painter.setPen(QPen(QColor("#ffffff"), 2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-            painter.drawLine(indicator_rect.left() + 4, indicator_rect.center().y(), indicator_rect.left() + 7, indicator_rect.bottom() - 4)
-            painter.drawLine(indicator_rect.left() + 7, indicator_rect.bottom() - 4, indicator_rect.right() - 3, indicator_rect.top() + 4)
-        elif state == Qt.CheckState.PartiallyChecked:
-            painter.setPen(QPen(QColor("#0369a1"), 2, Qt.SolidLine, Qt.RoundCap))
-            painter.drawLine(indicator_rect.left() + 4, indicator_rect.center().y(), indicator_rect.right() - 4, indicator_rect.center().y())
-        painter.restore()
+        # 复选框自己画：Windows 11 原生样式下 QSS 的 indicator 在组行上不会常驻绘制
+        # （只有鼠标悬浮/重绘才出现，所有者 2026-10-27 实测反馈），自绘才能保证一直可见。
+        self._paint_checkbox(painter, option, index)
 
         if is_group:
             return
+        rect = option.rect
         painter.save()
         painter.setPen(QPen(QColor("#94a3b8"), 1.6))
         handle_x = rect.right() - self.HANDLE_WIDTH // 2

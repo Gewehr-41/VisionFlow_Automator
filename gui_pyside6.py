@@ -2521,6 +2521,16 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
                 snippet["group_order"] = [gid for gid in snippet.get("group_order", []) if gid in keep]
                 self.append_log(
                     f"保存片段时忽略了 {len(dropped)} 个没有步骤的分组（避免插入后出现空组）。")
+        # 只选了一个步骤、且没有显式选组：存成"纯步骤"片段，不带上它所在的分组
+        # （否则插入单步骤片段时会自动多出一个只有一步的组）。
+        if not group_ids and len(snippet.get("tasks") or []) == 1:
+            for task in snippet["tasks"]:
+                task.pop("group_id", None)
+                task.pop("group_name", None)
+                task.pop("group_color", None)
+            snippet["groups"] = {}
+            snippet["group_order"] = []
+            self.append_log("单步骤片段不保存分组结构（避免插入时自动建组）。")
         self.snippets[name] = snippet
         self._save_presets()
         self.append_log(

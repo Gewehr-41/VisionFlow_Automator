@@ -523,6 +523,11 @@ class BlueprintGroupItem(QGraphicsRectItem):
         painter.setFont(QFont("Microsoft YaHei", 8, QFont.Bold))
         text = self._name if not self._info else f"{self._name} · {self._info}"
         painter.drawText(header_rect.adjusted(6, 0, -4, 0), Qt.AlignLeft | Qt.AlignVCenter, text)
+        # 选中描边：框选/点击选中组后要能明显看出来（否则用户以为没选中）
+        if self.isSelected():
+            painter.setBrush(Qt.NoBrush)
+            painter.setPen(QPen(QColor("#ffffff"), 2))
+            painter.drawRect(rect)
 
     def _paint_collapsed_node(self, painter, rect):
         """收起态：圆角卡片 + 标题栏 + 步骤数 + 输入/输出端口，形似一个普通步骤节点。"""
@@ -561,6 +566,10 @@ class BlueprintGroupItem(QGraphicsRectItem):
             painter.setPen(QPen(QColor("#22c55e"), 2))
             painter.setBrush(Qt.NoBrush)
             painter.drawEllipse(center, 9, 9)
+        if self.isSelected():
+            painter.setBrush(Qt.NoBrush)
+            painter.setPen(QPen(QColor("#ffffff"), 2))
+            painter.drawRoundedRect(body, radius, radius)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -641,6 +650,8 @@ class BlueprintView(QGraphicsView):
         # 框选起点（场景坐标）与是否从空白处起框：用于框选结束后按组框真实范围补选
         self._band_start_scene = None
         self._band_from_empty = False
+        self._pressed_wire = None
+        self._press_scene_pos = None
 
     # ---------- 命中半径（屏幕像素 → 场景坐标） ----------
 
@@ -708,8 +719,19 @@ class BlueprintView(QGraphicsView):
                 return
         item = self.scene().itemAt(scene_position, self.transform())
         if isinstance(item, BlueprintWireItem):
-            self.wire_clicked.emit(item)
-            event.accept()
+            # 连线不吃掉按下：允许从连线上起框（画布上到处是线，之前点在线上的"空白处"
+            # 会直接选中连线、画不出选框）。松开时若几乎没拖动才算点击选中这条线。
+            previous_buttons = item.acceptedMouseButtons()
+            item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+            try:
+                super().mousePressEvent(event)
+            finally:
+                item.setAcceptedMouseButtons(previous_buttons)
+            self._pressed_wire = item
+            self._press_scene_pos = scene_position
+            self._band_prefers_wires = bool(event.modifiers() & Qt.ControlModifier)
+            self._band_from_empty = True
+            self._band_start_scene = scene_position
             return
         # 左键按在空白处会开始框选：这次是框"连线"还是框"步骤/分组"，
         # 由按下时是否按着 Ctrl 决定（按在节点上则不改变框选模式）。
@@ -1054,6 +1076,15 @@ class BlueprintView(QGraphicsView):
             return
         super().mouseReleaseEvent(event)
         self._apply_group_band_selection(event)
+        pressed_wire = getattr(self, "_pressed_wire", None)
+        press_start = getattr(self, "_press_scene_pos", None)
+        self._pressed_wire = None
+        self._press_scene_pos = None
+        if pressed_wire is not None:
+            release_pos = self.mapToScene(event.position().toPoint())
+            moved = (release_pos - press_start).manhattanLength() if press_start is not None else 0.0
+            if moved < self._BAND_MIN_DRAG:
+                self.wire_clicked.emit(pressed_wire)
         self.interaction_finished.emit()
 
     _BAND_MIN_DRAG = 3.0

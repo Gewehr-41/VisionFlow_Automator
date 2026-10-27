@@ -124,6 +124,29 @@ class GroupBandSelectTests(unittest.TestCase):
         self.assertEqual(sorted(indices), [0, 1], "框选节点行为应保持不变")
         self.assertTrue(group_selected(self.window))
 
+    def test_band_starting_on_wire_still_selects_group(self):
+        """画布上到处是连线：从连线上按下拖框也要能框选组（之前会直接选中连线、画不出框）。"""
+        wire = self.window._edges[0]["wire"]
+        start = wire.path().pointAtPercent(0.5)
+        band(self.window, start, QPointF(start.x() + 250, start.y() + 80))
+        self.assertTrue(group_selected(self.window), "从连线上起框也应能选中组")
+
+    def test_click_on_wire_still_selects_wire(self):
+        clicked = []
+        self.window.view.wire_clicked.connect(clicked.append)
+        wire = self.window._edges[0]["wire"]
+        point = wire.path().pointAtPercent(0.5)
+        band(self.window, point, QPointF(point.x() + 1, point.y() + 1))
+        self.assertEqual(clicked, [wire], "原地点击连线仍应触发选中连线，不应变成框选")
+
+    def test_drag_from_wire_does_not_emit_wire_click(self):
+        clicked = []
+        self.window.view.wire_clicked.connect(clicked.append)
+        wire = self.window._edges[0]["wire"]
+        point = wire.path().pointAtPercent(0.5)
+        band(self.window, point, QPointF(point.x() + 260, point.y() + 90))
+        self.assertEqual(clicked, [], "拖动是框选，不应把连线当点击选中")
+
     def test_collapsed_card_band_still_selects_card(self):
         self.window.collapsed_groups = {"g1"}
         self.window.refresh()

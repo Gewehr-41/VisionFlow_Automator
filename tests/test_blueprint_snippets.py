@@ -103,6 +103,17 @@ class SaveSnippetTests(unittest.TestCase):
         self.assertIn("g1", payload["groups"], "选中的步骤所属分组应一起保存")
         self.assertTrue(self.window.snippets_saved, "保存片段要触发持久化回调")
 
+    def test_save_single_step_does_not_carry_group(self):
+        self._select_nodes([0])
+        with mock.patch.object(blueprint_snippets.QInputDialog, "getText",
+                               staticmethod(lambda *a, **k: ("单步片段", True))):
+            name = self.window.save_selection_as_snippet()
+        payload = self.window.snippets_store[name]
+        self.assertEqual([task["id"] for task in payload["tasks"]], ["A"])
+        self.assertEqual(payload["groups"], {}, "单个步骤的片段不应带上所在分组（避免插入时自动建组）")
+        self.assertNotIn("group_id", payload["tasks"][0])
+        self.assertNotIn("group_name", payload["tasks"][0])
+
     def test_save_group_as_snippet(self):
         with mock.patch.object(blueprint_snippets.QInputDialog, "getText",
                                staticmethod(lambda *a, **k: ("组片段", True))):
@@ -142,26 +153,28 @@ class InsertSnippetTests(unittest.TestCase):
         names = self.window.group_metadata["names"]
         return next((gid for gid, value in names.items() if value == name), None)
 
-    def test_insert_nested_snippet_creates_wrapper_group(self):
-        wrapper = self.window.insert_snippet_into_blueprint("片段A", (100, 200))
-        self.assertIsNotNone(wrapper)
-        self.assertEqual(len(self.window.tasks), 5)
-        names = self.window.group_metadata["names"]
-        self.assertEqual(names[wrapper], "片段A", "外层群组节点用片段名")
-        inner = next((gid for gid, value in names.items() if value == "内部组"), None)
-        self.assertIsNotNone(inner, "片段内部的分组要保留（插入时会换新 id）")
-        metadata = self.window.group_metadata
-        self.assertEqual(metadata["parents"][inner], wrapper, "内部组挂在外层组下")
-        self.assertIn(inner, metadata["children"][wrapper])
-        self.assertEqual(len(self.window._node_items), 5, "插入后画布应出现新节点")
+    def _names(self):
+        return list(self.window.group_metadata["names"].values())
 
-    def test_insert_flat_snippet_puts_root_steps_in_wrapper(self):
-        wrapper = self.window.insert_snippet_into_blueprint("扁平片段", (100, 200))
-        first = self.window.tasks[3]
-        second = self.window.tasks[4]
-        self.assertEqual(first.get("group_id"), wrapper)
-        self.assertEqual(second.get("group_id"), wrapper)
-        self.assertEqual(first.get("group_name"), "扁平片段")
+    def test_insert_nested_snippet_keeps_its_own_groups_without_wrapper(self):
+        self.window.insert_snippet_into_blueprint("片段A", (100, 200))
+        self.assertEqual(len(self.window.tasks), 5)
+        names = self._names()
+        self.assertNotIn("片段A", names, "插入片段不应再自动包一层同名的组")
+        inner = next((gid for gid, value in self.window.group_metadata["names"].items()
+                      if value == "内部组"), None)
+        self.assertIsNotNone(inner, "片段自带的分组要保留")
+        metadata = self.window.group_metadata
+        self.assertIsNone(metadata["parents"][inner], "片段内部组保持原层级（不被包装组套住）")
+        self.assertEqual(self.window.tasks[3].get("group_id"), inner)
+        self.assertEqual(self.window.tasks[4].get("group_id"), inner)
+
+    def test_insert_flat_snippet_creates_no_group(self):
+        before = self._names()
+        self.window.insert_snippet_into_blueprint("扁平片段", (100, 200))
+        self.assertEqual(self._names(), before, "扁平片段（无分组）插入后不应创建任何组")
+        for task in self.window.tasks[3:]:
+            self.assertIsNone(task.get("group_id"), "扁平片段的步骤应保持根层")
 
     def test_insert_assigns_layout_positions(self):
         self.window.insert_snippet_into_blueprint("扁平片段", (100, 200))
@@ -171,26 +184,31 @@ class InsertSnippetTests(unittest.TestCase):
         self.assertEqual(positions["3"], (100.0, 200.0))
         self.assertEqual(positions["4"], (380.0, 200.0))
 
-    def test_insert_inside_focus_group_puts_wrapper_in_that_group(self):
+    def test_insert_inside_focus_group_puts_steps_in_that_group(self):
+        before = self._names()
         self.window.focus_group = "g1"
-        wrapper = self.window.insert_snippet_into_blueprint("扁平片段", (100, 200))
-        self.assertEqual(self.window.group_metadata["parents"][wrapper], "g1")
-
-    def test_insert_same_snippet_twice_dedupes_wrapper_name(self):
         self.window.insert_snippet_into_blueprint("扁平片段", (100, 200))
-        self.window.insert_snippet_into_blueprint("扁平片段", (400, 200))
-        names = list(self.window.group_metadata["names"].values())
-        self.assertIn("扁平片段", names)
-        self.assertIn("扁平片段 2", names)
+        self.assertEqual(self._names(), before, "聚焦组里插入扁平片段也不应新建组")
+        for task in self.window.tasks[3:]:
+            self.assertEqual(task.get("group_id"), "g1", "聚焦组里插入的步骤应归入当前组")
+        self.assertEqual(self.window.tasks[3].get("group_name"), "组1")
+
+    def test_insert_same_snippet_twice_dedupes_inner_group_names(self):
+        self.window.insert_snippet_into_blueprint("片段A", (100, 200))
+        self.window.insert_snippet_into_blueprint("片段A", (400, 200))
+        names = self._names()
+        self.assertIn("内部组", names)
+        self.assertIn("内部组 2", names)
 
     def test_undo_after_insert_restores_tasks_and_metadata(self):
         before_tasks = [task["id"] for task in self.window.tasks]
+        before_names = self._names()
         self.window.insert_snippet_into_blueprint("扁平片段", (100, 200))
         self.assertEqual(len(self.window.tasks), 5)
         self.window.undo()
         QApplication.processEvents()
         self.assertEqual([task["id"] for task in self.window.tasks], before_tasks)
-        self.assertNotIn("扁平片段", list(self.window.group_metadata["names"].values()))
+        self.assertEqual(self._names(), before_names)
 
     def test_insert_unknown_snippet_is_noop(self):
         before = len(self.window.tasks)

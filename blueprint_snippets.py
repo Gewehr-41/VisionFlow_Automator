@@ -80,11 +80,30 @@ class BlueprintSnippetMixin:
             answer = QMessageBox.question(self, "覆盖片段", f"片段「{name}」已存在，是否覆盖？")
             if answer != QMessageBox.StandardButton.Yes:
                 return None
+        payload = self._strip_groups_for_single_step(payload, group_ids)
         store[name] = payload
         self._save_snippet_store()
         self._blueprint_status(
             f"已把 {len(payload.get('tasks') or [])} 个步骤、{len(payload.get('groups') or {})} 个分组保存为片段「{name}」。")
         return name
+
+    @staticmethod
+    def _strip_groups_for_single_step(payload, group_ids):
+        """单个步骤 + 没有显式选组：保存成"纯步骤"片段，不携带所在分组。
+
+        否则从组里挑一步存片段、再插入时会自动多出一个只有一步的组。
+        选中组/多步骤仍保留分组结构（组+步骤片段是另一项功能）。
+        """
+        tasks = payload.get("tasks") or []
+        if group_ids or len(tasks) != 1:
+            return payload
+        for task in tasks:
+            task.pop("group_id", None)
+            task.pop("group_name", None)
+            task.pop("group_color", None)
+        payload["groups"] = {}
+        payload["group_order"] = []
+        return payload
 
     def save_group_as_snippet(self, group_id):
         """把某个组（含子组与组内步骤）保存为片段。"""
@@ -125,14 +144,17 @@ class BlueprintSnippetMixin:
         inserted = len(new_tasks) - len(self.tasks)
         self._push_history()
         self.tasks[:] = new_tasks
-        wrapper_id = self._wrap_inserted_as_group(name, new_groups, parent_group)
+        # 注意：**不再自动包一层"片段组"**——片段里原本没有分组时，插入后就是独立步骤；
+        # 片段自带分组时只保留它自己的分组结构。
+        self._register_inserted_groups(new_groups, parent_group)
         self._place_inserted_nodes(inserted, scene_position)
         self.refresh()
         self.save_layout()
         self._select_inserted_nodes(inserted)
         group_note = f"，{len(new_groups)} 个分组" if new_groups else ""
-        self._blueprint_status(f"已插入片段「{name}」：{inserted} 个步骤{group_note}，已放入群组节点。")
-        return wrapper_id
+        target_note = "到当前组里" if parent_group else "到画布"
+        self._blueprint_status(f"已插入片段「{name}」：{inserted} 个步骤{group_note}{target_note}。")
+        return None
 
     def _unique_group_name(self, base_name, taken_names):
         candidate = str(base_name or "片段")
@@ -144,8 +166,12 @@ class BlueprintSnippetMixin:
         taken_names.add(candidate)
         return candidate
 
-    def _wrap_inserted_as_group(self, snippet_name, new_groups, parent_group_id):
-        """把片段根步骤/根分组挂到一个新建的外层组下，形成一个群组节点。"""
+    def _register_inserted_groups(self, new_groups, parent_group_id=None):
+        """把 insert_snippet 返回的新分组登记进当前预设的分组元数据（不建外层包装组）。
+
+        片段自带的分组按原样登记（父组在片段内部已重映射）；片段里没有分组的步骤保持
+        根层（聚焦子图里插入时归入当前组，避免插到外面看不见）。
+        """
         metadata = self.group_metadata
         names = metadata.setdefault("names", {})
         colors = metadata.setdefault("colors", {})
@@ -153,37 +179,31 @@ class BlueprintSnippetMixin:
         children = metadata.setdefault("children", {})
         order = metadata.setdefault("order", [])
         taken = set(str(value) for value in names.values())
-        wrapper_id = f"group_{uuid.uuid4().hex[:8]}"
-        wrapper_name = self._unique_group_name(snippet_name, taken)
-        names[wrapper_id] = wrapper_name
-        colors[wrapper_id] = colors.get(parent_group_id or "", self.DEFAULT_GROUP_COLOR)
-        parents[wrapper_id] = str(parent_group_id) if parent_group_id else None
-        children[wrapper_id] = []
-        if parent_group_id:
-            children.setdefault(str(parent_group_id), []).append(wrapper_id)
-        else:
-            order.append(wrapper_id)
-        # 片段内部的根分组挂到外层组；组顺序里移除（改由外层组持有）
+        parent_group_id = str(parent_group_id) if parent_group_id else None
         for group in new_groups:
             group_id = str(group["id"])
-            parents[group_id] = wrapper_id
-            children[wrapper_id].append(group_id)
-            if group_id in order:
-                order.remove(group_id)
-            if group.get("name"):
-                names[group_id] = group["name"]
-            if group.get("color"):
-                colors[group_id] = group["color"]
+            names[group_id] = self._unique_group_name(group.get("name"), taken)
+            colors[group_id] = group.get("color") or self.DEFAULT_GROUP_COLOR
+            parent = group.get("parent")
+            parent = str(parent) if parent else parent_group_id
+            parents[group_id] = parent
             children.setdefault(group_id, [])
-        # 片段的根步骤（没有分组）归入外层组；其余步骤的 group_name 与注册后的组名同步
-        for index, task in enumerate(self.tasks):
+            if parent:
+                children.setdefault(parent, []).append(group_id)
+            else:
+                order.append(group_id)
+        # 片段里没有分组的步骤：在聚焦子图里插入时归入当前组
+        if parent_group_id:
+            focus_name = names.get(parent_group_id, parent_group_id)
+            for task in self.tasks:
+                if task.get("group_id") is None:
+                    task["group_id"] = parent_group_id
+                    task["group_name"] = focus_name
+        # 步骤上的 group_name 与登记后的组名同步
+        for task in self.tasks:
             group_id = task.get("group_id")
-            if group_id is None:
-                task["group_id"] = wrapper_id
-                task["group_name"] = wrapper_name
-            elif str(group_id) in names:
+            if group_id is not None and str(group_id) in names:
                 task["group_name"] = names[str(group_id)]
-        return wrapper_id
 
     def _place_inserted_nodes(self, inserted, scene_position):
         """新节点排布在插入点附近（默认在画布已有内容下方），避免叠在一起。"""

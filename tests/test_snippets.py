@@ -312,6 +312,27 @@ class SnippetGuiTests(unittest.TestCase):
         self.assertEqual(self.window.snippets["空片段"]["tasks"], [])
         self.assertEqual(list(self.window.snippets["空片段"]["groups"]), ["empty"])
 
+    def test_save_single_step_does_not_carry_group(self):
+        """只选一个步骤存片段：不带上它所在的分组，插入时就不会凭空建组。"""
+        self.window.mode_group_metadata[self.mode] = _metadata()
+        g.TASKS[:] = [_task("A", "g1"), _task("B", "g1"), _task("C")]
+        with mock.patch.object(self.window, "_selected_task_indices", lambda: [0]), \
+                mock.patch.object(self.window, "_selected_group_ids", lambda: []), \
+                mock.patch.object(g.QInputDialog, "getText", staticmethod(lambda *a, **k: ("单步片段", True))):
+            self.window.save_selection_as_snippet()
+        payload = self.window.snippets["单步片段"]
+        self.assertEqual([task["id"] for task in payload["tasks"]], ["A"])
+        self.assertEqual(payload["groups"], {}, "单个步骤的片段不应保存分组结构")
+        self.assertNotIn("group_id", payload["tasks"][0])
+        # 插入后不应新增任何分组
+        before = len(self.window.mode_group_metadata[self.mode]["names"])
+        with mock.patch.object(self.window, "_selected_task_indices", lambda: []), \
+                mock.patch.object(self.window, "_selected_group_ids", lambda: []), \
+                mock.patch.object(g.QInputDialog, "getItem", staticmethod(lambda *a, **k: ("单步片段", True))):
+            self.window.insert_snippet_at_selection()
+        self.assertEqual(len(self.window.mode_group_metadata[self.mode]["names"]), before,
+                         "插入单步骤片段不应自动创建组")
+
     def test_insert_after_selected_step(self):
         self.window.snippets = {"常用组": [_task("S0"), _task("S1")]}
         g.TASKS[:] = [_task("A"), _task("B", timeout_jump_to=2)]

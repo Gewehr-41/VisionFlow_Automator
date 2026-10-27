@@ -54,8 +54,9 @@ class MainToolbarLayoutTests(unittest.TestCase):
             self.assertNotIn(label, push_labels, f"{label} 不应还是常驻按钮")
 
     def test_save_button_remains_visible(self):
-        self.assertEqual(self.window.save_button.text(), "保存当前任务")
+        self.assertEqual(self.window.save_button.text(), "保存")
         self.assertTrue(self.window.save_button.isEnabled())
+        self.assertIn("Ctrl+S", self.window.save_button.toolTip())
 
     def test_ctrl_s_shortcut_is_registered(self):
         self.assertEqual(self.window.save_shortcut.shortcut().toString(), "Ctrl+S")
@@ -79,6 +80,25 @@ class MainToolbarLayoutTests(unittest.TestCase):
             self.window._set_running_state(False)
         self.assertTrue(self.window.preset_menu_button.isEnabled())
         self.assertTrue(self.window.save_button.isEnabled())
+
+    def test_preset_row_widgets_are_fixed_width(self):
+        from PySide6.QtWidgets import QSizePolicy
+        self.assertEqual(self.window.preset_menu_button.sizePolicy().horizontalPolicy(), QSizePolicy.Policy.Fixed)
+        self.assertEqual(self.window.save_button.sizePolicy().horizontalPolicy(), QSizePolicy.Policy.Fixed)
+        self.assertLessEqual(self.window.mode_combo.maximumWidth(), 240)
+
+    def test_window_combo_is_bounded(self):
+        self.assertLessEqual(self.window.window_combo.maximumWidth(), 420)
+
+    def test_tool_buttons_lay_out_three_plus_two(self):
+        buttons = self.window.tool_buttons
+        self.assertEqual(len(buttons), 5)
+        rows = [(button.y(), button.x()) for button in buttons]
+        first_row_y = rows[0][0]
+        second_row_y = rows[3][0]
+        self.assertGreater(second_row_y, first_row_y, "工具按钮应排成两行")
+        self.assertTrue(all(row[0] == first_row_y for row in rows[:3]), "第一行 3 个")
+        self.assertTrue(all(row[0] == second_row_y for row in rows[3:]), "第二行 2 个")
 
     def test_tool_buttons_unchanged(self):
         self.assertEqual([button.text() for button in self.window.tool_buttons],

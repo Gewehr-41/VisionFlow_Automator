@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QToolButton,
+    QSizePolicy,
 )
 
 import config
@@ -1229,7 +1230,9 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         preset_bar.addWidget(QLabel("执行功能:"))
         self.mode_combo = QComboBox()
         self.mode_combo.currentTextChanged.connect(self.on_mode_selected)
-        self.mode_combo.setMinimumWidth(118)
+        self.mode_combo.setMinimumWidth(160)
+        self.mode_combo.setMaximumWidth(240)
+        self.mode_combo.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         preset_bar.addWidget(self.mode_combo)
         # 预设管理收进「预设 ▾」下拉：这 6 个操作都是低频管理动作，
         # 常驻按钮会把主界面挤成三行按钮（对比 MaaEnd/MXU：主操作常驻、其余收进菜单）。
@@ -1250,11 +1253,16 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.preset_menu_button.setMenu(preset_menu)
         self.preset_menu_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.preset_menu_button.setToolTip("新建 / 重命名 / 复制 / 导入导出 / 删除预设")
+        self.preset_menu_button.setMinimumWidth(78)
+        self.preset_menu_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         preset_bar.addWidget(self.preset_menu_button)
-        self.save_button = QPushButton("保存当前任务")
+        self.save_button = QPushButton("保存")
         self.save_button.clicked.connect(self.save_current_tasks)
+        self.save_button.setMinimumWidth(64)
+        self.save_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.save_button.setToolTip("把当前预设的步骤与分组立即保存到文件（Ctrl+S）")
         preset_bar.addWidget(self.save_button)
+        preset_bar.addStretch(1)
         self.save_shortcut = QAction(self)
         self.save_shortcut.setShortcut(QKeySequence("Ctrl+S"))
         self.save_shortcut.triggered.connect(self.save_current_tasks)
@@ -1284,16 +1292,21 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.step_button.setEnabled(False)
         self.step_button.setToolTip("暂停状态下点一次执行一个步骤")
         control_bar.addWidget(self.step_button)
-        control_bar.addSpacing(8)
+        control_bar.addStretch(1)
         control_bar.addWidget(QLabel("目标窗口:"))
         self.window_combo = QComboBox()
         self.window_combo.setEditable(True)
-        control_bar.addWidget(self.window_combo, 1)
+        self.window_combo.setMinimumWidth(240)
+        self.window_combo.setMaximumWidth(420)
+        control_bar.addWidget(self.window_combo)
         refresh_button = QPushButton("刷新窗口")
+        refresh_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         refresh_button.clicked.connect(self.refresh_window_list)
         control_bar.addWidget(refresh_button)
         self.status_label = QLabel("状态: 待机")
-        self.status_label.setMinimumWidth(100)
+        self.status_label.setObjectName("statusLabel")
+        self.status_label.setMinimumWidth(110)
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         control_bar.addWidget(self.status_label)
         root_layout.addLayout(control_bar)
 
@@ -1348,9 +1361,12 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         for index, (label, handler) in enumerate(tool_specs):
             button = QPushButton(label)
             button.clicked.connect(handler)
-            tool_grid.addWidget(button, index // 4, index % 4)
+            # 3 列布局：5 个工具排成 3+2，避免最后一行只剩一个按钮显得空
+            button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+            tool_grid.addWidget(button, index // 3, index % 3)
             self.tool_buttons.append(button)
             self.tool_actions[label] = button
+        tool_grid.setColumnStretch(3, 1)
         task_layout.addLayout(tool_grid)
 
         # 任务列表右键菜单：常用编辑动作不必回按钮区找（列表此前完全没有右键菜单）
@@ -1432,6 +1448,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             "QToolButton::menu-indicator { width: 0px; }"
             "#secondaryButton { color: #475569; background: #f1f5f9; border-color: #cbd5e1; }"
             "#secondaryButton:hover { background: #e2e8f0; border-color: #94a3b8; }"
+            "#statusLabel { color: #475569; font-weight: bold; }"
             "QLineEdit, QPlainTextEdit, QComboBox, QTreeWidget { border: 1px solid #cbd5e1; border-radius: 4px; background: #ffffff; padding: 4px; }"
             "QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QTreeWidget:focus { border-color: #0284c7; }"
             "QTreeWidget { padding: 6px; }"

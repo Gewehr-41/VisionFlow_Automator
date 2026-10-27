@@ -1046,6 +1046,8 @@ def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True, fal
             task=description,
             hit=center is not None,
             elapsed=time.time() - start_time,
+            # 步骤号码（1-based，列表里的位置）；兜底/迂回等流程外步骤可能没有
+            step_number=task.get("_outer_step_number"),
         )
 
         if center is not None:

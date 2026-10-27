@@ -478,6 +478,8 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
             target = node_items[target_index]
             source_box = self._collapsed_box(source_index)
             target_box = self._collapsed_box(target_index)
+            # _collapsed_box 会尊重聚焦状态：进入折叠组内部后，组内可见节点的端点返回 None，
+            # 所以内部连线不会被误判成"同框"而跳过（否则进入后整组断线）。
             if source_box is not None and source_box is target_box:
                 # 两端都被折叠进同一个组框（含嵌套折叠）：这条线在框内不可见，跳过
                 continue

@@ -97,6 +97,54 @@ class RenderedCollapsedBoxTests(unittest.TestCase):
         self.assertIsNone(find_rendered_collapsed_box(self.tasks, 99, {"g1"}, {"g1": FakeBox()}, PARENTS))
 
 
+class FocusAwareEndpointTests(unittest.TestCase):
+    """聚焦（进入子图）后，组内节点可见，端点不能再被当成"折叠进卡片"。"""
+
+    def setUp(self):
+        self.tasks = [_task("A", "g1"), _task("B", "g2"), _task("C", "g3")]
+
+    def test_visible_nodes_inside_collapsed_focus_use_own_endpoint(self):
+        box = FakeBox()
+        result = find_rendered_collapsed_box(
+            self.tasks, 0, {"g1"}, {"g1": box}, PARENTS, focus_group="g1")
+        self.assertIsNone(result, "进入折叠组内部后，组内节点可见，不应再路由到本组卡片"
+                                 "（否则内部连线会被整条跳过）")
+
+    def test_descendant_of_focus_also_not_collapsed_to_card(self):
+        result = find_rendered_collapsed_box(
+            self.tasks, 1, {"g1"}, {"g1": FakeBox()}, PARENTS, focus_group="g1")
+        self.assertIsNone(result, "聚焦父组时，子组链路上的节点也不该被折叠进父卡片")
+
+    def test_collapsed_child_inside_focus_still_uses_child_box(self):
+        outer, child = FakeBox(), FakeBox()
+        result = find_rendered_collapsed_box(
+            self.tasks, 1, {"g1", "g2"}, {"g1": outer, "g2": child}, PARENTS, focus_group="g1")
+        self.assertIs(child, result, "聚焦内部时，真正的折叠子组仍应显示成子组卡片")
+
+    def test_focus_outside_does_not_affect_collapsed_box(self):
+        box = FakeBox()
+        result = find_rendered_collapsed_box(
+            self.tasks, 0, {"g1"}, {"g1": box}, PARENTS, focus_group="g3")
+        self.assertIs(box, result, "聚焦别的组时，本组仍按折叠卡片路由")
+
+    def test_focus_host_endpoint_uses_visible_port(self):
+        class Host(BlueprintInteractionMixin):
+            def __init__(self):
+                self.tasks = [_task("A", "g1"), _task("B", "g2")]
+                self.collapsed_groups = {"g1", "g2"}
+                self.focus_group = "g1"
+                self._node_items = {0: FakeNode(x=40.0, y=90.0, visible=True)}
+                self._group_items = {"g1": FakeBox(), "g2": FakeBox()}
+
+            def _group_parents(self):
+                return PARENTS
+
+        host = Host()
+        point = host._node_endpoint(0, "input")
+        self.assertAlmostEqual(point.x(), 40.0, msg="聚焦内可见节点应使用自己的端口")
+        self.assertAlmostEqual(point.y(), 90.0 + 60.0)
+
+
 class HiddenNodeEndpointTests(unittest.TestCase):
     """`_node_endpoint` 在节点隐藏时的端点选择（回归：不能落在隐藏节点坐标）。"""
 
@@ -178,6 +226,11 @@ class RenderUsesPureHelpersTests(unittest.TestCase):
         source = open("blueprint_interaction.py", encoding="utf-8").read()
         self.assertIn("self._collapsed_box(index)", source)
         self.assertIn("find_rendered_collapsed_box(", source)
+
+    def test_collapsed_box_passes_focus_so_focused_subgraph_keeps_wires(self):
+        source = open("blueprint_interaction.py", encoding="utf-8").read()
+        self.assertIn('getattr(self, "focus_group", None)', source,
+                      "端点解析必须把 focus_group 传进去，否则进入折叠组后内部连线全断")
 
     def test_connections_skip_same_rendered_box(self):
         source = open("gui_pyside6.py", encoding="utf-8").read()

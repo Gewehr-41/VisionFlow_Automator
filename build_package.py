@@ -150,12 +150,17 @@ def count_icons(base_dir):
 
 def process_running(image_name=EXE_NAME):
     """分发版是否正在运行（占着文件就没法替换）。"""
+    # 用临时文件接 stdout：`capture_output=True` 会起读取线程，在已加载 Qt/大量 GUI 测试的
+    # 进程里偶发线程创建失败（Windows fast-fail 0xC0000409）。重定向到文件后只需等待，更稳。
     try:
-        result = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {image_name}", "/FO", "CSV"],
-                                capture_output=True, text=True, errors="replace")
-    except OSError:
+        with tempfile.TemporaryFile() as stdout_file:
+            subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {image_name}", "/FO", "CSV"],
+                           stdout=stdout_file, stderr=subprocess.DEVNULL, timeout=20)
+            stdout_file.seek(0)
+            text = stdout_file.read().decode("utf-8", errors="replace")
+    except (OSError, subprocess.SubprocessError):
         return False
-    return image_name.lower() in (result.stdout or "").lower()
+    return image_name.lower() in text.lower()
 
 
 def missing_modules(modules=REQUIRED_MODULES):

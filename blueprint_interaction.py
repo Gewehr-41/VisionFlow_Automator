@@ -13,12 +13,16 @@ from PySide6.QtWidgets import QGraphicsTextItem
 from blueprint_canvas import BendHandleItem, BlueprintGroupItem, BlueprintNodeItem, BlueprintWireItem
 
 
-def find_rendered_collapsed_box(tasks, index, collapsed_groups, group_items, parents):
+def find_rendered_collapsed_box(tasks, index, collapsed_groups, group_items, parents,
+                               focus_group=None):
     """节点所属的、**实际渲染出来**的最近折叠组框；找不到返回 None。
 
     嵌套子组的框在祖先折叠时不会渲染（见 _render_groups），所以不能直接取"最近折叠组"，
     必须往上找到第一个真的有框的折叠组；否则连线端点会退回到隐藏节点坐标（悬空线）。
-    抽成纯函数便于单测（不需要 Qt 场景）。
+
+    **聚焦（进入子图）时必须提前返回 None**：聚焦组内部虽然本身是折叠状态，但它的节点
+    在这个视图里是**可见**的，不该被当成"折叠进卡片"——否则两端都会归到同一张卡片上，
+    内部连线被整条跳过（现象：进入折叠组后组内步骤全部断线）。
     """
     if not (0 <= index < len(tasks)):
         return None
@@ -27,6 +31,8 @@ def find_rendered_collapsed_box(tasks, index, collapsed_groups, group_items, par
     seen = set()
     while current and current != "group_default" and current not in seen:
         seen.add(current)
+        if focus_group and str(current) == str(focus_group):
+            return None
         if str(current) in collapsed_groups:
             box = group_items.get(str(current))
             if box is not None:
@@ -107,7 +113,8 @@ class BlueprintInteractionMixin:
     def _collapsed_box(self, index):
         """节点所属的、**已渲染**的最近折叠组框；找不到返回 None。"""
         return find_rendered_collapsed_box(
-            self.tasks, index, self.collapsed_groups, self._group_items, self._group_parents())
+            self.tasks, index, self.collapsed_groups, self._group_items, self._group_parents(),
+            getattr(self, "focus_group", None))
 
     def _on_node_moved(self, node):
         positions = self.layout_data.setdefault("positions", {})

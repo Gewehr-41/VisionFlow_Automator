@@ -1188,6 +1188,8 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.mode_fallback_steps = deepcopy(FALLBACK_STEPS)
         # 步骤片段（F13）：全局共享，存在预设文件的 __snippets__ 里
         self.snippets = deepcopy(SNIPPETS)
+        # 主窗口的"复制/粘贴"剪贴板（Ctrl+C 复制、Ctrl+V 粘贴；蓝图窗口另有自己的 self.clipboard）
+        self.task_clipboard = None
         # 主窗口撤销/重做（快照式：TASKS + 分组元数据 + 当前选中下标）
         self.history = []
         self.redo_history = []
@@ -1388,6 +1390,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         shortcut_specs = [
             ("Del", self.delete_selected_item),
             ("Ctrl+C", self.copy_selected_item),
+            ("Ctrl+V", self.paste_clipboard_item),
             ("Ctrl+A", self.select_all_tasks),
             ("Ins", self.add_task),
             ("Ctrl+Up", lambda: self.move_selected_item(-1)),
@@ -1467,8 +1470,19 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
 
         log_panel = QGroupBox("日志输出")
         log_layout = QVBoxLayout(log_panel)
+        log_toolbar = QHBoxLayout()
+        log_toolbar.setContentsMargins(0, 0, 0, 0)
+        log_toolbar.addStretch(1)
+        self.clear_log_button = QPushButton("清空日志")
+        self.clear_log_button.setObjectName("secondaryButton")
+        self.clear_log_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.clear_log_button.clicked.connect(self.clear_log)
+        log_toolbar.addWidget(self.clear_log_button)
+        log_layout.addLayout(log_toolbar)
         self.log_box = QPlainTextEdit()
         self.log_box.setReadOnly(True)
+        # M6：日志最多保留 5000 行，避免长脚本/循环执行无限增长导致卡顿
+        self.log_box.setMaximumBlockCount(5000)
         log_layout.addWidget(self.log_box)
         content_splitter = QSplitter(Qt.Orientation.Vertical)
         content_splitter.addWidget(splitter)
@@ -2673,6 +2687,8 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             menu.addAction("新增组", self.add_group)
             menu.addSeparator()
             copy_action = menu.addAction("复制", self.copy_selected_item)
+            paste_action = menu.addAction("粘贴", self.paste_clipboard_item)
+            paste_action.setEnabled(bool(getattr(self, "task_clipboard", None)))
             delete_action = menu.addAction("删除", self.delete_selected_item)
             up_action = menu.addAction("上移", lambda: self.move_selected_item(-1))
             down_action = menu.addAction("下移", lambda: self.move_selected_item(1))
@@ -3272,6 +3288,10 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         if label is None or not label.isVisible():
             return
         self._set_editor_state(False)
+
+    def clear_log(self):
+        """清空日志面板（M6：日志有上限，也给一个手动清空入口）。"""
+        self.log_box.clear()
 
     def show_about(self):
         data_dir = paths.data_dir()

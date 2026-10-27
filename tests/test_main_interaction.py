@@ -446,7 +446,10 @@ class CopyAndSnippetTests(MainInteractionBase):
             self.window._find_task_item(index).setSelected(True)
         before = len(g.TASKS)
         self.window.copy_selected_item()
-        self.assertEqual(len(g.TASKS), before + 2, "多选复制应复制全部选中步骤")
+        self.assertEqual(len(g.TASKS), before, "Ctrl+C 只复制到剪贴板，不应直接改列表")
+        self.assertEqual(len(self.window.task_clipboard["tasks"]), 2, "多选步骤应全部进剪贴板")
+        self.window.paste_clipboard_item()
+        self.assertEqual(len(g.TASKS), before + 2, "粘贴应生成 2 个副本")
         self.assertEqual([task["description"] for task in g.TASKS[2:4]], ["A 副本", "B 副本"])
 
     def test_copy_group_copies_steps_and_group_metadata(self):
@@ -454,6 +457,8 @@ class CopyAndSnippetTests(MainInteractionBase):
         self.group_item(GROUP_ID).setSelected(True)
         before = len(g.TASKS)
         self.window.copy_selected_item()
+        self.assertEqual(len(g.TASKS), before, "Ctrl+C 只复制到剪贴板")
+        self.window.paste_clipboard_item()
         _APP.processEvents()
         self.assertEqual(len(g.TASKS), before + 2, "父组 + 子组里的 2 个步骤都要复制")
         metadata = self.metadata()

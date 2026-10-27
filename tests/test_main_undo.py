@@ -109,6 +109,7 @@ class UndoBasicTests(MainUndoBase):
     def test_undo_copy_step(self):
         self.select_step(0)
         self.window.copy_selected_item()
+        self.window.paste_clipboard_item()
         self.assertEqual(len(g.TASKS), 4)
         self.window.undo()
         self.assertEqual(len(g.TASKS), 3)

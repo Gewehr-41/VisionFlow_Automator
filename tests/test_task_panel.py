@@ -197,7 +197,7 @@ class TaskPanelRightClickTests(unittest.TestCase):
         pairs = {(action.shortcut().toString(), action.shortcutContext())
                  for action in self.window.list_shortcuts}
         self.assertEqual({pair[0] for pair in pairs},
-                         {"Del", "Ctrl+C", "Ctrl+A", "Ins", "Ctrl+Up", "Ctrl+Down",
+                         {"Del", "Ctrl+C", "Ctrl+V", "Ctrl+A", "Ins", "Ctrl+Up", "Ctrl+Down",
                           "Ctrl+Z", "Ctrl+Y", "Ctrl+Shift+Z"})
         self.assertTrue(all(pair[1] == Qt.ShortcutContext.WidgetShortcut for pair in pairs),
                         "快捷键必须限定在列表控件上，不能抢编辑框里的按键")

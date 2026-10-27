@@ -446,26 +446,22 @@ class TaskListMixin:
         return TASKS
     @Slot()
     def copy_selected_item(self):
-        """复制选中的步骤 / 分组。
+        """把选中的步骤 / 分组复制到**剪贴板**（不修改数据；Ctrl+V 粘贴）。
 
-        - 多选步骤：全部复制（此前只复制最后一个）
-        - 选中分组：组内全部步骤（含子组）+ 分组结构一起复制，生成新组 id、名称加「副本」，
-          嵌套关系在副本内部保持，父组在复制范围外时副本落到根层
-        - 复制范围内部的跳转改指向副本，指向范围外的跳转清除
+        与蓝图窗口语义一致：Ctrl+C 只复制，不再原地生成副本。
+        - 多选步骤：全部复制
+        - 选中分组：组内全部步骤（含子组）+ 分组结构一起进剪贴板，粘贴时生成新组 id、名称加「副本」
+        - 复制范围内部的跳转在粘贴时指向副本，指向范围外的跳转清除
         """
         indices = self._selected_task_indices()
         group_ids = self._selected_group_ids()
         if not indices and not group_ids:
             return
-        self._push_history()
         mode = self.mode_combo.currentText() or "custom"
-        metadata = self.mode_group_metadata.setdefault(mode, {})
-        names = metadata.setdefault("names", {})
-        colors = metadata.setdefault("colors", {})
-        parents = metadata.setdefault("parents", {})
-        children = metadata.setdefault("children", {})
-        order = metadata.setdefault("order", [])
-
+        metadata = self.mode_group_metadata.get(mode, {}) or {}
+        names = metadata.get("names") or {}
+        colors = metadata.get("colors") or {}
+        parents = metadata.get("parents") or {}
         affected_groups = []
         for group_id in group_ids:
             for child in self._group_descendants(metadata, group_id):
@@ -476,53 +472,90 @@ class TaskListMixin:
             if str(task.get("group_id") or "group_default") in affected_groups:
                 source_indices.add(index)
         ordered = sorted(source_indices)
-        if not ordered:
+        if not ordered and not affected_groups:
             return
+        groups = {}
+        for group_id in affected_groups:
+            groups[group_id] = {
+                "name": str(names.get(group_id, group_id)),
+                "color": colors.get(group_id),
+                "parent": parents.get(group_id),
+            }
+        self.task_clipboard = {
+            "tasks": [deepcopy(TASKS[index]) for index in ordered],
+            "groups": groups,
+            "group_order": list(affected_groups),
+            # 剪贴板里的跳转目标仍是"复制时的 TASKS 下标"，粘贴时换算到插入位置
+            "index_map": {index: position for position, index in enumerate(ordered)},
+        }
+        group_note = f"，{len(affected_groups)} 个分组" if affected_groups else ""
+        self.append_log(f"已复制 {len(ordered)} 个步骤{group_note}到剪贴板（Ctrl+V 粘贴）。")
 
-        copies = []
+    def _unique_copy_group_name(self, base_name, taken_names):
+        candidate = f"{base_name} 副本"
+        if candidate not in taken_names:
+            taken_names.add(candidate)
+            return candidate
+        index = 2
+        while f"{candidate}{index}" in taken_names:
+            index += 1
+        final = f"{candidate}{index}"
+        taken_names.add(final)
+        return final
+
+    def paste_clipboard_item(self):
+        """把剪贴板内容粘贴到列表：插到当前选中步骤/分组之后；无选中则追加到末尾。"""
+        clipboard = getattr(self, "task_clipboard", None)
+        if not clipboard or not (clipboard.get("tasks") or clipboard.get("groups")):
+            self.append_log("剪贴板是空的：先选中步骤/分组按 Ctrl+C 复制。")
+            return
+        self._push_history()
+        mode = self.mode_combo.currentText() or "custom"
+        metadata = self.mode_group_metadata.setdefault(mode, {})
+        names = metadata.setdefault("names", {})
+        colors = metadata.setdefault("colors", {})
+        parents = metadata.setdefault("parents", {})
+        children = metadata.setdefault("children", {})
+        order = metadata.setdefault("order", [])
+
+        insert_at = len(TASKS)
+        selected = self._selected_task_indices()
+        if selected:
+            insert_at = max(selected) + 1
+        else:
+            for group_id in self._selected_group_ids():
+                members = self._group_member_indices(metadata, group_id)
+                if members:
+                    insert_at = max(members) + 1
+        insert_at = max(0, min(insert_at, len(TASKS)))
+
+        copied_tasks = [deepcopy(task) for task in (clipboard.get("tasks") or [])]
         id_map = {}
-        index_map = {}
-        for position, index in enumerate(ordered):
-            cloned = deepcopy(TASKS[index])
-            old_id = str(cloned.get("id"))
+        for task in copied_tasks:
+            old_id = str(task.get("id"))
             new_id = str(uuid.uuid4())
             id_map[old_id] = new_id
-            index_map[index] = position
-            cloned["id"] = new_id
-            cloned["description"] = f"{cloned.get('description', '步骤')} 副本"
-            copies.append(cloned)
+            task["id"] = new_id
+            task["description"] = f"{task.get('description', '步骤')} 副本"
 
-        group_id_map = {group_id: f"group_{uuid.uuid4().hex[:8]}" for group_id in affected_groups}
-        for cloned in copies:
-            old_group = str(cloned.get("group_id") or "group_default")
+        group_id_map = {
+            str(old_id): f"group_{uuid.uuid4().hex[:8]}"
+            for old_id in (clipboard.get("group_order") or [])
+        }
+        for task in copied_tasks:
+            old_group = str(task.get("group_id") or "group_default")
             new_group = group_id_map.get(old_group)
             if new_group:
-                cloned["group_id"] = new_group
-                cloned["group_name"] = ""       # 建好组元数据后再填名字
-        # 复制范围内部的 flow_next / 跳转到副本，范围外的清掉
-        for cloned in copies:
-            flow_target = cloned.get("flow_next")
-            if flow_target is not None:
-                mapped = id_map.get(str(flow_target))
-                if mapped is None:
-                    cloned.pop("flow_next", None)
-                else:
-                    cloned["flow_next"] = mapped
-        remap_jump_targets(copies, index_map)
+                task["group_id"] = new_group
+                task["group_name"] = ""
 
-        insert_at = ordered[-1] + 1
-        # 插入点之后现有步骤的跳转整体后移
-        remap_jump_targets(TASKS, {
-            old_index: (old_index + len(copies) if old_index >= insert_at else old_index)
-            for old_index in range(len(TASKS))
-        })
-        TASKS[insert_at:insert_at] = copies
-
-        # 复制分组的元数据（父组在复制范围外 → 副本落到根层）
-        for old_group, new_group in group_id_map.items():
-            names[new_group] = f"{names.get(old_group, old_group)} 副本"
-            colors[new_group] = str(colors.get(old_group) or self._group_default_color())
-            old_parent = parents.get(old_group)
+        taken = set(str(name) for name in names.values())
+        for old_group in clipboard.get("group_order") or []:
+            info = (clipboard.get("groups") or {}).get(old_group) or {}
+            new_group = group_id_map[old_group]
+            names[new_group] = self._unique_copy_group_name(str(info.get("name") or "分组"), taken)
+            colors[new_group] = str(info.get("color") or self._group_default_color())
+            old_parent = info.get("parent")
             new_parent = group_id_map.get(str(old_parent)) if old_parent else None
             parents[new_group] = new_parent
             children.setdefault(new_group, [])
@@ -532,19 +565,45 @@ class TaskListMixin:
                     children[new_parent].append(new_group)
             else:
                 order.append(new_group)
-        for cloned in copies:
-            new_group = cloned.get("group_id")
-            if new_group in names:
-                cloned["group_name"] = names[new_group]
+        for task in copied_tasks:
+            group_id = task.get("group_id")
+            if group_id in names:
+                task["group_name"] = names[group_id]
+
+        # 剪贴板内部的跳转：按复制时的下标映射到粘贴后的位置；指向范围外的清除
+        old_clipboard_index_map = clipboard.get("index_map") or {}
+        paste_index_map = {
+            int(old_index): insert_at + int(position)
+            for old_index, position in old_clipboard_index_map.items()
+        }
+        for task in copied_tasks:
+            flow_target = task.get("flow_next")
+            if flow_target is not None:
+                mapped = id_map.get(str(flow_target))
+                if mapped is None:
+                    task.pop("flow_next", None)
+                else:
+                    task["flow_next"] = mapped
+        remap_jump_targets(copied_tasks, paste_index_map)
+
+        # 插入点之后的现有步骤，跳转目标整体后移
+        remap_jump_targets(TASKS, {
+            old_index: (old_index + len(copied_tasks) if old_index >= insert_at else old_index)
+            for old_index in range(len(TASKS))
+        })
+        TASKS[insert_at:insert_at] = copied_tasks
 
         if group_id_map:
             self._save_presets()
-        self.current_task_index = insert_at
+        if copied_tasks:
+            self.current_task_index = insert_at
         self.save_current_tasks()
         self.refresh_task_list()
-        self.select_task_index(insert_at)
+        if copied_tasks:
+            self.select_task_index(insert_at)
         group_note = f"，{len(group_id_map)} 个分组" if group_id_map else ""
-        self.append_log(f"已复制 {len(copies)} 个步骤{group_note}。")
+        self.append_log(f"已粘贴 {len(copied_tasks)} 个步骤{group_note}。")
+
     @Slot()
     def delete_selected_item(self):
         indices = set(self._selected_task_indices())

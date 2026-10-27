@@ -52,6 +52,7 @@ DATA_FILE_NAMES = tuple(paths.DATA_FILE_NAMES)
 USER_DATA_NAMES = DATA_FILE_NAMES + ("saved_settings.json",)
 USER_ICON_PREFIXES = ("captured_",)
 BACKUP_PREFIX = "_data_backup_"
+UPDATE_BACKUP_PREFIX = "_backup_update_"   # 自动更新前的旧程序备份（也不该进 zip）
 
 # 控制台可能是 GBK（直接运行）或 UTF-8（打包.bat 里 chcp 65001 + PYTHONIOENCODING）；
 # 两种情况都不要因为个别字符编不出来就崩掉。
@@ -319,6 +320,8 @@ def user_data_entries(directory):
             found.append(path)
     for item in sorted(base.glob(BACKUP_PREFIX + "*")):
         found.append(item)
+    for item in sorted(base.glob(UPDATE_BACKUP_PREFIX + "*")):
+        found.append(item)
     icon_dir = base / "_internal" / "icons"
     if icon_dir.is_dir():
         for item in sorted(icon_dir.iterdir()):
@@ -337,6 +340,9 @@ def purity_problems(directory):
     backups = sorted(item.name for item in base.glob(BACKUP_PREFIX + "*"))
     if backups:
         problems.append("包含数据备份目录：" + "、".join(backups))
+    update_backups = sorted(item.name for item in base.glob(UPDATE_BACKUP_PREFIX + "*"))
+    if update_backups:
+        problems.append("包含旧程序更新备份：" + "、".join(update_backups))
     icon_dir = base / "_internal" / "icons"
     captured = (sorted(item.name for item in icon_dir.glob("captured_*") if item.is_file())
                 if icon_dir.is_dir() else [])
@@ -359,6 +365,7 @@ def make_zip(target_dir, log_callback=log):
         ignore = shutil.ignore_patterns(
             *USER_DATA_NAMES,
             BACKUP_PREFIX + "*",
+            UPDATE_BACKUP_PREFIX + "*",
             *(prefix + "*" for prefix in USER_ICON_PREFIXES),
         )
         shutil.copytree(target, staging, ignore=ignore)

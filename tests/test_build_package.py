@@ -279,6 +279,17 @@ class PurityTests(unittest.TestCase):
         self.assertEqual(after, before, "目录不能算成模板 PNG")
         self.assertEqual(after_svg, before_svg)
 
+    def test_zip_excludes_auto_update_backup(self):
+        backup = self.target / (bp.UPDATE_BACKUP_PREFIX + "20260101_000000")
+        backup.mkdir()
+        write(backup / bp.EXE_NAME, "old-exe")
+        archive = bp.make_zip(self.target)
+        import zipfile
+        with zipfile.ZipFile(archive) as package:
+            names = package.namelist()
+        self.assertFalse([n for n in names if bp.UPDATE_BACKUP_PREFIX in n])
+        archive.unlink()
+
     def test_spec_maps_icon_files_to_the_icons_directory(self):
         spec = open("VisionFlow_Automator.spec", encoding="utf-8").read()
         self.assertIn("entries.append((path, \"icons\"))", spec,

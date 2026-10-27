@@ -26,6 +26,7 @@ import json
 import os
 import re
 import urllib.error
+import urllib.parse
 import urllib.request
 
 import config
@@ -39,13 +40,18 @@ class UpdateInfo:
     """一次检查的结果。"""
 
     def __init__(self, has_update=False, remote_version="", current_version="",
-                 download_url="", release_name="", error=None):
+                 download_url="", release_name="", error=None,
+                 asset_url="", asset_name="", asset_size=0):
         self.has_update = has_update
         self.remote_version = remote_version
         self.current_version = current_version
         self.download_url = download_url
         self.release_name = release_name
         self.error = error
+        # 自动更新用：Release 里上传的打包 zip（没有就退化为打开发布页）
+        self.asset_url = asset_url
+        self.asset_name = asset_name
+        self.asset_size = int(asset_size or 0)
 
     def __repr__(self):
         return (f"UpdateInfo(has_update={self.has_update}, remote={self.remote_version!r}, "
@@ -194,6 +200,50 @@ def _api_url(repo, suffix):
     return _API_ROOT.format(repo=repo) + suffix
 
 
+def pick_update_asset(assets):
+    """从 GitHub Release 的 assets 里挑自动更新用的 zip。
+
+    规则：只看 `.zip`；优先名字带 VisionFlow 的；没有就取第一个 zip。
+    找不到返回 None。
+    """
+    zips = [item for item in (assets or [])
+            if isinstance(item, dict)
+            and str(item.get("name") or "").lower().endswith(".zip")
+            and str(item.get("browser_download_url") or "")]
+    if not zips:
+        return None
+    named = [item for item in zips if "visionflow" in str(item.get("name") or "").lower()]
+    chosen = (named or zips)[0]
+    return {
+        "url": str(chosen.get("browser_download_url") or ""),
+        "name": str(chosen.get("name") or "update.zip"),
+        "size": int(chosen.get("size") or 0),
+    }
+
+
+def find_release_asset(tag, repo=None, timeout=None, proxy=None, opener=None):
+    """查询某个 tag 的 Release 资产，返回 {url,name,size} 或 None（失败不抛异常）。"""
+    repo = repo or getattr(config, "UPDATE_REPO", "")
+    timeout = timeout if timeout is not None else getattr(config, "UPDATE_CHECK_TIMEOUT", 4.0)
+    proxy = resolve_proxy() if proxy is None else proxy
+    opener = opener or _http_get
+    tag_text = str(tag or "").strip()
+    candidates = []
+    if tag_text:
+        candidates.append(_api_url(repo, "/releases/tags/" + urllib.parse.quote(tag_text)))
+    candidates.append(_api_url(repo, "/releases/latest"))
+    for url in candidates:
+        try:
+            _final, body = _split_response(opener(url, timeout, proxy))
+            payload = json.loads(body.decode("utf-8"))
+            asset = pick_update_asset(payload.get("assets") if isinstance(payload, dict) else None)
+            if asset:
+                return asset
+        except Exception:
+            continue
+    return None
+
+
 def fetch_latest_release(repo=None, timeout=None, proxy=None, opener=None):
     """查询最新版本，返回 (版本号, 下载/发布页 URL, 名称, 错误)。
 
@@ -250,6 +300,63 @@ def fetch_latest_release(repo=None, timeout=None, proxy=None, opener=None):
             f"未能获取版本信息（{redirect_error} / {api_error} / {_http_error_message(exc)}）")
 
 
+_DOWNLOAD_CHUNK = 1 << 20
+_DOWNLOAD_TIMEOUT = 60
+
+
+def download_asset(url, destination, proxy=None, timeout=_DOWNLOAD_TIMEOUT,
+                   progress=None, max_bytes=None):
+    """把 Release 资产下载到 destination（先写 .part，成功后原子替换）。
+
+    progress(downloaded, total) 用于界面显示；total 未知时为 0。
+    失败抛 RuntimeError（中文原因），并清理临时文件。
+    """
+    import os
+    target = os.path.abspath(destination)
+    part = target + ".part"
+    proxy = resolve_proxy() if proxy is None else proxy
+    request = urllib.request.Request(url, headers={
+        "User-Agent": "VisionFlow-Automator-UpdateCheck",
+        "Accept": "application/octet-stream",
+    })
+    if proxy:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({
+            "http": proxy, "https": proxy}))
+    else:
+        opener = urllib.request.build_opener()
+    downloaded = 0
+    try:
+        with opener.open(request, timeout=timeout) as handle:
+            total = int(handle.headers.get("Content-Length") or 0)
+            if max_bytes and total and total > max_bytes:
+                raise RuntimeError(f"更新包过大（{total / 1024 / 1024:.0f} MB），已取消")
+            with open(part, "wb") as output:
+                while True:
+                    block = handle.read(_DOWNLOAD_CHUNK)
+                    if not block:
+                        break
+                    output.write(block)
+                    downloaded += len(block)
+                    if max_bytes and downloaded > max_bytes:
+                        raise RuntimeError("更新包超过大小限制，已取消")
+                    if progress:
+                        progress(downloaded, total)
+        if total and downloaded != total:
+            raise RuntimeError(f"下载不完整（{downloaded}/{total} 字节）")
+        os.replace(part, target)
+        return target
+    except RuntimeError:
+        raise
+    except Exception as exc:
+        raise RuntimeError(f"下载失败：{exc}") from exc
+    finally:
+        try:
+            if os.path.exists(part):
+                os.remove(part)
+        except OSError:
+            pass
+
+
 def check_for_update(current=None, repo=None, timeout=None, proxy=None, opener=None):
     """检查是否有新版本，返回 UpdateInfo（永不抛异常）。"""
     current = current or getattr(config, "APP_VERSION", "")
@@ -257,4 +364,12 @@ def check_for_update(current=None, repo=None, timeout=None, proxy=None, opener=N
         repo=repo, timeout=timeout, proxy=proxy, opener=opener)
     if error:
         return UpdateInfo(False, "", current, "", "", error)
-    return UpdateInfo(is_newer(remote, current), remote, current, url, name, None)
+    info = UpdateInfo(is_newer(remote, current), remote, current, url, name, None)
+    if info.has_update:
+        asset = find_release_asset(remote, repo=repo, timeout=timeout,
+                                   proxy=proxy, opener=opener)
+        if asset:
+            info.asset_url = asset["url"]
+            info.asset_name = asset["name"]
+            info.asset_size = asset["size"]
+    return info

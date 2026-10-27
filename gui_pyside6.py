@@ -2,7 +2,9 @@
 import os
 import time
 import sys
+import tempfile
 import threading
+import time
 import uuid
 from copy import deepcopy
 
@@ -83,7 +85,9 @@ from task_widgets import TaskItemDelegate, TaskListWidget, TaskWorker
 from preset_manager import PresetManagerMixin
 from qt_translations import install_qt_translations
 from recognition_debug_window import RecognitionDebugWindow
-from update_ui import UpdateCheckRunner, notify_update, report_check_failure
+from update_ui import (UpdateCheckRunner, UpdateDownloadRunner, ask_update_choice,
+                       build_update_helper, can_auto_update, extract_update_zip,
+                       launch_update_helper, notify_update, report_check_failure)
 import snippets as snippet_store
 import settings_store
 from execution_control import ExecutionControlMixin
@@ -3029,9 +3033,102 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         if result.has_update:
             self.append_log(f"发现新版本 {result.remote_version}（当前 {result.current_version}）："
                             f"{result.download_url}")
-            notify_update(self, result)
+            self._offer_update(result)
         else:
             self.append_log(f"已是最新版本（{result.current_version}）。")
+
+    def _offer_update(self, result):
+        """有新版本：打包版且 Release 带 zip 时提供「一键自动更新」，否则沿用打开发布页。"""
+        if not can_auto_update(result):
+            notify_update(self, result)
+            return
+        choice = ask_update_choice(self, result)
+        if choice == "auto":
+            self._start_auto_update(result)
+        elif choice == "page":
+            notify_update(self, result)
+
+    def _start_auto_update(self, result):
+        if self.worker_thread and self.worker_thread.isRunning():
+            QMessageBox.warning(self, "正在执行", "请先停止当前脚本，再安装更新。")
+            return
+        runner = getattr(self, "_update_download_runner", None)
+        if runner is not None:
+            self.append_log("更新包正在下载，请稍候…")
+            return
+        destination = os.path.join(
+            tempfile.gettempdir(),
+            "vf_update_" + time.strftime("%Y%m%d_%H%M%S") + ".zip")
+        self._update_download_path = destination
+        self._update_info = result
+        self._update_download_logged = -10
+        runner = UpdateDownloadRunner(self)
+        runner.progress.connect(self._on_update_download_progress)
+        runner.finished.connect(self._on_update_download_finished)
+        self._update_download_runner = runner
+        self.append_log(f"开始下载更新包：{result.asset_name or result.asset_url}")
+        self._set_status("running", "下载更新")
+        runner.start(result.asset_url, destination)
+
+    def _on_update_download_progress(self, downloaded, total):
+        if total:
+            percent = int(downloaded * 100 / total)
+            if percent < self._update_download_logged + 10 and percent < 100:
+                return
+            self._update_download_logged = percent
+            self.append_log(f"  更新包下载 {percent}%（{downloaded / 1024 / 1024:.1f}/"
+                            f"{total / 1024 / 1024:.1f} MB）")
+        else:
+            if downloaded // (5 * 1024 * 1024) > self._update_download_logged:
+                self._update_download_logged = downloaded // (5 * 1024 * 1024)
+                self.append_log(f"  更新包已下载 {downloaded / 1024 / 1024:.1f} MB")
+
+    def _on_update_download_finished(self, outcome):
+        self._update_download_runner = None
+        self._set_status("idle")
+        if outcome.get("error"):
+            self.append_log(f"更新包下载失败：{outcome['error']}")
+            QMessageBox.warning(self, "下载失败",
+                                f"更新包下载失败：\n{outcome['error']}\n\n也可以打开发布页手动下载。")
+            return
+        zip_path = outcome.get("path")
+        self.append_log(f"更新包下载完成：{zip_path}")
+        try:
+            stage_root = tempfile.mkdtemp(prefix="vf_update_stage_")
+            update_root = extract_update_zip(zip_path, stage_root)
+        except RuntimeError as exc:
+            self.append_log(f"更新包校验失败：{exc}")
+            QMessageBox.warning(self, "更新包无效", str(exc))
+            return
+        version = getattr(self._update_info, "remote_version", "")
+        answer = QMessageBox.question(
+            self, "更新已下载",
+            f"新版本 {version} 已下载并校验。\n\n"
+            "现在重启并安装吗？（程序会退出，替换完成后自动重新打开；"
+            "用户步骤/预设等数据会保留）",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes)
+        if answer != QMessageBox.StandardButton.Yes:
+            self.append_log(f"已取消安装；更新包保留在 {zip_path}")
+            return
+        self._install_update(update_root)
+
+    def _install_update(self, update_root):
+        install_dir = paths.app_root()
+        try:
+            helper = build_update_helper(install_dir, update_root, os.getpid())
+        except OSError as exc:
+            QMessageBox.warning(self, "更新失败", f"无法创建更新脚本：{exc}")
+            return
+        self.append_log("即将退出并安装更新，完成后会自动重新打开程序…")
+        QApplication.processEvents()
+        try:
+            launch_update_helper(helper)
+        except OSError as exc:
+            QMessageBox.warning(self, "更新失败", f"无法启动更新脚本：{exc}")
+            return
+        self.close()
+        QApplication.instance().quit()
 
     @Slot()
     def open_blueprint(self):

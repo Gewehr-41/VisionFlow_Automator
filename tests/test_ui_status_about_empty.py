@@ -69,10 +69,17 @@ class StatusBarTests(UiStateBase):
         self.assertLess(combo_y, self.window.status_bar_widget.y(), "目标窗口应在状态栏上方")
         self.assertEqual(self.window.refresh_window_button.text(), "刷新窗口")
 
-    def test_status_capsule_is_stretched_on_the_row(self):
-        """运行状态一栏拉长占满整排。"""
-        self.assertGreaterEqual(self.window.status_label.minimumWidth(), 220)
-        self.assertGreater(self.window.status_label.width(), 300, "状态胶囊应占据较宽的一栏")
+    def test_status_capsule_is_compact_and_progress_fills_the_row(self):
+        """状态胶囊按最长文案定宽（不拉长），剩余空间给进度条。"""
+        from PySide6.QtWidgets import QSizePolicy
+        self.assertEqual(self.window.status_label.sizePolicy().horizontalPolicy(), QSizePolicy.Policy.Fixed)
+        self.assertGreater(self.window.status_label.width(), 120)
+        self.assertLessEqual(self.window.status_label.width(), 360, "胶囊不应再吃满整行")
+        self.assertEqual(self.window.progress_bar.sizePolicy().horizontalPolicy(),
+                         QSizePolicy.Policy.Expanding)
+        self.assertGreater(self.window.progress_bar.width(), self.window.status_label.width(),
+                           "进度条应占满剩余空间")
+        self.assertGreaterEqual(self.window.progress_bar.height(), 18, "进度条不能细成一根线")
 
     def test_status_capsule_defaults_to_idle(self):
         self.assertEqual(self.window.status_label.property("statusKind"), "idle")
@@ -136,13 +143,22 @@ class RunProgressTests(UiStateBase):
         self.assertEqual(self.window.status_label.property("statusKind"), "error")
         self.assertIn("failed" if False else "失败", self.window.status_label.text())
 
-    def test_completion_hides_progress(self):
+    def test_completion_keeps_final_progress(self):
         self.window._begin_run_progress()
         self.window.on_execution_started(g.TASKS[0])
+        self.window.on_execution_result(g.TASKS[0], "success")
         with mock.patch.object(g.QMessageBox, "information", return_value=None):
             self.window.on_execution_completed("finished")
-        self.assertFalse(self.window.progress_bar.isVisible(), "完成后进度条应收起")
+        self.assertTrue(self.window.progress_bar.isVisible(), "进度条常驻状态栏，完成后保留最终值")
+        self.assertEqual(self.window.progress_bar.value(), 1)
         self.assertEqual(self.window.status_label.property("statusKind"), "done")
+
+    def test_idle_progress_shows_zero_of_enabled_steps(self):
+        self.window.refresh_task_list()
+        _APP.processEvents()
+        self.assertTrue(self.window.progress_bar.isVisible())
+        self.assertEqual(self.window.progress_bar.value(), 0)
+        self.assertGreaterEqual(self.window.progress_bar.maximum(), 1)
 
 
 class EmptyStateTests(UiStateBase):

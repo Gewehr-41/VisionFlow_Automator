@@ -1360,12 +1360,17 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         for index, (label, handler) in enumerate(tool_specs):
             button = QPushButton(label)
             button.clicked.connect(handler)
-            # 恢复原布局：4 列一行（前 4 个一行，第 5 个「检查更新」落到第二行）
-            button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-            tool_grid.addWidget(button, index // 4, index % 4)
+            # 4+1 布局，但按钮横向**等比拉伸**：面板变宽时按钮跟着变宽，不再大小不一。
+            # 第 5 个「检查更新」横跨整行，避免第二行只占 1/4 显得空。
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            if index < 4:
+                tool_grid.addWidget(button, 0, index)
+            else:
+                tool_grid.addWidget(button, 1, 0, 1, 4)
             self.tool_buttons.append(button)
             self.tool_actions[label] = button
-        tool_grid.setColumnStretch(4, 1)
+        for column in range(4):
+            tool_grid.setColumnStretch(column, 1)
         task_layout.addLayout(tool_grid)
 
         # 任务列表右键菜单：常用编辑动作不必回按钮区找（列表此前完全没有右键菜单）
@@ -1451,13 +1456,20 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         status_layout.setContentsMargins(6, 2, 6, 2)
         status_layout.setSpacing(8)
 
-        # 运行状态一栏：去掉目标窗口后整行拉长（占满一整排）
+        # 运行状态胶囊：宽度只按"会显示的最长文案"固定，不再吃满整行；
+        # 剩余空间留给执行步骤进度条。
         self.status_label = QLabel("● 待机")
         self.status_label.setObjectName("statusLabel")
         self.status_label.setProperty("statusKind", "idle")
-        self.status_label.setMinimumWidth(220)
-        self.status_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        status_layout.addWidget(self.status_label, 2)
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        longest = max(
+            self.status_label.fontMetrics().horizontalAdvance(text)
+            for text in ("● 待机", "▶ 运行中（第 12/12 步）", "⚠ 异常（第 12/12 步失败）",
+                         "⏸ 已暂停（单步执行）", "✔ 已完成", "■ 已停止（正在停止）")
+        )
+        self.status_label.setFixedWidth(longest + 28)
+        status_layout.addWidget(self.status_label)
         self.preset_info_label = QLabel("预设: custom")
         self.preset_info_label.setObjectName("statusInfo")
         status_layout.addWidget(self.preset_info_label)
@@ -1467,12 +1479,12 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setObjectName("runProgress")
-        self.progress_bar.setMaximumWidth(190)
+        self.progress_bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.progress_bar.setMinimumWidth(180)
         self.progress_bar.setTextVisible(True)
-        self.progress_bar.setVisible(False)
-        status_layout.addWidget(self.progress_bar)
-
-        status_layout.addStretch(1)
+        self.progress_bar.setFormat("%v / %m 步")
+        self.progress_bar.setVisible(True)
+        status_layout.addWidget(self.progress_bar, 1)
         self.help_button = QPushButton("使用说明")
         self.help_button.setObjectName("secondaryButton")
         self.help_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
@@ -1516,7 +1528,9 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             "#statusLabel[statusKind=\"stopped\"] { color: #475569; background: #e2e8f0; }"
             "#statusInfo { color: #64748b; }"
             "#emptyState { color: #94a3b8; font-size: 13px; padding: 16px; }"
-            "#runProgress { border: 1px solid #cbd5e1; border-radius: 4px; background: #ffffff; text-align: center; }"
+            "#runProgress { min-height: 18px; max-height: 20px; border: 1px solid #cbd5e1; border-radius: 5px;"
+            " background: #ffffff; color: #334155; text-align: center; font-weight: bold; }"
+            "#runProgress::chunk { background: #0284c7; border-radius: 4px; }"
             "QLineEdit, QPlainTextEdit, QComboBox, QTreeWidget { border: 1px solid #cbd5e1; border-radius: 4px; background: #ffffff; padding: 4px; }"
             "QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QTreeWidget:focus { border-color: #0284c7; }"
             "QTreeWidget { padding: 6px; }"
@@ -3035,6 +3049,19 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             self.task_stack.setCurrentIndex(0 if TASKS else 1)
         if hasattr(self, "_apply_execution_marks"):
             self._apply_execution_marks()
+        self._refresh_idle_progress()
+
+    def _refresh_idle_progress(self):
+        """空闲时把进度条显示为 0 / 启用步数；运行中不要覆盖实际进度。"""
+        if not hasattr(self, "progress_bar"):
+            return
+        running = bool(getattr(self, "worker_thread", None) and self.worker_thread.isRunning())
+        if running:
+            return
+        total = max(1, len([task for task in TASKS if task.get("enabled", True)]))
+        self.progress_bar.setRange(0, total)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setFormat("%v / %m 步")
 
     _EXEC_STATE_STYLE = {
         # id 状态 -> (背景色, 前景色, 是否加粗)
@@ -3153,8 +3180,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.window_combo.setEnabled(not running)
         if hasattr(self, "refresh_window_button"):
             self.refresh_window_button.setEnabled(not running)
-        if not running and hasattr(self, "progress_bar"):
-            self.progress_bar.setVisible(False)
+        # 进度条常驻状态栏（空闲显示 0 / N，运行中/结束后显示实际进度），不再隐藏
         self.start_button.setEnabled(not running)
         self.start_current_button.setEnabled(not running)
         self.stop_button.setEnabled(running)
@@ -3211,7 +3237,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             return
         self.completion_notified = True
         if hasattr(self, "progress_bar"):
-            self.progress_bar.setVisible(False)
+            self.progress_bar.setFormat("%v / %m 步")
         if state == "failed":
             self._set_status("error", "脚本异常")
             QMessageBox.warning(self, "脚本异常", "脚本执行过程中发生错误，请查看日志。")

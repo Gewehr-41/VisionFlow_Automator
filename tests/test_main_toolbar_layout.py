@@ -99,6 +99,9 @@ class MainToolbarLayoutTests(unittest.TestCase):
         self.assertGreater(second_row_y, first_row_y, "工具按钮应排成两行")
         self.assertTrue(all(row[0] == first_row_y for row in rows[:4]), "第一行 4 个")
         self.assertEqual(rows[4][0], second_row_y, "「检查更新」单独在第二行")
+        widths = [button.width() for button in buttons[:4]]
+        self.assertLessEqual(max(widths) - min(widths), 2, "同一行按钮应等宽拉伸")
+        self.assertGreater(buttons[4].width(), buttons[0].width() * 2, "「检查更新」应横跨整行")
 
     def test_tool_buttons_unchanged(self):
         self.assertEqual([button.text() for button in self.window.tool_buttons],

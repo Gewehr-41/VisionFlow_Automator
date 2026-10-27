@@ -77,6 +77,74 @@ class BlueprintGroupMixin:
             indices.extend(self._group_node_indices(child))
         return indices
 
+    def _group_box_rect(self, group_id):
+        """组在画布上的包围盒（**按折叠后的实际呈现**计算）。
+
+        关键点：折叠的子组只占一张 COLLAPSED_WIDTH×COLLAPSED_HEIGHT 的卡片，
+        不能再用它里面隐藏节点的最大/最小坐标撑开父组——否则父组/根组会空出一大片。
+        递归规则：折叠组 → 卡片矩形；展开组 → 自己直属节点的范围 ∪ 各子组的包围盒。
+        """
+        group_id = str(group_id)
+        if group_id == "group_default":
+            return None
+        children = self._group_children()
+        group_positions = self.layout_data.get("group_positions", {})
+        if not isinstance(group_positions, dict):
+            group_positions = {}
+        focus = getattr(self, "focus_group", None)
+        collapsed = self.collapsed_groups
+        cache = {}
+
+        def empty_group_rect(gid):
+            pos = group_positions.get(str(gid))
+            if isinstance(pos, (list, tuple)) and len(pos) == 2:
+                x, y = float(pos[0]), float(pos[1])
+            else:
+                x, y = 80.0, 80.0 + 40.0 * len(group_positions)
+            return (x, y, x + 220, y + 18)
+
+        def card_rect(gid):
+            """折叠组的卡片矩形：锚在组内节点的左上角，固定卡片尺寸。"""
+            indices = self._group_all_node_indices(gid)
+            nodes = [self._node_items[i] for i in indices if i in self._node_items]
+            if not nodes:
+                return empty_group_rect(gid)
+            left = min(node.x() for node in nodes) - 18
+            top = min(node.y() for node in nodes) - 36
+            return (left, top,
+                    left + BlueprintGroupItem.COLLAPSED_WIDTH,
+                    top + BlueprintGroupItem.COLLAPSED_HEIGHT)
+
+        def rect_for(gid):
+            gid = str(gid)
+            if gid in cache:
+                return cache[gid]
+            is_focus = bool(focus) and gid == str(focus)
+            if gid in collapsed and not is_focus:
+                rect = card_rect(gid)
+            else:
+                boxes = []
+                for index in self._group_node_indices(gid):
+                    node = self._node_items.get(index)
+                    if node is None:
+                        continue
+                    boxes.append((node.x() - 18, node.y() - 36,
+                                  node.x() + node.rect().width() + 18,
+                                  node.y() + node.rect().height() + 18))
+                for child in children.get(gid, []):
+                    child_rect = rect_for(child)
+                    if child_rect is not None:
+                        boxes.append(child_rect)
+                if not boxes:
+                    rect = empty_group_rect(gid)
+                else:
+                    rect = (min(box[0] for box in boxes), min(box[1] for box in boxes),
+                            max(box[2] for box in boxes), max(box[3] for box in boxes))
+            cache[gid] = rect
+            return rect
+
+        return rect_for(group_id)
+
     def _render_groups(self, node_items):
         children = self._group_children()
         names = self._group_names()
@@ -89,24 +157,9 @@ class BlueprintGroupMixin:
         self._group_items = {}
 
         def bounds_for(group_id):
-            indices = self._group_all_node_indices(group_id)
-            if indices:
-                left = min(node_items[i].x() for i in indices) - 18
-                top = min(node_items[i].y() for i in indices) - 36
-                right = max(node_items[i].x() + node_items[i].rect().width() for i in indices) + 18
-                bottom = max(node_items[i].y() + node_items[i].rect().height() for i in indices) + 18
-                if str(group_id) in self.collapsed_groups:
-                    return (left, top,
-                            left + BlueprintGroupItem.COLLAPSED_WIDTH,
-                            top + BlueprintGroupItem.COLLAPSED_HEIGHT)
-                return left, top, right, bottom
-            # 空组：使用存储位置显示组头
-            pos = group_positions.get(str(group_id))
-            if isinstance(pos, (list, tuple)) and len(pos) == 2:
-                x, y = float(pos[0]), float(pos[1])
-            else:
-                x, y = 80.0, 80.0 + 40.0 * len(group_positions)
-            return x, y, x + 220, y + 18
+            # 统一由 _group_box_rect 计算：折叠的子组只占卡片大小，
+            # 父组不会再被隐藏节点的最大坐标撑开到"空出一大片"
+            return self._group_box_rect(group_id)
 
         def has_collapsed_ancestor(group_id):
             parents = self._group_parents()
@@ -267,18 +320,11 @@ class BlueprintGroupMixin:
 
     def _sync_group_bounds(self):
         for group_id, box in self._group_items.items():
-            indices = self._group_all_node_indices(group_id)
-            nodes = [self._node_items[i] for i in indices if i in self._node_items]
-            if not nodes:
+            # 与 _render_groups 同一套算法：折叠的子组按卡片大小计入父组范围
+            bounds = self._group_box_rect(group_id)
+            if bounds is None:
                 continue
-            left = min(node.x() for node in nodes) - 18
-            top = min(node.y() for node in nodes) - 36
-            if str(group_id) in self.collapsed_groups:
-                box.setRect(left, top, BlueprintGroupItem.COLLAPSED_WIDTH,
-                            BlueprintGroupItem.COLLAPSED_HEIGHT)
-                continue
-            right = max(node.x() + node.rect().width() for node in nodes) + 18
-            bottom = max(node.y() + node.rect().height() for node in nodes) + 18
+            left, top, right, bottom = bounds
             box.setRect(left, top, right - left, bottom - top)
 
     def toggle_group(self, group_id):

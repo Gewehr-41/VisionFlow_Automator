@@ -638,6 +638,9 @@ class BlueprintView(QGraphicsView):
         self._cut_suppress_until = 0.0
         # 本次框选要选"连线"还是"步骤/分组"：由按下时是否按着 Ctrl 决定
         self._band_prefers_wires = False
+        # 框选起点（场景坐标）与是否从空白处起框：用于框选结束后按组框真实范围补选
+        self._band_start_scene = None
+        self._band_from_empty = False
 
     # ---------- 命中半径（屏幕像素 → 场景坐标） ----------
 
@@ -711,6 +714,10 @@ class BlueprintView(QGraphicsView):
         # 左键按在空白处会开始框选：这次是框"连线"还是框"步骤/分组"，
         # 由按下时是否按着 Ctrl 决定（按在节点上则不改变框选模式）。
         self._band_prefers_wires = (node is None) and bool(event.modifiers() & Qt.ControlModifier)
+        # 展开态组框的 shape 只有顶部标题栏（内容区透明，避免挡节点），Qt 橡皮筋按 shape 判定，
+        # 所以"只框住组体/在组内空白拖框"时组选不中；记录起点，释放时按组框真实范围补选。
+        self._band_from_empty = (node is None) and (item is None)
+        self._band_start_scene = scene_position if self._band_from_empty else None
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
@@ -1046,7 +1053,34 @@ class BlueprintView(QGraphicsView):
             event.accept()
             return
         super().mouseReleaseEvent(event)
+        self._apply_group_band_selection(event)
         self.interaction_finished.emit()
+
+    _BAND_MIN_DRAG = 3.0
+
+    def _apply_group_band_selection(self, event):
+        """框选结束后，把与选择框相交的组框也选中。
+
+        为什么需要：展开态组框的 shape() 只有顶部标题栏（内容区透明、不挡节点），
+        Qt 默认橡皮筋只按 shape 判定 -> 框住组体、或在组内空白处拖框时组永远选不中。
+        这里在默认框选（已选中节点/连线）之后按组框的 sceneBoundingRect 补选；
+        Ctrl 框选（只选连线）时不做，避免破坏原有模式。
+        """
+        start = getattr(self, "_band_start_scene", None)
+        from_empty = getattr(self, "_band_from_empty", False)
+        self._band_start_scene = None
+        self._band_from_empty = False
+        if start is None or not from_empty or self._band_prefers_wires:
+            return
+        end = self.mapToScene(event.position().toPoint())
+        band = QRectF(start, end).normalized()
+        if band.width() < self._BAND_MIN_DRAG and band.height() < self._BAND_MIN_DRAG:
+            return
+        for item in self.scene().items():
+            if not isinstance(item, BlueprintGroupItem) or not item.isVisible():
+                continue
+            if item.sceneBoundingRect().intersects(band):
+                item.setSelected(True)
 
     def mouseDoubleClickEvent(self, event):
         scene_position = self.mapToScene(event.position().toPoint())

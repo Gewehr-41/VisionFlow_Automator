@@ -178,6 +178,64 @@ class GroupOperationTests(MainInteractionBase):
                          "选中组内步骤后新增的步骤应跟着进同一个组")
 
 
+class NoDefaultGroupTests(MainInteractionBase):
+    """无分组的步骤直接放根层（不再自动造一个「默认分组」容器）。"""
+
+    def setUp(self):
+        super().setUp()
+        # 清空分组元数据：这一组用例验证"没有任何组"时的显示
+        self.window.mode_group_metadata[self.mode] = {
+            "names": {}, "colors": {}, "parents": {}, "children": {}, "order": [],
+        }
+        g.TASKS[:] = []
+        self.window.refresh_task_list()
+        _APP.processEvents()
+
+    def test_first_step_does_not_create_default_group(self):
+        with mock.patch.object(g.QInputDialog, "getItem", staticmethod(lambda *a, **k: ("normal", True))):
+            self.window.add_task()
+        _APP.processEvents()
+        self.assertEqual(self.window._group_items(), {}, "空列表新增步骤不应自动创建分组")
+        self.assertEqual(self.window.task_list.topLevelItemCount(), 1)
+        top = self.window.task_list.topLevelItem(0)
+        self.assertNotEqual(top.data(0, Qt.UserRole), "group", "步骤应直接放在根层")
+
+    def test_ungrouped_tasks_render_at_top_level(self):
+        g.TASKS[:] = [_task("A"), _task("B")]
+        self.window.refresh_task_list()
+        _APP.processEvents()
+        self.assertEqual(self.window._group_items(), {})
+        tops = [self.window.task_list.topLevelItem(i).text(0)
+                for i in range(self.window.task_list.topLevelItemCount())]
+        self.assertEqual(len(tops), 2, f"两个无组步骤都应是顶层项: {tops}")
+
+    def test_only_grouped_tasks_go_inside_groups(self):
+        self.window.mode_group_metadata[self.mode] = {
+            "names": {GROUP_ID: "父组"}, "colors": {GROUP_ID: "#111111"},
+            "parents": {GROUP_ID: None}, "children": {GROUP_ID: []}, "order": [GROUP_ID],
+        }
+        g.TASKS[:] = [_task("A", GROUP_ID), _task("B")]
+        self.window.refresh_task_list()
+        _APP.processEvents()
+        self.assertIn(GROUP_ID, self.window._group_items())
+        group_item = self.window._group_items()[GROUP_ID]
+        self.assertEqual(group_item.childCount(), 1, "组里只应有带组的步骤")
+        top_texts = [self.window.task_list.topLevelItem(i).text(0)
+                     for i in range(self.window.task_list.topLevelItemCount())]
+        self.assertTrue(any("分组: 父组" in text for text in top_texts))
+        self.assertFalse(any("默认分组" in text for text in top_texts), "不该出现「默认分组」")
+
+    def test_dragging_grouped_step_onto_root_step_clears_group(self):
+        g.TASKS[:] = [_task("A", GROUP_ID), _task("B")]
+        self.window.refresh_task_list()
+        _APP.processEvents()
+        self.window.reorder_task_from_tree(0, 1, True, None)   # 组步骤拖到根层步骤后面
+        _APP.processEvents()
+        moved = next(task for task in g.TASKS if task["id"] == "A")
+        self.assertNotIn("group_id", moved, "拖到根层步骤上应移出分组")
+        self.assertEqual(g.TASKS[-1]["id"], "A")
+
+
 class OrderSyncTests(MainInteractionBase):
     """树顺序 = TASKS 执行顺序（本轮修复：组内步骤可排在子组上方、组排序影响执行顺序）。"""
 

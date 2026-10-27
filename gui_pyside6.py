@@ -1703,13 +1703,18 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             target_index -= 1
         insert_index = target_index + (1 if insert_after else 0)
         insert_index = max(0, min(insert_index, len(TASKS)))
-        # 拖到别的组里的步骤上：一起把归属改过去（此前只改顺序，看起来"拖了没反应"）
-        if target_group is not None:
-            if str(task.get("group_id") or "group_default") != str(target_group):
-                task["group_id"] = str(target_group)
+        # 拖到别的地方的步骤上：归属跟着目标走（目标在根层则移出分组）
+        current_group = str(task.get("group_id") or "")
+        target_key = str(target_group) if target_group else ""
+        if current_group != target_key:
+            if target_key:
+                task["group_id"] = target_key
                 mode = self.mode_combo.currentText() or "custom"
                 metadata = self.mode_group_metadata.get(mode, {})
-                task["group_name"] = str((metadata.get("names") or {}).get(str(target_group), target_group))
+                task["group_name"] = str((metadata.get("names") or {}).get(target_key, target_key))
+            else:
+                task.pop("group_id", None)
+                task.pop("group_name", None)
         TASKS.insert(insert_index, task)
         # 步骤下标已改变，必须同步重编号跳转目标，否则迂回/超时跳转会指向错误的步骤。
         remap_jump_targets(TASKS, _jump_index_map([old_index_by_id[str(t.get("id"))] for t in TASKS]))
@@ -2293,7 +2298,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         metadata["order"] = [item for item in order if str(item) != str(group_id)]
         # 步骤迁移：目标组为上一级；没有上一级则回隐式根层「默认分组」
         target_id = parent_id or "group_default"
-        target_name = str(names.get(target_id) or ("默认分组" if target_id == "group_default" else target_id))
+        target_name = str(names.get(target_id) or ("根层" if target_id == "group_default" else target_id))
         moved = 0
         for task in TASKS:
             if str(task.get("group_id") or "group_default") != str(group_id):

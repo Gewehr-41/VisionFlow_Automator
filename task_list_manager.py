@@ -171,16 +171,24 @@ class TaskListMixin:
         # 导致子组永远压在本组步骤上方，组内步骤怎么拖都上不去）。
         for index, task in enumerate(TASKS):
             task.setdefault("id", str(uuid.uuid4()))
-            group_id = str(task.get("group_id") or "group_default")
-            ensure_group(group_id).addChild(make_task_item(index, task))
+            group_id = task.get("group_id")
+            item = make_task_item(index, task)
+            if group_id and str(group_id) != "group_default":
+                ensure_group(str(group_id)).addChild(item)
+            else:
+                # 没有分组的步骤直接放在根层：不再为了容纳它自动造一个「默认分组」
+                self.task_list.addTopLevelItem(item)
 
         # 没有步骤的组（空组 / 只有子组的组）按元数据顺序补在末尾，保证它们也能显示
         for group_id in (group_metadata.get("order") or []):
-            ensure_group(str(group_id))
+            if str(group_id) != "group_default":
+                ensure_group(str(group_id))
         for group_id in group_names:
-            ensure_group(str(group_id))
+            if str(group_id) != "group_default":
+                ensure_group(str(group_id))
         for group_id in group_children:
-            ensure_group(str(group_id))
+            if str(group_id) != "group_default":
+                ensure_group(str(group_id))
 
         # 依据子步骤启用情况回填组勾选状态（自底向上，先算子组再算父组）
 
@@ -204,7 +212,9 @@ class TaskListMixin:
                 group.setCheckState(0, Qt.CheckState.Unchecked)
 
         for group_index in range(self.task_list.topLevelItemCount()):
-            refresh_group_check_state(self.task_list.topLevelItem(group_index))
+            top_item = self.task_list.topLevelItem(group_index)
+            if top_item is not None and top_item.data(0, Qt.UserRole) == "group":
+                refresh_group_check_state(top_item)
 
         # 恢复各组折叠状态；未记录过的组默认展开
         for group_id, group in groups.items():

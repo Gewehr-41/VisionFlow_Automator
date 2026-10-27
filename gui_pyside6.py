@@ -1656,7 +1656,9 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             self.current_group_id = None
             self.group_form.setVisible(False)
             task = TASKS[index]
-            self.selected_label.setText(f"类型: {task.get('type', 'normal')} | ID: {task.get('id', '')}")
+            # 显示用 ID 统一去掉分段横线（历史步骤是 uuid4 带横线、旧数据无横线，界面上统一）
+            display_id = str(task.get("id", "")).replace("-", "")
+            self.selected_label.setText(f"类型: {task.get('type', 'normal')} | ID: {display_id}")
             is_click_until = task.get("type") == "click_until_gone"
             is_recognition = task.get("type", "normal") in ("normal", "advanced")
             self._update_editor_visibility(task)

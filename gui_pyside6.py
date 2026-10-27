@@ -1167,6 +1167,10 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.mode_fallback_steps = deepcopy(FALLBACK_STEPS)
         # 步骤片段（F13）：全局共享，存在预设文件的 __snippets__ 里
         self.snippets = deepcopy(SNIPPETS)
+        # 主窗口撤销/重做（快照式：TASKS + 分组元数据 + 当前选中下标）
+        self.history = []
+        self.redo_history = []
+        self._restoring_history = False
         self.blueprint_layouts = load_blueprint_layouts()
         self.blueprint_graphs = load_blueprint_graphs()
         self.mode_tasks = {"custom": deepcopy(TASKS)}
@@ -1332,6 +1336,9 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             ("Ins", self.add_task),
             ("Ctrl+Up", lambda: self.move_selected_item(-1)),
             ("Ctrl+Down", lambda: self.move_selected_item(1)),
+            ("Ctrl+Z", self.undo),
+            ("Ctrl+Y", self.redo),
+            ("Ctrl+Shift+Z", self.redo),
         ]
         for sequence, handler in shortcut_specs:
             action = QAction(self.task_list)
@@ -1441,6 +1448,9 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
     @Slot(str)
     def on_mode_selected(self, mode):
         mode = mode or "custom"
+        # 切换预设后旧快照不再适用（快照里的任务是上一个预设的）
+        self.history = []
+        self.redo_history = []
         self.mode_tasks.setdefault(mode, deepcopy(get_tasks_for_mode(mode)))
         TASKS[:] = deepcopy(self.mode_tasks[mode])
         self.current_task_index = -1
@@ -1671,6 +1681,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         一旦这个钩子被触发就会把深层步骤**丢掉**。现在递归遍历所有层级，
         并把树里没出现的步骤保留在末尾（宁可顺序不对，也不能吞步骤）。
         """
+        self._push_history()
         ordered_ids = []
 
         def walk(parent):
@@ -1753,6 +1764,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
 
     @Slot()
     def select_all_tasks(self):
+        self._push_history()
         for task in TASKS:
             task["enabled"] = True
         self.save_current_tasks()
@@ -1802,6 +1814,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
 
     @Slot()
     def clear_tasks(self):
+        self._push_history()
         for task in TASKS:
             task["enabled"] = False
         self.save_current_tasks()
@@ -1874,6 +1887,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         if target_position is None:
             return
         insert_at = target_position + (1 if insert_after else 0)
+        self._push_history()
         self._rebuild_tasks_with_block(block_indices, insert_at, old_index_by_id)
         self.save_current_tasks()
         self._save_presets()
@@ -1904,6 +1918,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             if index in skip:
                 continue
             new_tasks.append(task)
+        self._push_history()
         TASKS[:] = new_tasks
         remap_jump_targets(TASKS, _jump_index_map([old_index_by_id[str(t.get("id"))] for t in TASKS]))
 
@@ -1938,6 +1953,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
 
     def _move_group(self, group_id, direction):
         """在同一层级内移动分组：元数据顺序 + TASKS 里的步骤块一起换，执行顺序才会跟着变。"""
+        self._push_history()
         mode = self.mode_combo.currentText() or "custom"
         metadata = self.mode_group_metadata.setdefault(mode, {})
         parents = metadata.setdefault("parents", {})
@@ -1980,6 +1996,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         target = index + direction
         if not (0 <= target < len(TASKS)):
             return
+        self._push_history()
         task = TASKS.pop(index)
         TASKS.insert(target, task)
         self.current_task_index = target
@@ -1991,6 +2008,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         """把步骤移到指定位置并（可选）改归属，统一做跳转重编号与刷新。"""
         if not (0 <= source_index < len(TASKS)):
             return
+        self._push_history()
         old_index_by_id = {str(t.get("id")): i for i, t in enumerate(TASKS)}
         task = TASKS.pop(source_index)
         if group_id is not None:
@@ -2057,6 +2075,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         if parent:
             if parent not in names or parent in self._group_descendants(metadata, group_id):
                 return
+        self._push_history()
         current_parent = parents.get(group_id)
         current_siblings = children.setdefault(str(current_parent), []) if current_parent else order
         if group_id in current_siblings:
@@ -2101,6 +2120,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         parent = str(parent_group_id) if parent_group_id else None
         if parent and parent not in names:
             parent = None
+        self._push_history()
         group_id = f"group_{uuid.uuid4().hex[:8]}"
         # 唯一名称：此前用 len(names)+1，删过组之后会出现重名
         number = len(names) + 1
@@ -2126,6 +2146,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         task_type, ok = QInputDialog.getItem(self, "新增步骤类型", "请选择步骤类型:", types, 0, False)
         if not ok:
             return
+        self._push_history()
         group_ids = self._selected_group_ids()
         group_id = group_ids[0] if group_ids else None
         if group_id is None and 0 <= self.current_task_index < len(TASKS):
@@ -2225,6 +2246,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         new_name = (new_name or "").strip()
         if not accepted or not new_name or new_name == current:
             return
+        self._push_history()
         names[group_id] = new_name
         for task in TASKS:
             if str(task.get("group_id") or "group_default") == str(group_id):
@@ -2246,6 +2268,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         color = QColorDialog.getColor(current, self, "选择分组颜色")
         if not color.isValid():
             return
+        self._push_history()
         colors[group_id] = color.name()
         self._save_presets()
         self.refresh_task_list()
@@ -2317,6 +2340,56 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
 
     # ---------- 任务列表右键菜单 ----------
 
+    # ---------- 撤销 / 重做（主窗口任务列表编辑） ----------
+
+    def _undo_snapshot(self):
+        return (deepcopy(TASKS), deepcopy(self.mode_group_metadata), self.current_task_index)
+
+    def _push_history(self):
+        """结构编辑前记录一次快照；撤销/重做恢复过程中不再记录，避免互相污染。"""
+        if getattr(self, "_restoring_history", False):
+            return
+        self.history.append(self._undo_snapshot())
+        if len(self.history) > 50:
+            self.history.pop(0)
+        self.redo_history.clear()
+
+    def _restore_snapshot(self, snapshot):
+        tasks, metadata, index = snapshot
+        self._restoring_history = True
+        try:
+            TASKS[:] = deepcopy(tasks)
+            self.mode_group_metadata.clear()
+            self.mode_group_metadata.update(deepcopy(metadata))
+            self.current_task_index = index if 0 <= index < len(TASKS) else -1
+            self.save_current_tasks()
+            self._save_presets()
+            self.refresh_task_list()
+            if self.current_task_index >= 0:
+                self.select_task_index(self.current_task_index)
+            else:
+                self.clear_editor()
+        finally:
+            self._restoring_history = False
+
+    @Slot()
+    def undo(self, *_args):
+        if not self.history:
+            self.append_log("没有可撤销的操作。")
+            return
+        self.redo_history.append(self._undo_snapshot())
+        self._restore_snapshot(self.history.pop())
+        self.append_log("已撤销上一步编辑。")
+
+    @Slot()
+    def redo(self, *_args):
+        if not self.redo_history:
+            self.append_log("没有可重做的操作。")
+            return
+        self.history.append(self._undo_snapshot())
+        self._restore_snapshot(self.redo_history.pop())
+        self.append_log("已重做上一步编辑。")
+
     def _build_task_list_menu(self, context_item=None):
         """构建「项目列表」的右键菜单（右键弹出与测试共用同一份）。
 
@@ -2326,6 +2399,11 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
           · 右键在**空白**处 → 只有创建类动作（编辑类因为没目标自动禁用）
         """
         menu = QMenu(self)
+        undo_action = menu.addAction("撤销", self.undo)
+        undo_action.setEnabled(bool(getattr(self, "history", None)))
+        redo_action = menu.addAction("重做", self.redo)
+        redo_action.setEnabled(bool(getattr(self, "redo_history", None)))
+        menu.addSeparator()
         is_group = context_item is not None and context_item.data(0, Qt.UserRole) == "group"
         group_id = str(context_item.data(0, Qt.UserRole + 1)) if is_group else None
         selected = self._selected_task_indices()
@@ -2494,6 +2572,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         new_tasks, new_groups = snippet_store.insert_snippet(
             TASKS, snippet, position, parent_group_id=parent_group)
         inserted = len(new_tasks) - len(TASKS)
+        self._push_history()
         TASKS[:] = new_tasks
         # 片段里的分组登记进当前预设（新 id，顶层组挂到插入点所在的组下面）
         if new_groups:

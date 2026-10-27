@@ -429,6 +429,7 @@ class TaskListMixin:
     def move_task_to_end(self, source_index):
         if not (0 <= source_index < len(TASKS)):
             return
+        self._push_history()
         old_index_by_id = {str(t.get("id")): i for i, t in enumerate(TASKS)}
         task = TASKS.pop(source_index)
         TASKS.append(task)
@@ -454,6 +455,7 @@ class TaskListMixin:
         group_ids = self._selected_group_ids()
         if not indices and not group_ids:
             return
+        self._push_history()
         mode = self.mode_combo.currentText() or "custom"
         metadata = self.mode_group_metadata.setdefault(mode, {})
         names = metadata.setdefault("names", {})
@@ -565,6 +567,7 @@ class TaskListMixin:
             prompt = f"确定删除选中的 {len(remove_indices)} 个步骤吗？"
         if QMessageBox.question(self, "确认删除", prompt) != QMessageBox.Yes:
             return
+        self._push_history()
         old_tasks = list(TASKS)
         removed = set(remove_indices)
         # 先按 id 记录旧下标，删除后 id 顺序即等于新顺序。

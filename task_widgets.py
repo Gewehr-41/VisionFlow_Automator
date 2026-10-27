@@ -72,6 +72,21 @@ class TaskListWidget(QTreeWidget):
         # 且拖拽过程中选择集可能被折叠，处理函数需要靠它做整块移动。
         self.drag_task_indices = []
 
+    def drawRow(self, painter, options, index):
+        """组行底色铺满整行（含缩进/展开箭头区域）。
+
+        QTreeView 默认只给 item 区域涂背景，根/嵌套组的缩进那一小段仍是白底；
+        组行本来有分组颜色，所以复选框左边会露出一道白边（所有者 2026-10-27 反馈）。
+        """
+        item = self.itemFromIndex(index)
+        if item is not None and item.data(0, Qt.UserRole) == "group":
+            brush = item.background(0)
+            if brush.style() != Qt.BrushStyle.NoBrush and brush.color().alpha() > 0:
+                color = brush.color()
+                color.setAlpha(255)
+                painter.fillRect(options.rect, color)
+        super().drawRow(painter, options, index)
+
     @staticmethod
     def _task_index_of(item):
         if item is None or item.data(0, Qt.UserRole) == "group":

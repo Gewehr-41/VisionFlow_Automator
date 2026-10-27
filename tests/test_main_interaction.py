@@ -347,6 +347,67 @@ class DragDropTests(MainInteractionBase):
         self.assertEqual(task["group_id"], OTHER_ID, "拖到别的组的步骤上应改变归属")
         self.assertEqual(g.TASKS[-1]["id"], "A", "并插到目标步骤之后")
 
+    def _select_steps(self, indices):
+        self.window.task_list.clearSelection()
+        for index in indices:
+            self.window._find_task_item(index).setSelected(True)
+        _APP.processEvents()
+
+    def test_drag_multiple_steps_into_group_moves_all(self):
+        """多选步骤拖进组：应整块加入，不是只加一个。"""
+        self._select_steps([0, 1])          # A(组1) + B(子组)
+        self.window.move_task_into_group(0, OTHER_ID)
+        ids = [task["id"] for task in g.TASKS]
+        self.assertEqual(ids, ["C", "A", "B"], "A/B 应作为整块追加到目标组末尾")
+        groups = {task["id"]: task.get("group_id") for task in g.TASKS}
+        self.assertEqual(groups["A"], OTHER_ID)
+        self.assertEqual(groups["B"], OTHER_ID)
+
+    def test_drag_multiple_steps_before_group_moves_all(self):
+        self._select_steps([0, 1])
+        self.window.move_task_before_group(0, OTHER_ID)
+        self.assertEqual([task["id"] for task in g.TASKS], ["A", "B", "C"])
+        for task in g.TASKS[:2]:
+            self.assertNotIn("group_id", task, "放到根层组前面时应移出原组")
+
+    def test_drag_multiple_steps_to_root_moves_all(self):
+        self._select_steps([0, 1])
+        self.window.move_task_to_root(1)
+        self.assertEqual([task["id"] for task in g.TASKS], ["C", "A", "B"])
+        for task in g.TASKS[1:]:
+            self.assertNotIn("group_id", task)
+
+    def test_drag_multiple_steps_onto_step_moves_all(self):
+        self._select_steps([0, 1])
+        self.window.reorder_task_from_tree(0, 2, False, OTHER_ID)
+        ids = [task["id"] for task in g.TASKS]
+        self.assertEqual(ids, ["A", "B", "C"])
+        groups = {task["id"]: task.get("group_id") for task in g.TASKS}
+        self.assertEqual(groups["A"], OTHER_ID)
+        self.assertEqual(groups["B"], OTHER_ID)
+
+    def test_multi_drag_uses_recorded_indices_when_selection_collapsed(self):
+        """真实拖拽中 Qt 可能把选择集折叠成单个：必须用按下时记录的多选。"""
+        self.window.task_list.drag_task_indices = [0, 1]
+        self.window.task_list.clearSelection()
+        self.window.move_task_into_group(0, OTHER_ID)
+        groups = {task["id"]: task.get("group_id") for task in g.TASKS}
+        self.assertEqual(groups["A"], OTHER_ID)
+        self.assertEqual(groups["B"], OTHER_ID)
+
+    def test_multi_drag_keeps_block_selected(self):
+        self._select_steps([0, 1])
+        self.window.move_task_into_group(0, OTHER_ID)
+        selected = sorted(index for index in self.window._selected_task_indices())
+        self.assertEqual(selected, [1, 2], "整块移动后应继续保持这两步选中")
+
+    def test_single_drag_still_moves_only_that_step(self):
+        self._select_steps([0])
+        self.window.move_task_into_group(0, OTHER_ID)
+        groups = {task["id"]: task.get("group_id") for task in g.TASKS}
+        self.assertEqual(groups["A"], OTHER_ID)
+        self.assertEqual(groups["B"], CHILD_ID, "没选中的步骤不应被带走")
+
     def test_reparent_group_into_another_group(self):
         self.window.reparent_group(OTHER_ID, GROUP_ID)
         metadata = self.metadata()
@@ -365,6 +426,17 @@ class DragDropTests(MainInteractionBase):
         metadata = self.metadata()
         self.assertIsNone(metadata["parents"][CHILD_ID])
         self.assertIn(CHILD_ID, metadata["order"])
+
+
+class MultiDragWiringTests(unittest.TestCase):
+    def test_task_list_records_drag_selection(self):
+        source = open("task_widgets.py", encoding="utf-8").read()
+        self.assertIn("self.drag_task_indices = []", source)
+        self.assertIn("self.drag_task_indices = selected", source)
+
+    def test_handlers_prefer_recorded_drag_indices(self):
+        source = open("gui_pyside6.py", encoding="utf-8").read()
+        self.assertIn('recorded = list(getattr(self.task_list, "drag_task_indices", None) or [])', source)
 
 
 class CopyAndSnippetTests(MainInteractionBase):

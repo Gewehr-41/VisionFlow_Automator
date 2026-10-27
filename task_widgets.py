@@ -68,6 +68,16 @@ class TaskListWidget(QTreeWidget):
         super().__init__(parent)
         self._drag_handle_pressed = False
         self._drag_source_item = None
+        # 拖拽开始时把"多选里的所有步骤"记下来：Qt 拖拽信号只带按下的那一个，
+        # 且拖拽过程中选择集可能被折叠，处理函数需要靠它做整块移动。
+        self.drag_task_indices = []
+
+    @staticmethod
+    def _task_index_of(item):
+        if item is None or item.data(0, Qt.UserRole) == "group":
+            return None
+        index = item.data(0, Qt.UserRole + 1)
+        return int(index) if index is not None else None
 
     def keyPressEvent(self, event):
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
@@ -79,6 +89,7 @@ class TaskListWidget(QTreeWidget):
     def mousePressEvent(self, event):
         self._drag_handle_pressed = False
         self._drag_source_item = None
+        self.drag_task_indices = []
         if event.button() == Qt.LeftButton:
             pos = event.position().toPoint()
             item = self.itemAt(pos)
@@ -92,6 +103,17 @@ class TaskListWidget(QTreeWidget):
                         self._drag_handle_pressed = True
                         self._drag_source_item = item
         super().mousePressEvent(event)
+        if self._drag_handle_pressed and self._drag_source_item is not None:
+            source_index = self._task_index_of(self._drag_source_item)
+            if source_index is not None:
+                selected = sorted({
+                    index for item in self.selectedItems()
+                    if (index := self._task_index_of(item)) is not None
+                })
+                if source_index not in selected:
+                    selected.append(source_index)
+                    selected.sort()
+                self.drag_task_indices = selected
 
     def startDrag(self, supportedActions):
         source = self._drag_source_item

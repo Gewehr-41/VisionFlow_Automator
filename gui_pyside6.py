@@ -1714,37 +1714,73 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.save_current_tasks()
         self.refresh_task_list()
 
-    @Slot(int, int, bool)
-    def reorder_task_from_tree(self, source_index, target_index, insert_after, target_group=None):
-        if source_index == target_index or not (0 <= source_index < len(TASKS)) or not (0 <= target_index < len(TASKS)):
+    def _drag_task_indices(self, source_index):
+        """拖动时实际要移动的步骤下标。
+
+        Qt 拖拽信号只带「按下的那个步骤」；如果它是多选里的一员，就把所有选中步骤
+        作为一个块一起移动（保持 TASKS 里的顺序），否则只移动它自己。
+        """
+        if not (0 <= int(source_index) < len(TASKS)):
+            return []
+        # 优先用拖拽部件在按下时记录的选择（拖拽过程中 Qt 可能把选择集折叠成单个）
+        recorded = list(getattr(self.task_list, "drag_task_indices", None) or [])
+        recorded = [int(index) for index in recorded if 0 <= int(index) < len(TASKS)]
+        if len(recorded) > 1 and int(source_index) in recorded:
+            return sorted(recorded)
+        selected = self._selected_task_indices()
+        if int(source_index) in selected and len(selected) > 1:
+            return sorted(selected)
+        return [int(source_index)]
+
+    def _move_task_block(self, indices, insert_before, group_id, log_text):
+        """把多个步骤作为连续块插到 `insert_before`（原列表位置）并统一设置所属组。
+
+        调用方给的 insert_before 是「移动前列表」里的位置；这里换算成移除后的位置。
+        块内顺序保持 TASKS 原顺序（与用户看到的选择顺序一致）。
+        """
+        indices = sorted({int(index) for index in indices if 0 <= int(index) < len(TASKS)})
+        if not indices:
             return
-        # 先按 id 记录每个步骤的旧下标——列表重排后 id 顺序即等于新顺序。
-        old_index_by_id = {str(t.get("id")): i for i, t in enumerate(TASKS)}
-        task = TASKS.pop(source_index)
-        if source_index < target_index:
-            target_index -= 1
-        insert_index = target_index + (1 if insert_after else 0)
-        insert_index = max(0, min(insert_index, len(TASKS)))
-        # 拖到别的地方的步骤上：归属跟着目标走（目标在根层则移出分组）
-        current_group = str(task.get("group_id") or "")
-        target_key = str(target_group) if target_group else ""
-        if current_group != target_key:
-            if target_key:
-                task["group_id"] = target_key
-                mode = self.mode_combo.currentText() or "custom"
-                metadata = self.mode_group_metadata.get(mode, {})
-                task["group_name"] = str((metadata.get("names") or {}).get(target_key, target_key))
-            else:
+        self._push_history()
+        old_index_by_id = {str(task.get("id")): index for index, task in enumerate(TASKS)}
+        removed = set(indices)
+        moving = [TASKS[index] for index in indices]
+        remaining = [task for index, task in enumerate(TASKS) if index not in removed]
+        target = len(TASKS) if insert_before is None else int(insert_before)
+        position = target - sum(1 for index in indices if index < target)
+        position = max(0, min(position, len(remaining)))
+        group_id = str(group_id) if group_id else None
+        metadata = self.mode_group_metadata.get(self.mode_combo.currentText() or "custom", {})
+        group_names = metadata.get("names") or {}
+        for task in moving:
+            if group_id is None:
                 task.pop("group_id", None)
                 task.pop("group_name", None)
-        TASKS.insert(insert_index, task)
-        # 步骤下标已改变，必须同步重编号跳转目标，否则迂回/超时跳转会指向错误的步骤。
+            else:
+                task["group_id"] = group_id
+                task["group_name"] = str(group_names.get(group_id, group_id))
+        TASKS[:] = remaining[:position] + moving + remaining[position:]
         remap_jump_targets(TASKS, _jump_index_map([old_index_by_id[str(t.get("id"))] for t in TASKS]))
-        self.current_task_index = insert_index
+        self.current_task_index = position
         self.save_current_tasks()
         self.refresh_task_list()
-        self.select_task_index(insert_index)
+        self.select_task_index(position)
+        for offset in range(1, len(moving)):
+            item = self._find_task_item(position + offset)
+            if item is not None:
+                item.setSelected(True)
+        self.append_log(log_text)
 
+    @Slot(int, int, bool)
+    def reorder_task_from_tree(self, source_index, target_index, insert_after, target_group=None):
+        indices = self._drag_task_indices(source_index)
+        if not indices or target_index in indices or not (0 <= target_index < len(TASKS)):
+            return
+        target_key = str(target_group) if target_group else None
+        insert_before = target_index + (1 if insert_after else 0)
+        self._move_task_block(indices, insert_before, target_key,
+                              f"已把 {len(indices)} 个步骤移到目标位置。" if len(indices) > 1
+                              else "已把步骤移到目标位置。")
 
     def _selected_task_indices(self):
         return sorted({index for item in self.task_list.selectedItems() if (index := self._task_index_from_item(item)) is not None})
@@ -2043,30 +2079,35 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
 
     @Slot(int, str)
     def move_task_before_group(self, source_index, group_id):
-        """拖到组头上沿：放到这个组**前面**（成为同层级的兄弟，可以排在子组上方）。"""
+        """上到分组前面：拉到该组**前面**（作为同层级的兄弟，跟着组整体上下移动）。
+
+        多选拖动时整块移动（保持选择顺序）。
+        """
+        indices = self._drag_task_indices(source_index)
         mode = self.mode_combo.currentText() or "custom"
         metadata = self.mode_group_metadata.get(mode, {})
         member_indices = self._group_member_indices(metadata, group_id)
-        insert_index = min(member_indices) if member_indices else len(TASKS)
+        insert_before = min(member_indices) if member_indices else len(TASKS)
         parent_group = (metadata.get("parents") or {}).get(str(group_id))
-        if source_index < insert_index:
-            insert_index -= 1
-        self._move_task_with_group(source_index, insert_index, parent_group, "已把步骤移到该组前面。")
+        self._move_task_block(indices, insert_before, parent_group, "已把步骤移到组前面。")
 
     @Slot(int, str)
     def move_task_into_group(self, source_index, group_id):
-        """拖到组头：加入该组（放在该组现有步骤的末尾；空组也能放进去）。"""
+        """上到分组后面：加入该组（放在该组所有步骤末尾，空组也能放进去）。
+
+        多选拖动时整块加入（保持选择顺序）。
+        """
+        indices = self._drag_task_indices(source_index)
         members = [index for index, task in enumerate(TASKS)
                    if str(task.get("group_id") or "group_default") == str(group_id)]
-        insert_index = (max(members) + 1) if members else len(TASKS)
-        if source_index < insert_index:
-            insert_index -= 1
-        self._move_task_with_group(source_index, insert_index, group_id, "已把步骤移入分组。")
+        insert_before = (max(members) + 1) if members else len(TASKS)
+        self._move_task_block(indices, insert_before, group_id, "已把步骤加入分组。")
 
     @Slot(int)
     def move_task_to_root(self, source_index):
-        """拖到空白：移到根层末尾（拖出分组）。"""
-        self._move_task_with_group(source_index, len(TASKS), None, "已把步骤移出分组到根层。")
+        """上到空白：移到列表末尾（移出分组）。多选拖动时整块移动。"""
+        indices = self._drag_task_indices(source_index)
+        self._move_task_block(indices, len(TASKS), None, "已把步骤移出分组到根层。")
 
     @Slot(str, object)
     def reparent_group(self, group_id, parent_group_id):

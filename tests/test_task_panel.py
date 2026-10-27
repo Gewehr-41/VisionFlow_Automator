@@ -22,7 +22,7 @@ import tasks  # noqa: E402
 
 _APP = QApplication.instance() or QApplication([])
 
-TOOL_ENTRIES = ["打开蓝图流程", "识别调试", "兜底处理", "片段", "检查更新"]
+TOOL_ENTRIES = ["检查更新", "识别调试", "兜底处理", "片段", "打开蓝图流程"]
 GROUP_ENTRIES = ["编辑组设置", "重命名分组…", "更改分组颜色…", "在此组中新增步骤", "在此组中新增子组"]
 
 

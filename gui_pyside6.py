@@ -1354,15 +1354,15 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.task_buttons = []
 
         # 全局工具：不折叠，直接摆在面板上（所有者 2026-10-26：面板空着不如把工具都放出来）
-        # 4 列网格 → 前 4 个工具一行，第 5 个（检查更新）落到第二行
+        # 4 列网格 → 前 4 个工具一行，第 5 个（打开蓝图流程）落到第二行
         self.tool_buttons = []
         self.tool_actions = {}          # 兼容旧引用：标签 -> 按钮
         tool_specs = [
-            ("打开蓝图流程", self.open_blueprint),
+            ("检查更新", self.check_updates),
             ("识别调试", self.open_recognition_debug),
             ("兜底处理", self.open_fallback_editor),
             ("片段", self.open_snippet_menu),
-            ("检查更新", self.check_updates),
+            ("打开蓝图流程", self.open_blueprint),
         ]
         tool_grid = QGridLayout()
         tool_grid.setContentsMargins(0, 0, 0, 0)
@@ -1372,7 +1372,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             button = QPushButton(label)
             button.clicked.connect(handler)
             # 4+1 布局，但按钮横向**等比拉伸**：面板变宽时按钮跟着变宽，不再大小不一。
-            # 第 5 个「检查更新」横跨整行，避免第二行只占 1/4 显得空。
+            # 第 5 个「打开蓝图流程」横跨整行，避免第二行只占 1/4 显得空。
             button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             if index < 4:
                 tool_grid.addWidget(button, 0, index)

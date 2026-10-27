@@ -122,8 +122,9 @@ class MainToolbarLayoutTests(unittest.TestCase):
         self.assertGreater(buttons[4].width(), buttons[0].width() * 2, "「检查更新」应横跨整行")
 
     def test_tool_buttons_unchanged(self):
+        # 所有者 2026-10-27：「打开蓝图流程」与「检查更新」位置互换
         self.assertEqual([button.text() for button in self.window.tool_buttons],
-                         ["打开蓝图流程", "识别调试", "兜底处理", "片段", "检查更新"])
+                         ["检查更新", "识别调试", "兜底处理", "片段", "打开蓝图流程"])
 
 
 class L1GuardTests(unittest.TestCase):

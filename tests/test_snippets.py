@@ -201,6 +201,25 @@ class InsertSnippetTests(unittest.TestCase):
                          ["T0", "T1", "S"])
         self.assertEqual(len(snippets.insert_snippet(self.target, [], 0)[0]), 2)
 
+    def test_repeated_inserts_do_not_mutate_payload(self):
+        """同一片段连续插入多次：每次都要建组、步骤归属正确，片段数据本身不能被改。"""
+        payload = {
+            "version": 2,
+            "tasks": [_task("S0", "sg1"), _task("S1", "sg1")],
+            "groups": {"sg1": {"name": "新组", "color": "", "parent": None}},
+            "group_order": ["sg1"],
+        }
+        snapshot = copy.deepcopy(payload)
+        tasks = []
+        for _ in range(3):
+            tasks, groups = snippets.insert_snippet(tasks, payload, position=None)
+            self.assertEqual(len(groups), 1, "每次插入都应新建一个组")
+            inserted = tasks[-2:]
+            new_group_id = groups[0]["id"]
+            self.assertTrue(all(task.get("group_id") == new_group_id for task in inserted),
+                            "插入的步骤要归属到本次新建的组")
+        self.assertEqual(payload, snapshot, "insert_snippet 不能修改片段数据（否则下次插入会丢组）")
+
     def test_v1_snippet_still_insertable(self):
         result, groups = snippets.insert_snippet(self.target, [_task("S")], position=1)
         self.assertEqual([t["description"] for t in result], ["T0", "S", "T1"])
@@ -503,6 +522,27 @@ class SnippetGuiTests(unittest.TestCase):
         self.assertIn("子组", lines[2])
         self.assertIn("B", lines[3])
         self.assertIn("C", lines[4])
+
+    def test_insert_same_group_snippet_three_times_keeps_groups(self):
+        """连续插入同一「组片段」多次，每次都应有新组、步骤不能掉到根层。"""
+        self._metadata()
+        g.TASKS[:] = [_task("A", "g1"), _task("B", "g1")]
+        self.window.refresh_task_list()
+        _APP.processEvents()
+        self._save_group("g1", "组片段")
+        metadata = self.window.mode_group_metadata[self.mode]
+        before = len(metadata["names"])
+        for _ in range(3):
+            self._insert("组片段")
+        self.assertEqual(len(metadata["names"]), before + 3,
+                         f"每次插入都应新建组（当前 {metadata['names']}）")
+        for task in g.TASKS:
+            group_id = task.get("group_id")
+            self.assertIn(str(group_id), metadata["names"],
+                          f"步骤 {task['description']} 的组 {group_id} 不存在了（掉到根层/组消失）")
+        kinds = ["G" if "[G]" in line else "T" for line in self._tree_lines()]
+        self.assertEqual(kinds.count("G"), before + 3)
+        self.assertEqual(kinds.count("T"), 2 + 3 * 2, "原 2 步 + 3 次 × 2 步")
 
     # ---------- 所有者 2026-10-27 复现场景：组 + 两个步骤 ----------
 

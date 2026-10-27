@@ -198,9 +198,12 @@ def insert_snippet(target_tasks, snippet, position=None, parent_group_id=None):
     group_by_id = {item["id"]: item for item in new_groups}
 
     # ③ 步骤副本：新 id / 内部 flow_next / 分组映射 / 相对跳转 → 绝对
+    # 注意：必须 deepcopy——此前直接改 snippet_tasks（它们就是片段数据里的对象），
+    # 第一次插入会把片段里步骤的 group_id 改成新组 id，第二次插入时这些 id 在片段分组里
+    # 已经找不到 → 分组被过滤、步骤掉到根层（"插入几次后组消失"的根因）。
     copies = []
     id_map = {}
-    for task in snippet_tasks:
+    for task in [deepcopy(item) for item in snippet_tasks]:
         new_id = str(uuid.uuid4())
         id_map[str(task.get("id"))] = new_id
         task["id"] = new_id

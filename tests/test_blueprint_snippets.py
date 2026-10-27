@@ -192,6 +192,8 @@ class InsertSnippetTests(unittest.TestCase):
         for task in self.window.tasks[3:]:
             self.assertEqual(task.get("group_id"), "g1", "聚焦组里插入的步骤应归入当前组")
         self.assertEqual(self.window.tasks[3].get("group_name"), "组1")
+        self.assertIsNone(self.window.tasks[2].get("group_id"),
+                          "画布上原有的根步骤不能被一起吸进聚焦组")
 
     def test_insert_same_snippet_twice_dedupes_inner_group_names(self):
         self.window.insert_snippet_into_blueprint("片段A", (100, 200))

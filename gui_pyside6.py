@@ -145,7 +145,7 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
         self.capture_overlay = None
         self._capture_callback = None
         self.execution_states = dict(execution_states or {})
-        self.setWindowTitle("蓝图流程 - PySide6")
+        self.setWindowTitle(f"蓝图流程 - PySide6（v{config.APP_VERSION}）")
         self.resize(1480, 860)
 
         self.scene = BlueprintScene(self)
@@ -1146,7 +1146,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("视觉识别自动脚本 - PySide6")
+        self.setWindowTitle(f"视觉识别自动脚本 - PySide6（v{config.APP_VERSION}）")
         self.resize(1180, 860)
         self.setMinimumSize(980, 720)
 

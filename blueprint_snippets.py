@@ -142,11 +142,13 @@ class BlueprintSnippetMixin:
         new_tasks, new_groups = snippet_store.insert_snippet(
             self.tasks, snippet, position=len(self.tasks), parent_group_id=parent_group)
         inserted = len(new_tasks) - len(self.tasks)
+        self._inserted_tasks = new_tasks[len(self.tasks):]
         self._push_history()
         self.tasks[:] = new_tasks
         # 注意：**不再自动包一层"片段组"**——片段里原本没有分组时，插入后就是独立步骤；
         # 片段自带分组时只保留它自己的分组结构。
         self._register_inserted_groups(new_groups, parent_group)
+        self._inserted_tasks = None
         self._place_inserted_nodes(inserted, scene_position)
         self.refresh()
         self.save_layout()
@@ -193,9 +195,10 @@ class BlueprintSnippetMixin:
             else:
                 order.append(group_id)
         # 片段里没有分组的步骤：在聚焦子图里插入时归入当前组
+        # （只处理本次插入的步骤，不能把画布上原有的根步骤也吸进聚焦组）
         if parent_group_id:
             focus_name = names.get(parent_group_id, parent_group_id)
-            for task in self.tasks:
+            for task in self._inserted_tasks:
                 if task.get("group_id") is None:
                     task["group_id"] = parent_group_id
                     task["group_name"] = focus_name

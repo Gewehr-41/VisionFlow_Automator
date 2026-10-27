@@ -1,5 +1,6 @@
 # PySide6 主界面：新版任务编辑器、蓝图编辑器和线程化执行控制。
 import os
+import time
 import sys
 import threading
 import uuid
@@ -8,8 +9,8 @@ from copy import deepcopy
 os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.window=false")
 
 import pygetwindow as gw
-from PySide6.QtCore import QThread, QTimer, Signal, Slot, Qt
-from PySide6.QtGui import QAction, QColor, QKeySequence, QPainter, QPixmap, QBrush
+from PySide6.QtCore import QThread, QTimer, QUrl, Signal, Slot, Qt
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QKeySequence, QPainter, QPixmap, QBrush
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -38,6 +39,9 @@ from PySide6.QtWidgets import (
     QWidget,
     QToolButton,
     QSizePolicy,
+    QFrame,
+    QProgressBar,
+    QStackedWidget,
 )
 
 import config
@@ -1293,21 +1297,6 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.step_button.setToolTip("暂停状态下点一次执行一个步骤")
         control_bar.addWidget(self.step_button)
         control_bar.addStretch(1)
-        control_bar.addWidget(QLabel("目标窗口:"))
-        self.window_combo = QComboBox()
-        self.window_combo.setEditable(True)
-        self.window_combo.setMinimumWidth(240)
-        self.window_combo.setMaximumWidth(420)
-        control_bar.addWidget(self.window_combo)
-        refresh_button = QPushButton("刷新窗口")
-        refresh_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        refresh_button.clicked.connect(self.refresh_window_list)
-        control_bar.addWidget(refresh_button)
-        self.status_label = QLabel("状态: 待机")
-        self.status_label.setObjectName("statusLabel")
-        self.status_label.setMinimumWidth(110)
-        self.status_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        control_bar.addWidget(self.status_label)
         root_layout.addLayout(control_bar)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -1393,7 +1382,18 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             action.triggered.connect(handler)
             self.task_list.addAction(action)
             self.list_shortcuts.append(action)
-        task_layout.addWidget(self.task_list)
+        self.task_stack = QStackedWidget()
+        self.task_stack.addWidget(self.task_list)
+        self.task_empty_page = QLabel(
+            "这条预设还没有步骤\n\n"
+            "· 右键空白处 →「新增步骤 / 新增分组」\n"
+            "· 「片段」→「插入片段」复用已有流程\n"
+            "· 「打开蓝图流程」可视化连线编辑")
+        self.task_empty_page.setObjectName("emptyState")
+        self.task_empty_page.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.task_empty_page.setWordWrap(True)
+        self.task_stack.addWidget(self.task_empty_page)
+        task_layout.addWidget(self.task_stack, 1)
         splitter.addWidget(task_panel)
 
         editor_panel = QGroupBox("当前步骤")
@@ -1404,6 +1404,13 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         editor_content = QWidget()
         editor_layout = QVBoxLayout(editor_content)
         editor_scroll.setWidget(editor_content)
+        self.editor_scroll = editor_scroll
+        self.editor_empty_hint = QLabel("从左侧选择一个步骤\n即可在这里编辑参数")
+        self.editor_empty_hint.setObjectName("emptyState")
+        self.editor_empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.editor_empty_hint.setWordWrap(True)
+        self.editor_empty_hint.setVisible(False)
+        editor_panel_layout.addWidget(self.editor_empty_hint)
         editor_panel_layout.addWidget(editor_scroll)
         self.editor_layout = editor_layout          # 与蓝图窗口同名，便于共用构造器
         # 面板控件全部由 mixin 的共享构造器建（见 capture_overlay.py）
@@ -1425,6 +1432,63 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         content_splitter.setStretchFactor(1, 1)
         content_splitter.setSizes([650, 170])
         root_layout.addWidget(content_splitter, 1)
+
+        # ---------- 底部状态栏（L2/L3/V4/O8） ----------
+        status_bar = QWidget()
+        status_bar.setObjectName("statusBar")
+        self.status_bar_widget = status_bar
+        status_layout = QHBoxLayout(status_bar)
+        status_layout.setContentsMargins(6, 2, 6, 2)
+        status_layout.setSpacing(8)
+
+        status_layout.addWidget(QLabel("目标窗口:"))
+        self.window_combo = QComboBox()
+        self.window_combo.setEditable(True)
+        self.window_combo.setMinimumWidth(220)
+        self.window_combo.setMaximumWidth(360)
+        status_layout.addWidget(self.window_combo)
+        self.refresh_window_button = QPushButton("刷新窗口")
+        self.refresh_window_button.setObjectName("secondaryButton")
+        self.refresh_window_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.refresh_window_button.clicked.connect(self.refresh_window_list)
+        status_layout.addWidget(self.refresh_window_button)
+
+        divider = QFrame()
+        divider.setFrameShape(QFrame.Shape.VLine)
+        divider.setFrameShadow(QFrame.Shadow.Sunken)
+        status_layout.addWidget(divider)
+
+        self.status_label = QLabel("● 待机")
+        self.status_label.setObjectName("statusLabel")
+        self.status_label.setProperty("statusKind", "idle")
+        self.status_label.setMinimumWidth(110)
+        status_layout.addWidget(self.status_label)
+        self.preset_info_label = QLabel("预设: custom")
+        self.preset_info_label.setObjectName("statusInfo")
+        status_layout.addWidget(self.preset_info_label)
+        self.last_save_label = QLabel("")
+        self.last_save_label.setObjectName("statusInfo")
+        status_layout.addWidget(self.last_save_label)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setObjectName("runProgress")
+        self.progress_bar.setMaximumWidth(190)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setVisible(False)
+        status_layout.addWidget(self.progress_bar)
+
+        status_layout.addStretch(1)
+        self.help_button = QPushButton("使用说明")
+        self.help_button.setObjectName("secondaryButton")
+        self.help_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.help_button.clicked.connect(self.open_help)
+        status_layout.addWidget(self.help_button)
+        self.about_button = QPushButton("关于")
+        self.about_button.setObjectName("secondaryButton")
+        self.about_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.about_button.clicked.connect(self.show_about)
+        status_layout.addWidget(self.about_button)
+        root_layout.addWidget(status_bar)
 
         # 这两个 SVG 是**程序自带的界面资源**（复选框指示器），不是用户模板。
         # 它们有意固定在 <脚本目录>/icons，不跟随 config.ICON_DIR —— 用户把
@@ -1448,7 +1512,16 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             "QToolButton::menu-indicator { width: 0px; }"
             "#secondaryButton { color: #475569; background: #f1f5f9; border-color: #cbd5e1; }"
             "#secondaryButton:hover { background: #e2e8f0; border-color: #94a3b8; }"
-            "#statusLabel { color: #475569; font-weight: bold; }"
+            "#statusBar { background: #eef2f7; border-top: 1px solid #cbd5e1; }"
+            "#statusLabel { color: #475569; font-weight: bold; padding: 1px 8px; border-radius: 9px; background: #e2e8f0; }"
+            "#statusLabel[statusKind=\"running\"] { color: #ffffff; background: #0284c7; }"
+            "#statusLabel[statusKind=\"paused\"] { color: #92400e; background: #fef3c7; }"
+            "#statusLabel[statusKind=\"error\"] { color: #ffffff; background: #dc2626; }"
+            "#statusLabel[statusKind=\"done\"] { color: #ffffff; background: #16a34a; }"
+            "#statusLabel[statusKind=\"stopped\"] { color: #475569; background: #e2e8f0; }"
+            "#statusInfo { color: #64748b; }"
+            "#emptyState { color: #94a3b8; font-size: 13px; padding: 16px; }"
+            "#runProgress { border: 1px solid #cbd5e1; border-radius: 4px; background: #ffffff; text-align: center; }"
             "QLineEdit, QPlainTextEdit, QComboBox, QTreeWidget { border: 1px solid #cbd5e1; border-radius: 4px; background: #ffffff; padding: 4px; }"
             "QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QTreeWidget:focus { border-color: #0284c7; }"
             "QTreeWidget { padding: 6px; }"
@@ -1509,6 +1582,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.mode_tasks.setdefault(mode, deepcopy(get_tasks_for_mode(mode)))
         TASKS[:] = deepcopy(self.mode_tasks[mode])
         self.current_task_index = -1
+        self._update_preset_info()
         self.refresh_task_list()
         self.append_log(f"已切换到预设: {mode}")
 
@@ -1523,6 +1597,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
 
     @Slot(QTreeWidgetItem, QTreeWidgetItem)
     def load_selected_task(self, item, _previous_item):
+        self._show_editor_page(False)
         if item is not None and item.data(0, Qt.UserRole) == "group":
             # 选中的是分组：清掉旧的步骤下标，避免"插入片段"按上一步骤的位置插错地方
             self.current_task_index = -1
@@ -1649,6 +1724,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
 
 
     def clear_editor(self):
+        self._show_editor_page(True)
         self.selected_label.setText("未选择步骤")
         self.template_preview.setPixmap(QPixmap())
         self.template_preview.setText("无模板预览")
@@ -2314,6 +2390,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             save_tasks(TASKS)
         else:
             self._save_presets()
+        self._touch_saved_time()
         self.append_log(f"任务已保存到预设“{mode_name}”。")
 
     @Slot()
@@ -2920,6 +2997,153 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             runtime_tasks.append(runtime_task)
         return runtime_tasks
 
+    # ---------- L3 状态胶囊 / V4 运行进度 / V5 空状态 / O8 关于说明 ----------
+
+    _STATUS_META = {
+        "idle": ("●", "待机"),
+        "running": ("▶", "运行中"),
+        "paused": ("⏸", "已暂停"),
+        "error": ("⚠", "异常"),
+        "done": ("✔", "已完成"),
+        "stopped": ("■", "已停止"),
+    }
+
+    def _set_status(self, kind, detail=""):
+        """更新底部状态胶囊：颜色由 QSS 的 statusKind 属性控制。"""
+        kind = kind if kind in self._STATUS_META else "idle"
+        icon, label = self._STATUS_META[kind]
+        suffix = f"（{detail}）" if detail else ""
+        self.status_kind = kind
+        self.status_text = label
+        self.status_label.setText(f"{icon} {label}{suffix}")
+        self.status_label.setProperty("statusKind", kind)
+        style = self.status_label.style()
+        style.unpolish(self.status_label)
+        style.polish(self.status_label)
+
+    def _update_preset_info(self):
+        if hasattr(self, "preset_info_label"):
+            mode = self.mode_combo.currentText() or "custom"
+            self.preset_info_label.setText(f"预设: {mode}")
+
+    def _touch_saved_time(self):
+        if hasattr(self, "last_save_label"):
+            self.last_save_label.setText(f"保存于 {time.strftime('%H:%M:%S')}")
+
+    def _show_editor_page(self, empty):
+        """空编辑器提示：在编辑区顶部显示「选择一个步骤」，编辑区本身保持可见。"""
+        if hasattr(self, "editor_empty_hint"):
+            self.editor_empty_hint.setVisible(empty)
+
+    def _sync_empty_states(self):
+        if hasattr(self, "task_stack"):
+            self.task_stack.setCurrentIndex(0 if TASKS else 1)
+        if hasattr(self, "_apply_execution_marks"):
+            self._apply_execution_marks()
+
+    _EXEC_STATE_STYLE = {
+        # id 状态 -> (背景色, 前景色, 是否加粗)
+        "running": ("#dbeafe", "", True),
+        "success": ("", "#15803d", False),
+        "skipped": ("", "#15803d", False),
+        "failed": ("#fee2e2", "#b91c1c", False),
+        "timeout": ("#fee2e2", "#b91c1c", False),
+        "error": ("#fee2e2", "#b91c1c", False),
+    }
+
+    def _apply_execution_marks(self):
+        """按 execution_states 重绘步骤行颜色（列表刷新重建 item 后也要恢复）。
+
+        注意：给 QTreeWidgetItem 设字体/颜色会触发 itemChanged 信号，进而可能被当成
+        "勾选状态变化"走刷新/提交，运行标记刷新时必须屏蔽。
+        """
+        states = getattr(self, "execution_states", None) or {}
+        self.task_list.blockSignals(True)
+        try:
+            self._apply_execution_marks_unlocked(states)
+        finally:
+            self.task_list.blockSignals(False)
+
+    def _apply_execution_marks_unlocked(self, states):
+        for index in range(len(TASKS)):
+            item = self._find_task_item(index)
+            if item is None:
+                continue
+            style = self._EXEC_STATE_STYLE.get(states.get(str(TASKS[index].get("id"))))
+            background = QBrush(QColor(style[0])) if style and style[0] else QBrush()
+            foreground = QBrush(QColor(style[1])) if style and style[1] else QBrush()
+            item.setBackground(0, background)
+            item.setForeground(0, foreground)
+            font = item.font(0)
+            font.setBold(bool(style and style[2]))
+            item.setFont(0, font)
+
+    def _new_task_item_by_id(self, task_id):
+        task_id = str(task_id)
+        for index in range(len(TASKS)):
+            item = self._find_task_item(index)
+            if item is not None and str(item.data(0, Qt.UserRole + 1)) is not None:
+                index_value = item.data(0, Qt.UserRole + 1)
+                if 0 <= int(index_value) < len(TASKS) and str(TASKS[int(index_value)].get("id")) == task_id:
+                    return item, int(index_value)
+        return None, None
+
+    def _begin_run_progress(self):
+        """开始执行：重置行标记、显示进度条（总步数=启用的步骤数）。"""
+        self._run_total = max(1, len([task for task in TASKS if task.get("enabled", True)]))
+        self._run_done = 0
+        self.task_list.blockSignals(True)
+        try:
+            for index in range(len(TASKS)):
+                item = self._find_task_item(index)
+                if item is None:
+                    continue
+                item.setBackground(0, QBrush())
+                item.setForeground(0, QBrush())
+                font = item.font(0)
+                font.setBold(False)
+                item.setFont(0, font)
+        finally:
+            self.task_list.blockSignals(False)
+        self.progress_bar.setRange(0, self._run_total)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setFormat("%v / %m 步")
+        self.progress_bar.setVisible(True)
+
+    def _mark_running_task(self, task_id):
+        item, index = self._new_task_item_by_id(task_id)
+        if item is None:
+            return None
+        self._apply_execution_marks()
+        enabled_ids = [str(task.get("id")) for task in TASKS if task.get("enabled", True)]
+        position = enabled_ids.index(str(task_id)) + 1 if str(task_id) in enabled_ids else 1
+        if hasattr(self, "progress_bar"):
+            self.progress_bar.setValue(max(1, position))
+        self._set_status("running", f"第 {position}/{getattr(self, '_run_total', len(enabled_ids))} 步")
+        return index
+
+    def _mark_step_result(self, task_id, state):
+        self._apply_execution_marks()
+
+    def show_about(self):
+        data_dir = paths.data_dir()
+        app_dir = paths.app_root()
+        QMessageBox.about(
+            self,
+            "关于 VisionFlow Automator",
+            f"VisionFlow Automator v{config.APP_VERSION}\n\n"
+            f"程序目录：{app_dir}\n"
+            f"数据目录：{data_dir}\n\n"
+            "基于 PySide6 + OpenCV + PyAutoGUI 的视觉识别自动化脚本工具。",
+        )
+
+    def open_help(self):
+        readme = os.path.join(paths.app_root(), "README.md")
+        if os.path.exists(readme):
+            QDesktopServices.openUrl(QUrl.fromLocalFile(readme))
+        else:
+            QMessageBox.information(self, "使用说明", f"未找到 README.md：{readme}")
+
     def _set_running_state(self, running):
         self.mode_combo.setEnabled(not running)
         self.task_list.setEnabled(not running)
@@ -2932,6 +3156,10 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             button.setEnabled(not running)
         # 目标窗口在启动时已写入 config，运行中修改不会生效，禁用以免误导。
         self.window_combo.setEnabled(not running)
+        if hasattr(self, "refresh_window_button"):
+            self.refresh_window_button.setEnabled(not running)
+        if not running and hasattr(self, "progress_bar"):
+            self.progress_bar.setVisible(False)
         self.start_button.setEnabled(not running)
         self.start_current_button.setEnabled(not running)
         self.stop_button.setEnabled(running)
@@ -2958,17 +3186,28 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.execution_states[task_id] = "running"
         if self.blueprint_window is not None:
             self.blueprint_window.update_execution_state(task_id, "running")
-        for index, item in enumerate(TASKS):
-            if str(item.get("id")) == task_id:
-                self.current_task_index = index
-                self.select_task_index(index)
-                break
+        index = self._mark_running_task(task_id)
+        if index is not None:
+            self.current_task_index = index
+            item = self._find_task_item(index)
+            if item is not None:
+                self.task_list.setCurrentItem(item)
+                self.task_list.scrollToItem(item, QTreeWidget.ScrollHint.PositionAtCenter)
+                item.setSelected(True)
 
     @Slot(dict, str)
     def on_execution_result(self, task, state):
-        self.execution_states[str(task.get("id"))] = state
+        task_id = str(task.get("id"))
+        self.execution_states[task_id] = state
         if self.blueprint_window is not None:
-            self.blueprint_window.update_execution_state(str(task.get("id")), state)
+            self.blueprint_window.update_execution_state(task_id, state)
+        self._mark_step_result(task_id, state)
+        self._run_done = getattr(self, "_run_done", 0) + 1
+        if hasattr(self, "progress_bar"):
+            self.progress_bar.setValue(max(self._run_done, min(self.progress_bar.value(), self._run_total)))
+            self.progress_bar.setFormat("%v / %m 步")
+        if state in ("failed", "timeout", "error"):
+            self._set_status("error", f"第 {self._run_done}/{getattr(self, '_run_total', self._run_done)} 步失败")
         self.append_log(f"步骤结果: {task.get('description', task.get('template', '未命名'))} -> {state}")
 
     @Slot(str)
@@ -2976,16 +3215,15 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         if self.completion_notified:
             return
         self.completion_notified = True
+        if hasattr(self, "progress_bar"):
+            self.progress_bar.setVisible(False)
         if state == "failed":
-            self.status_text = "异常"
-            self.status_label.setText("状态: 异常")
+            self._set_status("error", "脚本异常")
             QMessageBox.warning(self, "脚本异常", "脚本执行过程中发生错误，请查看日志。")
         elif self.stop_event.is_set():
-            self.status_text = "已停止"
-            self.status_label.setText("状态: 已停止")
+            self._set_status("stopped")
         else:
-            self.status_text = "已完成"
-            self.status_label.setText("状态: 已完成")
+            self._set_status("done")
             QMessageBox.information(self, "脚本执行完成", "所有步骤已完成，脚本已停止运行。")
 
 

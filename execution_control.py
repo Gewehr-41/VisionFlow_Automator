@@ -111,8 +111,8 @@ class ExecutionControlMixin:
         self.single_step_event.clear()
         self.completion_notified = False
         self._set_running_state(True)
-        self.status_text = "运行中"
-        self.status_label.setText("状态: 运行中")
+        self._begin_run_progress()
+        self._set_status("running")
         self.append_log(f"脚本启动，共 {len(tasks)} 个启用步骤。")
 
         self.worker_thread = QThread(self)
@@ -164,7 +164,7 @@ class ExecutionControlMixin:
             self.pause_event.clear()
             self.single_step_event.set()
             release_all_inputs()
-            self.status_label.setText("状态: 停止中")
+            self._set_status("stopped", "正在停止")
             self.stop_button.setEnabled(False)
             self.append_log("正在停止脚本...")
             # 兜底：若工作线程因事件丢失等原因迟迟未退出，几秒后再次请求其退出事件循环
@@ -181,18 +181,18 @@ class ExecutionControlMixin:
         if self.pause_event.is_set():
             self.pause_event.clear()
             self.pause_button.setText("暂停")
-            self.status_label.setText("状态: 运行中")
+            self._set_status("running")
         else:
             self.pause_event.set()
             self.pause_button.setText("继续")
-            self.status_label.setText("状态: 已暂停")
+            self._set_status("paused")
     @Slot()
     def step_script(self):
         if self.worker_thread and self.worker_thread.isRunning():
             self.pause_event.set()
             self.single_step_event.set()
             self.pause_button.setText("继续")
-            self.status_label.setText("状态: 单步执行")
+            self._set_status("paused", "单步执行")
     @Slot()
     def _restore_config_after_run(self):
         """还原 _start_worker 改写的 config 字段。
@@ -211,8 +211,7 @@ class ExecutionControlMixin:
         self._restore_config_after_run()
         self.pause_button.setText("暂停")
         if self.stop_event.is_set():
-            self.status_text = "已停止"
-            self.status_label.setText("状态: 已停止")
+            self._set_status("stopped")
         self.append_log("脚本执行结束。")
         self._stop_stop_hotkey()
         if self.worker_thread:

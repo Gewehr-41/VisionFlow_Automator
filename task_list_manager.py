@@ -262,6 +262,8 @@ class TaskListMixin:
             self.select_task_index(target_index)
         else:
             self.clear_editor()
+        if hasattr(self, "_sync_empty_states"):
+            self._sync_empty_states()
 
     def select_task_index(self, index):
         item = self._find_task_item(index)

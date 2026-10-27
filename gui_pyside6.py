@@ -149,6 +149,8 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
         self._scene_rect_pending = False
         # 编辑器正在程序化加载字段：期间控件变化不算用户改动
         self._editor_loading = False
+        # 用户是否动过当前步骤的编辑器字段（M2：决定「应用修改」要不要压撤销栈）
+        self._editor_dirty = False
         self.capture_overlay = None
         self._capture_callback = None
         self.execution_states = dict(execution_states or {})
@@ -2404,6 +2406,10 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         if not 0 <= self.current_task_index < len(TASKS):
             return
         task = TASKS[self.current_task_index]
+        # M2：「应用修改」也要进撤销栈——先留改动前快照，确认真的改动了再压栈，
+        # 避免"点一下应用但没改任何东西"也产生一条空历史。
+        before_tasks = deepcopy(TASKS)
+        was_dirty = bool(getattr(self, "_editor_dirty", False))
         task["description"] = self.description_edit.text().strip()
         task["enabled"] = self.enabled_checkbox.isChecked()
         if task.get("type", "normal") in ("normal", "advanced", "click_until_gone"):
@@ -2426,6 +2432,9 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         task["enabled"] = self.enabled_checkbox.isChecked()
         # 类型专用字段的回写：与蓝图窗口共用同一实现（逻辑一份，规格表各自提供）
         self._apply_special_fields(task)
+        if was_dirty and TASKS != before_tasks:
+            current_snapshot = self._undo_snapshot()
+            self._push_history((before_tasks, current_snapshot[1], current_snapshot[2]))
         self.save_current_tasks()
         self.refresh_task_list()
         self._set_editor_state(True)
@@ -2571,11 +2580,15 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
     def _undo_snapshot(self):
         return (deepcopy(TASKS), deepcopy(self.mode_group_metadata), self.current_task_index)
 
-    def _push_history(self):
-        """结构编辑前记录一次快照；撤销/重做恢复过程中不再记录，避免互相污染。"""
+    def _push_history(self, snapshot=None):
+        """结构编辑前记录一次快照；撤销/重做恢复过程中不再记录，避免互相污染。
+
+        `snapshot` 可选：调用方已经改完数据、但手里留着"改动前"的快照时传进来
+        （例如「应用修改」要先算完字段才知道有没有变化）。
+        """
         if getattr(self, "_restoring_history", False):
             return
-        self.history.append(self._undo_snapshot())
+        self.history.append(snapshot if snapshot is not None else self._undo_snapshot())
         if len(self.history) > 50:
             self.history.pop(0)
         self.redo_history.clear()
@@ -3240,6 +3253,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         label.setToolTip("字段已应用并保存" if saved
                          else "有改动尚未应用：点「应用修改」后才会写入步骤")
         label.setProperty("stateKind", kind)
+        self._editor_dirty = not saved
         style = label.style()
         style.unpolish(label)
         style.polish(label)

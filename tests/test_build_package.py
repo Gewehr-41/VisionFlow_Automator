@@ -15,6 +15,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import build_package as bp
 
@@ -37,7 +38,7 @@ def fake_dist(root):
             write(target, "dll")
         else:
             write(target / "placeholder.txt", "x")
-    write(dist / "_internal" / "icons" / "1.png", "png")
+    write(dist / "_internal" / "icons" / "checkbox_checked.svg", "svg")
     return dist
 
 
@@ -47,7 +48,7 @@ def fake_target(root):
     write(target / bp.EXE_NAME, "old-exe")
     write(target / "_internal" / "lib.dll", "old-lib")
     write(target / "_internal" / "stale.dll", "should-be-gone")
-    write(target / "_internal" / "icons" / "1.png", "png")
+    write(target / "_internal" / "icons" / "checkbox_checked.svg", "svg")
     for relative, _why in bp.REQUIRED_ENTRIES:
         path = target / relative
         if relative.endswith(".dll"):
@@ -136,11 +137,18 @@ class VerifyTests(unittest.TestCase):
         problems = self._with_problems()
         self.assertTrue(any("_tk_data" in p for p in problems), problems)
 
-    def test_detects_empty_icon_library(self):
-        for item in (self.target / "_internal" / "icons").glob("*.png"):
+    def test_detects_missing_ui_svg_icons(self):
+        for item in (self.target / "_internal" / "icons").glob("*.svg"):
             os.remove(item)
         problems = self._with_problems()
-        self.assertTrue(any("模板库是空的" in p for p in problems), problems)
+        self.assertTrue(any("缺少勾选框 SVG" in p for p in problems), problems)
+
+    def test_detects_builtin_template_png_leak(self):
+        write(self.dist / "_internal" / "icons" / "1.png", "dev-template")
+        before = bp.snapshot_data(self.target)
+        bp.deploy(self.dist, self.target, log_callback=lambda *a, **k: None)
+        problems = bp.verify(self.dist, self.target, before)
+        self.assertTrue(any("开发模板图片" in p for p in problems), problems)
 
 
 class SyncDataTests(unittest.TestCase):
@@ -219,6 +227,37 @@ class CommandLineTests(unittest.TestCase):
         archive.unlink()
 
 
+class PureDistributionTests(unittest.TestCase):
+    """打包版（frozen）默认是空白软件：不带开发者的内置预设/示例步骤/模板图片。"""
+
+    def setUp(self):
+        import tasks
+        self._tmp = tempfile.TemporaryDirectory()
+        self._orig = (tasks.TASKS_FILE, tasks.PRESETS_FILE)
+        tasks.TASKS_FILE = os.path.join(self._tmp.name, "saved_tasks.json")
+        tasks.PRESETS_FILE = os.path.join(self._tmp.name, "saved_presets.json")
+
+    def tearDown(self):
+        import tasks
+        tasks.TASKS_FILE, tasks.PRESETS_FILE = self._orig
+        self._tmp.cleanup()
+
+    def test_source_mode_keeps_builtin_content(self):
+        import tasks
+        self.assertGreater(len(tasks.load_tasks()), 0, "源码运行应保留内置示例步骤")
+        presets = tasks.load_presets()
+        self.assertIn("daily", presets)
+        self.assertIn("side", presets)
+
+    def test_frozen_mode_starts_blank(self):
+        import tasks
+        with mock.patch.object(tasks.sys, "frozen", True, create=True):
+            self.assertEqual(tasks.load_tasks(), [], "打包版不应带内置示例步骤")
+            self.assertEqual(tasks.load_presets(), {}, "打包版不应带内置预设")
+            self.assertEqual(tasks.load_snippets(), {})
+            self.assertEqual(tasks.load_fallback_steps(), {})
+
+
 class PurityTests(unittest.TestCase):
     """给用户的包不能混进 saved_*.json / saved_settings.json / 用户抓图 / 数据备份。"""
 
@@ -273,7 +312,8 @@ class PurityTests(unittest.TestCase):
         spec = open("VisionFlow_Automator.spec", encoding="utf-8").read()
         self.assertIn("build_package.py --zip", bat, "双击打包.bat 应产出纯净 zip")
         self.assertIn("def _icon_datas()", spec)
-        self.assertIn("captured_", spec, "spec 要过滤用户抓图")
+        self.assertIn('name.lower().endswith(".svg")', spec,
+                      "纯净包只带界面 SVG，不带开发模板 PNG")
         self.assertIn("datas=_icon_datas()", spec, "spec 应使用过滤后的图标列表")
         self.assertNotIn("datas=[('icons', 'icons')]", spec, "spec 不能再整目录打包 icons")
 

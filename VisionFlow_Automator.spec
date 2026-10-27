@@ -100,7 +100,9 @@ def _icon_datas():
         return []
     entries = []
     for name in sorted(os.listdir(icon_root)):
-        if name.startswith("captured_"):
+        # 纯净包只带界面必需的勾选框 SVG；开发时抓的模板图片（*.png）属于开发者数据，
+        # 用户拿到的是空白模板库，自己绑定图片后写入 _internal/icons。
+        if not name.lower().endswith(".svg"):
             continue
         path = os.path.join(icon_root, name)
         if os.path.isfile(path):

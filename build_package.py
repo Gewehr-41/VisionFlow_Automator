@@ -281,8 +281,10 @@ def verify(dist_dir, target_dir, before_hashes, strict=True):
         problems.append("构建产物不纯净：" + problem)
 
     png, svg = count_icons(target)
-    if png == 0:
-        problems.append("模板库是空的（_internal/icons 里没有 PNG）")
+    if png:
+        problems.append(f"构建产物含 {png} 张开发模板图片（纯净包应为 0 张 PNG）")
+    if svg == 0:
+        problems.append("缺少勾选框 SVG 图标（_internal/icons 里没有 SVG）")
 
     # 分发目录里多出来的顶层项：不是程序项也不是数据文件，提醒一下（不算失败）
     known = {item.name for item in program_entries(dist)} | set(DATA_FILE_NAMES)
@@ -451,7 +453,8 @@ def main(argv=None):
     else:
         log("  提示：工程根目录放 app.ico 可自定义 exe / 窗口图标（没有就用默认图标）")
     png, svg = count_icons(bundle)
-    log(f"  ✓ 产物就绪：{files} 个程序文件 / {size / 1024 / 1024:.1f} MB，模板 {png} 张 PNG + {svg} 张 SVG")
+    log(f"  ✓ 产物就绪：{files} 个程序文件 / {size / 1024 / 1024:.1f} MB，"
+        f"开发模板 {png} 张 PNG（纯净包应为 0）+ 界面 {svg} 张 SVG")
 
     if args.build_only:
         log(f"  （--build-only：产物保留在 {bundle}）")
@@ -483,7 +486,7 @@ def main(argv=None):
     png, svg = count_icons(target)
     log(f"  ✓ 数据文件逐字节未变（{len(before)} 个）")
     log(f"  ✓ 程序项与构建产物一致，{files} 个文件 / {size / 1024 / 1024:.1f} MB")
-    log(f"  ✓ 模板 {png} 张 PNG + {svg} 张 SVG，SVG 插件 / 软件 OpenGL / tkinter 均在位")
+    log(f"  ✓ 纯净包：0 张开发模板 PNG + {svg} 张界面 SVG；SVG 插件 / 软件 OpenGL / tkinter 均在位")
 
     rule("5/5 收尾")
     if args.zip:

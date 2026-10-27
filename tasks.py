@@ -1,11 +1,21 @@
 # 任务与预设数据层：定义任务结构并负责 JSON 数据的加载、迁移和保存。
 import json
 import os
+import sys
 import tempfile
 import uuid
 from copy import deepcopy
 
 from diagnostics import warn
+
+
+def pure_distribution():
+    """是否为「给用户的打包版」（PyInstaller frozen）。
+
+    打包版默认是**空白软件**：不加载开发者的内置预设（daily/side）、示例步骤与模板图片，
+    避免把开发时的游戏数据发给用户；源码运行（开发机）保持原有内置内容。
+    """
+    return bool(getattr(sys, "frozen", False))
 from nodes import normalize_task
 import paths
 
@@ -149,6 +159,8 @@ def load_tasks():
             warn(f"警告: {TASKS_FILE} 内容不是任务列表，将使用内置默认任务。")
         except Exception as exc:
             warn(f"警告: 读取 {TASKS_FILE} 失败（{exc}），将使用内置默认任务。")
+    if pure_distribution():
+        return []
     return deepcopy(DEFAULT_TASKS)
 
 
@@ -231,7 +243,8 @@ DELETED_PRESET_NAMES = load_deleted_preset_names()
 
 
 def load_presets():
-    presets = {name: deepcopy(value) for name, value in TASK_PRESETS.items() if name != "custom"}
+    presets = ({} if pure_distribution()
+               else {name: deepcopy(value) for name, value in TASK_PRESETS.items() if name != "custom"})
     if os.path.exists(PRESETS_FILE):
         try:
             with open(PRESETS_FILE, "r", encoding="utf-8") as f:

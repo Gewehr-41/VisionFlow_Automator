@@ -147,6 +147,8 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
         self.selected_edge = None
         self._refreshing = False
         self._scene_rect_pending = False
+        # 编辑器正在程序化加载字段：期间控件变化不算用户改动
+        self._editor_loading = False
         self.capture_overlay = None
         self._capture_callback = None
         self.execution_states = dict(execution_states or {})
@@ -761,6 +763,7 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
         self.current_group_id = None
 
 
+        self._editor_loading = False
     def _apply_editor(self):
         if not (0 <= self.current_index < len(self.tasks)):
             return
@@ -1435,6 +1438,25 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.editor_layout = editor_layout          # 与蓝图窗口同名，便于共用构造器
         # 面板控件全部由 mixin 的共享构造器建（见 capture_overlay.py）
         self._build_shared_editor_panel(editor_layout)
+        # M1：在「类型: … | ID: …」一行后显示编辑状态胶囊（未应用 / 已保存）
+        self.editor_state_label = QLabel("已保存")
+        self.editor_state_label.setObjectName("editorState")
+        self.editor_state_label.setProperty("stateKind", "saved")
+        self.editor_state_label.setVisible(False)
+        # 与「类型 / ID」同一行：把 selected_label 和状态胶囊放进一个水平布局
+        selected_index = editor_layout.indexOf(self.selected_label)
+        if selected_index >= 0:
+            editor_layout.removeWidget(self.selected_label)
+        else:
+            selected_index = 0
+        state_row = QHBoxLayout()
+        state_row.setContentsMargins(0, 0, 0, 0)
+        state_row.setSpacing(8)
+        state_row.addWidget(self.selected_label)
+        state_row.addWidget(self.editor_state_label)
+        state_row.addStretch(1)
+        editor_layout.insertLayout(selected_index, state_row)
+        self._connect_editor_dirty_signals()
         splitter.addWidget(editor_panel)
         splitter.setStretchFactor(0, 2)
         splitter.setStretchFactor(1, 3)
@@ -1532,6 +1554,10 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             "#statusLabel[statusKind=\"done\"] { color: #ffffff; background: #16a34a; }"
             "#statusLabel[statusKind=\"stopped\"] { color: #475569; background: #e2e8f0; }"
             "#statusInfo { color: #64748b; }"
+            "#editorState { color: #475569; font-weight: bold; padding: 1px 10px; border-radius: 9px;"
+            " background: #e2e8f0; }"
+            "#editorState[stateKind=\"dirty\"] { color: #92400e; background: #fef3c7; }"
+            "#editorState[stateKind=\"saved\"] { color: #166534; background: #dcfce7; }"
             "#emptyState { color: #94a3b8; font-size: 13px; padding: 16px; }"
             "#runProgress { min-height: 18px; max-height: 20px; border: 1px solid #cbd5e1; border-radius: 5px;"
             " background: #ffffff; color: #334155; text-align: center; font-weight: bold; }"
@@ -1612,26 +1638,32 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
     @Slot(QTreeWidgetItem, QTreeWidgetItem)
     def load_selected_task(self, item, _previous_item):
         self._show_editor_page(False)
-        if item is not None and item.data(0, Qt.UserRole) == "group":
-            # 选中的是分组：清掉旧的步骤下标，避免"插入片段"按上一步骤的位置插错地方
-            self.current_task_index = -1
-            self._load_editor_for_group(str(item.data(0, Qt.UserRole + 1)))
-            return
-        index = self._task_index_from_item(item)
-        if index is None or not 0 <= index < len(TASKS):
-            self.current_task_index = -1
-            self.clear_editor()
-            return
-        self.current_task_index = index
-        self.current_group_id = None
-        self.group_form.setVisible(False)
-        task = TASKS[index]
-        self.selected_label.setText(f"类型: {task.get('type', 'normal')} | ID: {task.get('id', '')}")
-        is_click_until = task.get("type") == "click_until_gone"
-        is_recognition = task.get("type", "normal") in ("normal", "advanced")
-        self._update_editor_visibility(task)
-        self.special_group.setTitle("持续点击设置" if is_click_until else "类型专用字段" if is_recognition else "步骤设置")
-        self._load_common_editor_fields(task)
+        self._editor_loading = True
+        try:
+            if item is not None and item.data(0, Qt.UserRole) == "group":
+                # 选中的是分组：置空的步骤下标，分组「保存片段」等动作仍能找回
+                self.current_task_index = -1
+                self._hide_editor_state()
+                self._load_editor_for_group(str(item.data(0, Qt.UserRole + 1)))
+                return
+            index = self._task_index_from_item(item)
+            if index is None or not 0 <= index < len(TASKS):
+                self.current_task_index = -1
+                self.clear_editor()
+                return
+            self.current_task_index = index
+            self.current_group_id = None
+            self.group_form.setVisible(False)
+            task = TASKS[index]
+            self.selected_label.setText(f"类型: {task.get('type', 'normal')} | ID: {task.get('id', '')}")
+            is_click_until = task.get("type") == "click_until_gone"
+            is_recognition = task.get("type", "normal") in ("normal", "advanced")
+            self._update_editor_visibility(task)
+            self.special_group.setTitle("特殊字段设置" if is_click_until else "识别专用字段" if is_recognition else "类型设置")
+            self._load_common_editor_fields(task)
+        finally:
+            self._editor_loading = False
+        self._set_editor_state(True)
 
     def _editor_timeout_text(self, task):
         """主窗口：「超时(秒)」初值会回退到旧的 wait_timeout 字段（历史差异）。"""
@@ -1738,6 +1770,8 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
 
 
     def clear_editor(self):
+        self._editor_loading = True
+        self._hide_editor_state()
         self._show_editor_page(True)
         self.selected_label.setText("未选择步骤")
         self.template_preview.setPixmap(QPixmap())
@@ -1773,6 +1807,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
 
 
     @Slot(QTreeWidgetItem, int)
+
     def on_item_changed(self, item, _column):
         index = self._task_index_from_item(item)
         if index is not None and 0 <= index < len(TASKS):
@@ -2390,6 +2425,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self._apply_special_fields(task)
         self.save_current_tasks()
         self.refresh_task_list()
+        self._set_editor_state(True)
         self.select_task_index(self.current_task_index)
         self.append_log(f"已应用第 {self.current_task_index + 1} 步修改。")
 
@@ -3155,6 +3191,70 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
 
     def _mark_step_result(self, task_id, state):
         self._apply_execution_marks()
+
+    # ---------- M1：编辑状态（未应用 / 已保存） ----------
+
+    _DIRTY_LINE_EDITS = (
+        "description_edit", "template_edit", "threshold_edit", "timeout_edit",
+        "retry_count_edit", "retry_interval_edit", "after_wait_edit",
+        "click_x_edit", "click_y_edit", "next_template_edit",
+        "click_until_template_edit", "click_until_interval_edit",
+        "click_until_stop_delay_edit", "click_until_timeout_edit",
+        "ocr_text_edit", "ocr_confidence_edit",
+    )
+    _DIRTY_CHECKBOXES = (
+        "enabled_checkbox", "click_checkbox", "optional_checkbox",
+        "match_required_checkbox", "click_until_continue_checkbox",
+        "click_until_stop_on_change_checkbox", "ocr_checkbox", "ocr_case_checkbox",
+    )
+    _DIRTY_COMBOS = ("match_strategy_combo", "wait_for_combo", "ocr_match_combo")
+
+    def _connect_editor_dirty_signals(self):
+        """用户动过编辑器的任何字段 → 状态变「未应用」。"""
+        for name in self._DIRTY_LINE_EDITS:
+            widget = getattr(self, name, None)
+            if widget is not None:
+                widget.textEdited.connect(lambda *_: self._mark_editor_dirty())
+        for name in self._DIRTY_CHECKBOXES:
+            widget = getattr(self, name, None)
+            if widget is not None:
+                widget.toggled.connect(lambda *_: self._mark_editor_dirty())
+        for name in self._DIRTY_COMBOS:
+            widget = getattr(self, name, None)
+            if widget is not None:
+                widget.currentIndexChanged.connect(lambda *_: self._mark_editor_dirty())
+
+    def _set_editor_state(self, saved, visible=True):
+        """更新「未应用 / 已保存」胶囊（QSS 用 stateKind 上色）。"""
+        label = getattr(self, "editor_state_label", None)
+        if label is None:
+            return
+        label.setVisible(visible)
+        if not visible:
+            return
+        kind = "saved" if saved else "dirty"
+        label.setText("已保存" if saved else "未应用")
+        label.setToolTip("字段已应用并保存" if saved
+                         else "有改动尚未应用：点「应用修改」后才会写入步骤")
+        label.setProperty("stateKind", kind)
+        style = label.style()
+        style.unpolish(label)
+        style.polish(label)
+
+    def _hide_editor_state(self):
+        label = getattr(self, "editor_state_label", None)
+        if label is not None:
+            label.setVisible(False)
+
+    def _mark_editor_dirty(self):
+        if getattr(self, "_editor_loading", False):
+            return
+        if not 0 <= self.current_task_index < len(TASKS):
+            return
+        label = getattr(self, "editor_state_label", None)
+        if label is None or not label.isVisible():
+            return
+        self._set_editor_state(False)
 
     def show_about(self):
         data_dir = paths.data_dir()

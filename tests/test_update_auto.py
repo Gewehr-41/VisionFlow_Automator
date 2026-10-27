@@ -85,39 +85,86 @@ class UpdateHelperTests(unittest.TestCase):
         self.install.mkdir()
         self.staged.mkdir()
         (self.install / update_ui.UPDATE_EXE).write_text("old", encoding="utf-8")
+        (self.install / "_internal").mkdir()
+        (self.install / "_internal" / "old.dll").write_text("old-lib", encoding="utf-8")
+        (self.install / "saved_tasks.json").write_text("user-data", encoding="utf-8")
         (self.staged / update_ui.UPDATE_EXE).write_text("new", encoding="utf-8")
+        (self.staged / "_internal").mkdir()
+        (self.staged / "_internal" / "new.dll").write_text("new-lib", encoding="utf-8")
 
     def tearDown(self):
         self._tmp.cleanup()
 
+    def _script(self, pid=4321):
+        return Path(update_ui.build_update_helper(self.install, self.staged, pid, log_dir=self.root))
+
     def test_helper_contains_wait_backup_copy_restart(self):
-        bat = Path(update_ui.build_update_helper(self.install, self.staged, 4321, log_dir=self.root))
-        text = bat.read_text(encoding="utf-8")
-        self.assertIn("PID eq 4321", text)
+        text = self._script().read_text(encoding="utf-8")
+        self.assertIn("$PID_TO_WAIT = 4321", text)
+        self.assertIn("Get-Process -Id $PID_TO_WAIT", text)
+        self.assertIn("AddSeconds(120)", text, "等待旧进程要有超时，不能无限卡住")
         self.assertIn(update_ui.UPDATE_BACKUP_PREFIX, text)
         self.assertIn("robocopy", text)
-        self.assertIn('start "" "%DST%\\' + update_ui.UPDATE_EXE + '"', text)
-        self.assertIn("goto restore", text)
+        self.assertIn("Restore-From-Backup", text, "复制失败要回滚")
+        self.assertIn("Start-Process -FilePath (Join-Path $DST", text, "替换完要重启程序")
         self.assertNotIn("saved_tasks.json", text, "更新助手不应碰用户数据")
 
-    @unittest.skipUnless(os.name == "nt", "替换助手是 Windows 批处理")
+    def test_helper_is_utf8_bom_for_chinese_paths(self):
+        raw = self._script().read_bytes()
+        self.assertTrue(raw.startswith(b"\xef\xbb\xbf"),
+                        "Windows PowerShell 5.1 需要 UTF-8 BOM 才能正确解析中文路径")
+
+    def test_helper_paths_are_absolute(self):
+        text = self._script().read_text(encoding="utf-8")
+        self.assertIn(str(self.install.resolve()), text)
+        self.assertIn(str(self.staged.resolve()), text)
+
+    @unittest.skipUnless(os.name == "nt", "替换助手是 PowerShell 脚本")
+    def test_helper_waits_for_live_process_to_exit(self):
+        """旧进程还没退出时助手必须等待，不能立刻替换（旧版卡住/抢跑都源于此）。"""
+        import subprocess
+        import time
+
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(2)"])
+        try:
+            script = self._script(pid=child.pid)
+            lines = []
+            for line in script.read_text(encoding="utf-8-sig").splitlines():
+                if "Start-Process -FilePath (Join-Path $DST" in line:
+                    lines.append("Write-UpLog 'skip launch'")
+                else:
+                    lines.append(line)
+            script.write_bytes(b"\xef\xbb\xbf" + "\r\n".join(lines).encode("utf-8"))
+            started = time.time()
+            completed = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)],
+                timeout=90, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            elapsed = time.time() - started
+        finally:
+            child.kill()
+            child.wait(timeout=10)
+        self.assertEqual(completed.returncode, 0, completed.stdout.decode("utf-8", "replace"))
+        self.assertGreaterEqual(elapsed, 1.5, "助手应等待旧进程退出后再替换")
+        self.assertEqual((self.install / update_ui.UPDATE_EXE).read_text(encoding="utf-8"), "new")
+
+    @unittest.skipUnless(os.name == "nt", "替换助手是 PowerShell 脚本")
     def test_helper_replaces_files_and_backs_up_old_program(self):
-        """实际跑一遍助手（把 start 重启替换成 echo），验证备份 + 替换 + 用户数据不动。"""
+        """实际跑一遍助手（把启动程序替换成写日志），验证备份 + 替换 + 用户数据不动。"""
         import subprocess
 
-        (self.install / "_internal").mkdir()
-        (self.install / "_internal" / "old.dll").write_text("old-lib", encoding="utf-8")
-        (self.install / "saved_tasks.json").write_text("user-data", encoding="utf-8")
-        (self.staged / "_internal").mkdir()
-        (self.staged / "_internal" / "new.dll").write_text("new-lib", encoding="utf-8")
-        bat = Path(update_ui.build_update_helper(self.install, self.staged, 999999, log_dir=self.root))
+        script = self._script(pid=999999)
         lines = []
-        for line in bat.read_text(encoding="utf-8").splitlines():
-            lines.append("echo [skip launch]" if line.strip().startswith("start ") else line)
-        bat.write_bytes("\r\n".join(lines).encode("utf-8"))
-        completed = subprocess.run(["cmd.exe", "/c", str(bat)], timeout=60,
-                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        self.assertEqual(completed.returncode, 0, completed.stdout.decode("utf-8", "replace"))
+        for line in script.read_text(encoding="utf-8-sig").splitlines():
+            if "Start-Process -FilePath (Join-Path $DST" in line:
+                lines.append("Write-UpLog 'skip launch'")
+            else:
+                lines.append(line)
+        script.write_bytes(b"\xef\xbb\xbf" + "\r\n".join(lines).encode("utf-8"))
+        completed = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)],
+            timeout=90, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        self.assertEqual(completed.returncode, 0,
+                         completed.stdout.decode("utf-8", "replace"))
         self.assertEqual((self.install / update_ui.UPDATE_EXE).read_text(encoding="utf-8"), "new")
         self.assertTrue((self.install / "_internal" / "new.dll").exists())
         self.assertEqual((self.install / "saved_tasks.json").read_text(encoding="utf-8"), "user-data",
@@ -125,12 +172,6 @@ class UpdateHelperTests(unittest.TestCase):
         backups = list(self.install.glob(update_ui.UPDATE_BACKUP_PREFIX + "*"))
         self.assertEqual(len(backups), 1)
         self.assertEqual((backups[0] / update_ui.UPDATE_EXE).read_text(encoding="utf-8"), "old")
-
-    def test_helper_paths_are_absolute(self):
-        bat = Path(update_ui.build_update_helper(self.install, self.staged, 1, log_dir=self.root))
-        text = bat.read_text(encoding="utf-8")
-        self.assertIn(str(self.install.resolve()), text)
-        self.assertIn(str(self.staged.resolve()), text)
 
 
 class AutoUpdateGuardTests(unittest.TestCase):

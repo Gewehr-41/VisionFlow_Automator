@@ -3129,6 +3129,8 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             return
         self.close()
         QApplication.instance().quit()
+        # 兜底：万一关闭/quit 被别的事件卡住，0.8 秒后强制退出，确保更新助手能继续
+        QTimer.singleShot(800, lambda: os._exit(0))
 
     @Slot()
     def open_blueprint(self):

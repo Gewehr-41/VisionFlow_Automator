@@ -129,76 +129,102 @@ def extract_update_zip(zip_path, extract_root):
 
 
 def build_update_helper(install_dir, staged_dir, pid, log_dir=None):
-    """生成"退出后替换并重启"的批处理助手，返回 .bat 路径。
+    """生成"退出后替换并重启"的 PowerShell 助手，返回 .ps1 路径。
 
-    只替换 exe 和 _internal，**不动 saved_*.json 用户数据**；替换前把旧程序移到
-    `_backup_update_*` 备份，失败会自动回滚。
+    - 用 `Get-Process` 轮询等待旧进程退出（带 120 秒超时，不会无限卡住）；
+    - 只替换 exe 和 _internal，**不动 saved_*.json 用户数据**；
+    - 替换前把旧程序移到 `_backup_update_*`，失败自动回滚；
+    - 整个过程由隐藏的 PowerShell 窗口执行，用户不会看到终端。
     """
     install = Path(install_dir).resolve()
     staged = Path(staged_dir).resolve()
     log_dir = Path(log_dir or tempfile.gettempdir()).resolve()
     stamp = time.strftime("%Y%m%d_%H%M%S")
     backup = install / f"{UPDATE_BACKUP_PREFIX}{stamp}"
-    bat = log_dir / f"vf_update_{stamp}_{pid}.bat"
+    script = log_dir / f"vf_update_{stamp}_{pid}.ps1"
     log = log_dir / f"vf_update_{stamp}_{pid}.log"
 
-    def quoted(expr):
-        return '"' + expr + '"'
+    def ps(value):
+        return "'" + str(value).replace("'", "''") + "'"
 
-    dst_exe = quoted("%DST%" + "\\" + UPDATE_EXE)
-    backup_exe = quoted("%BACKUP%" + "\\" + UPDATE_EXE)
-    dst_internal = quoted("%DST%" + "\\_internal")
-    backup_internal = quoted("%BACKUP%" + "\\_internal")
-    dst_internal_dir = "%DST%" + "\\_internal"
-    backup_internal_dir = "%BACKUP%" + "\\_internal"
+    d = "$DST"
+    b = "$BACKUP"
+    src = "$SRC"
     lines = [
-        "@echo off",
-        "chcp 65001 >nul",
-        "setlocal",
-        'set "SRC=' + str(staged) + '"',
-        'set "DST=' + str(install) + '"',
-        'set "BACKUP=' + str(backup) + '"',
-        'set "LOG=' + str(log) + '"',
-        'echo [update] wait for app exit >> "%LOG%"',
-        ":wait",
-        'tasklist /FI "PID eq ' + str(pid) + '" 2>nul | find " ' + str(pid) + ' " >nul',
-        "if not errorlevel 1 (",
-        "  timeout /t 1 /nobreak >nul",
-        "  goto wait",
-        ")",
-        'echo [update] backup old program >> "%LOG%"',
-        'if not exist "%BACKUP%" mkdir "%BACKUP%"',
-        "move /y " + dst_exe + " \"%BACKUP%\" >> \"%LOG%\" 2>&1",
-        'if exist ' + dst_internal + ' move /y ' + dst_internal + ' "%BACKUP%" >> "%LOG%" 2>&1',
-        'echo [update] copy new program >> "%LOG%"',
-        'robocopy "%SRC%" "%DST%" /E /COPY:DAT /R:1 /W:1 /NFL /NDL /NJH /NJS /NP >> "%LOG%" 2>&1',
-        "if errorlevel 8 goto restore",
-        'if not exist "%DST%\\' + UPDATE_EXE + '" goto restore',
-        'start "" ' + dst_exe,
-        'rmdir /s /q "%SRC%"',
-        "exit /b 0",
-        ":restore",
-        'echo [update] copy failed, restoring backup >> "%LOG%"',
-        "move /y " + backup_exe + " \"%DST%\" >> \"%LOG%\" 2>&1",
-        'if exist ' + backup_internal + ' move /y ' + backup_internal + ' "%DST%" >> "%LOG%" 2>&1',
-        'start "" ' + dst_exe,
-        "exit /b 1",
+        "$ErrorActionPreference = 'Stop'",
+        f"$PID_TO_WAIT = {int(pid)}",
+        f"$SRC = {ps(staged)}",
+        f"$DST = {ps(install)}",
+        f"$BACKUP = {ps(backup)}",
+        f"$LOG = {ps(log)}",
+        "function Write-UpLog([string]$text) {",
+        "  Add-Content -LiteralPath $LOG -Value ('[{0}] {1}' -f (Get-Date -Format 'HH:mm:ss'), $text)",
+        "}",
+        "Write-UpLog 'wait for app exit'",
+        "$deadline = (Get-Date).AddSeconds(120)",
+        "while ($true) {",
+        "  $proc = Get-Process -Id $PID_TO_WAIT -ErrorAction SilentlyContinue",
+        "  if (-not $proc) { break }",
+        "  if ((Get-Date) -gt $deadline) {",
+        "    Write-UpLog 'timeout waiting for app exit; abort update'",
+        "    exit 2",
+        "  }",
+        "  Start-Sleep -Milliseconds 500",
+        "}",
+        "Write-UpLog 'backup old program'",
+        "New-Item -ItemType Directory -Path $BACKUP -Force | Out-Null",
+        "function Move-Into-Backup([string]$name) {",
+        "  $source = Join-Path $DST $name",
+        "  if (Test-Path -LiteralPath $source) {",
+        "    Move-Item -LiteralPath $source -Destination $BACKUP -Force -ErrorAction Stop",
+        "  }",
+        "}",
+        "function Restore-From-Backup([string]$name) {",
+        "  $source = Join-Path $BACKUP $name",
+        "  if (Test-Path -LiteralPath $source) {",
+        "    Move-Item -LiteralPath $source -Destination $DST -Force -ErrorAction SilentlyContinue",
+        "  }",
+        "}",
+        f"try {{",
+        f"  Move-Into-Backup {ps(UPDATE_EXE)}",
+        f"  Move-Into-Backup {ps('_internal')}",
+        "  Write-UpLog 'copy new program'",
+        f"  & robocopy $SRC {d} /E /COPY:DAT /R:1 /W:1 /NFL /NDL /NJH /NJS /NP *>> $LOG",
+        "  if ($LASTEXITCODE -ge 8) { throw ('robocopy failed: ' + $LASTEXITCODE) }",
+        f"  if (-not (Test-Path -LiteralPath (Join-Path $DST {ps(UPDATE_EXE)}))) {{ throw 'new exe missing after copy' }}",
+        "  Write-UpLog 'restart updated app'",
+        f"  Start-Process -FilePath (Join-Path $DST {ps(UPDATE_EXE)}) -WorkingDirectory $DST",
+        f"  Remove-Item -LiteralPath $SRC -Recurse -Force -ErrorAction SilentlyContinue",
+        "  exit 0",
+        "} catch {",
+        "  Write-UpLog ('update failed: ' + $_)",
+        f"  Remove-Item -LiteralPath (Join-Path $DST {ps(UPDATE_EXE)}) -Force -ErrorAction SilentlyContinue",
+        f"  Remove-Item -LiteralPath (Join-Path $DST {ps('_internal')}) -Recurse -Force -ErrorAction SilentlyContinue",
+        f"  Restore-From-Backup {ps(UPDATE_EXE)}",
+        f"  Restore-From-Backup {ps('_internal')}",
+        "  Write-UpLog 'restart old app'",
+        f"  Start-Process -FilePath (Join-Path $DST {ps(UPDATE_EXE)}) -WorkingDirectory $DST -ErrorAction SilentlyContinue",
+        "  exit 1",
+        "}",
         "",
     ]
-    # 用 write_bytes 避免 Windows 文本模式把 \n 再翻译一次（生成空行/\r\r\n）
-    bat.write_bytes(("\r\n".join(lines)).encode("utf-8"))
-    return str(bat)
+    # Windows PowerShell 5.1 默认按 ANSI 读无 BOM 脚本，中文安装路径会乱码；
+    # 用 UTF-8 BOM 写入，保证 "打包版" 这种路径能正确解析。
+    script.write_bytes(b"\xef\xbb\xbf" + ("\r\n".join(lines)).encode("utf-8"))
+    return str(script)
 
 
 def launch_update_helper(helper_path):
-    """脱离当前进程启动更新助手（当前程序随后退出）。"""
-    creationflags = 0
-    for name in ("DETACHED_PROCESS", "CREATE_NEW_PROCESS_GROUP"):
-        creationflags |= getattr(subprocess, name, 0)
-    subprocess.Popen(["cmd.exe", "/c", str(helper_path)],
-                     cwd=str(Path(helper_path).parent),
-                     creationflags=creationflags,
-                     close_fds=True)
+    """用隐藏窗口的 PowerShell 启动更新助手，随后当前程序退出。"""
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    creationflags |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    subprocess.Popen(
+        ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+         "-WindowStyle", "Hidden", "-File", str(helper_path)],
+        cwd=str(Path(helper_path).parent),
+        creationflags=creationflags,
+        close_fds=True,
+    )
 
 
 def update_message(result):

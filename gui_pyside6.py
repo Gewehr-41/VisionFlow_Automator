@@ -153,6 +153,7 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
         self.view.interaction_finished.connect(self.sync_positions)
         self.view.group_toggle_requested.connect(self.toggle_group)
         self.view.group_enter_requested.connect(self.enter_group)
+        self.view.leave_focus_requested.connect(self.leave_group)
         self.view.node_toggle_requested.connect(self.toggle_collapse)
         self.view.wire_clicked.connect(self._on_wire_clicked)
         self.view.wires_cut.connect(self._on_wires_cut)

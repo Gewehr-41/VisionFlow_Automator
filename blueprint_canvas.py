@@ -584,6 +584,7 @@ class BlueprintView(QGraphicsView):
     interaction_finished = Signal()
     group_toggle_requested = Signal(str)
     group_enter_requested = Signal(str)
+    leave_focus_requested = Signal()          # 双击空白 → 返回上一层（子图导航）
     node_toggle_requested = Signal(int)
     wire_clicked = Signal(object)
     wires_cut = Signal(object)   # Ctrl+右键划过：携带被划中的 BlueprintWireItem 列表
@@ -971,6 +972,11 @@ class BlueprintView(QGraphicsView):
         node = self._node_item_from(item)
         if node is not None:
             self.node_toggle_requested.emit(node.index)
+            event.accept()
+            return
+        if item is None:
+            # 双击空白区域：返回上一层（在子图内部时）；根层时由窗口侧忽略
+            self.leave_focus_requested.emit()
             event.accept()
             return
         super().mouseDoubleClickEvent(event)

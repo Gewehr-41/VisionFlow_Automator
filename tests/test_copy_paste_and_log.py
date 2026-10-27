@@ -162,6 +162,16 @@ class LogPanelTests(unittest.TestCase):
         self.assertLessEqual(self.window.log_box.blockCount(), 5000,
                              "超过上限后应丢弃最旧的日志行")
 
+    def test_clear_log_button_is_after_about_in_status_bar(self):
+        from PySide6.QtWidgets import QWidget
+
+        window = self.window
+        self.assertIsInstance(window.clear_log_button.parent(), QWidget)
+        self.assertTrue(window.status_bar_widget.isAncestorOf(window.clear_log_button),
+                        "「清空日志」应放在底部状态栏")
+        self.assertLess(window.about_button.x(), window.clear_log_button.x(),
+                        "「清空日志」应排在「关于」后面")
+
     def test_clear_log_button_clears_panel(self):
         self.window.append_log("待清空的日志")
         _APP.processEvents()

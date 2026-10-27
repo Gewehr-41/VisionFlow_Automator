@@ -1470,15 +1470,6 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
 
         log_panel = QGroupBox("日志输出")
         log_layout = QVBoxLayout(log_panel)
-        log_toolbar = QHBoxLayout()
-        log_toolbar.setContentsMargins(0, 0, 0, 0)
-        log_toolbar.addStretch(1)
-        self.clear_log_button = QPushButton("清空日志")
-        self.clear_log_button.setObjectName("secondaryButton")
-        self.clear_log_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        self.clear_log_button.clicked.connect(self.clear_log)
-        log_toolbar.addWidget(self.clear_log_button)
-        log_layout.addLayout(log_toolbar)
         self.log_box = QPlainTextEdit()
         self.log_box.setReadOnly(True)
         # M6：日志最多保留 5000 行，避免长脚本/循环执行无限增长导致卡顿
@@ -1539,6 +1530,12 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.about_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.about_button.clicked.connect(self.show_about)
         status_layout.addWidget(self.about_button)
+        # 清空日志放在「关于」后面
+        self.clear_log_button = QPushButton("清空日志")
+        self.clear_log_button.setObjectName("secondaryButton")
+        self.clear_log_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.clear_log_button.clicked.connect(self.clear_log)
+        status_layout.addWidget(self.clear_log_button)
         root_layout.addWidget(status_bar)
 
         # 这两个 SVG 是**程序自带的界面资源**（复选框指示器），不是用户模板。

@@ -104,7 +104,9 @@ def _icon_datas():
             continue
         path = os.path.join(icon_root, name)
         if os.path.isfile(path):
-            entries.append((path, os.path.join("icons", name)))
+            # PyInstaller 的 datas 第二项是**目标目录**：写成 ("icons/1.png") 会建出
+            # `_internal/icons/1.png/` 目录（启动时 np.fromfile 会 PermissionError）。
+            entries.append((path, "icons"))
     return entries
 
 

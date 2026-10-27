@@ -15,6 +15,11 @@
 ## 2026-10-27
 
 ### 修复
+- **修复打包版启动报 `PermissionError`**：`.spec` 的 `datas` 第二项是**目标目录**，之前写成 `icons/文件名`
+  导致 `_internal/icons/1.png` 被建成了**目录**，启动加载模板时 `np.fromfile` 报 `Permission denied`。
+  现在改为 `(文件路径, "icons")`；打包校验里的模板统计/用户抓图检查也只认文件。已用真实构建 + 启动冒烟验证。
+
+
 - **打包版支持自定义图标**：把 `app.ico` 放到工程根目录（或 `icons/app.ico`）后重新打包，
   exe、窗口标题栏与任务栏都会使用它；没有该文件时保持默认图标。`.spec` 同时会把 `app.ico`
   放进 `_internal` 供运行时读取。

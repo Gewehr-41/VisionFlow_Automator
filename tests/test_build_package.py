@@ -231,6 +231,20 @@ class PurityTests(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
+    def test_count_icons_ignores_directories_named_png(self):
+        """回归：datas 写错时 `_internal/icons/1.png` 会变成目录，不能算成一张模板。"""
+        icons = self.target / "_internal" / "icons"
+        before, before_svg = bp.count_icons(self.target)
+        (icons / "bad.png").mkdir(parents=True, exist_ok=True)
+        after, after_svg = bp.count_icons(self.target)
+        self.assertEqual(after, before, "目录不能算成模板 PNG")
+        self.assertEqual(after_svg, before_svg)
+
+    def test_spec_maps_icon_files_to_the_icons_directory(self):
+        spec = open("VisionFlow_Automator.spec", encoding="utf-8").read()
+        self.assertIn("entries.append((path, \"icons\"))", spec,
+                      "datas 第二项必须是目标目录，否则会建出 _internal/icons/1.png/ 目录")
+
     def test_clean_bundle_has_no_purity_problems(self):
         self.assertEqual(bp.purity_problems(self.dist), [])
         self.assertEqual(bp.user_data_entries(self.dist), [])

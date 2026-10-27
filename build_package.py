@@ -148,8 +148,8 @@ def count_icons(base_dir):
     icon_dir = Path(base_dir) / "_internal" / "icons"
     if not icon_dir.is_dir():
         return 0, 0
-    png = sum(1 for p in icon_dir.glob("*.png"))
-    svg = sum(1 for p in icon_dir.glob("*.svg"))
+    png = sum(1 for p in icon_dir.glob("*.png") if p.is_file())
+    svg = sum(1 for p in icon_dir.glob("*.svg") if p.is_file())
     return png, svg
 
 
@@ -336,7 +336,7 @@ def purity_problems(directory):
     if backups:
         problems.append("包含数据备份目录：" + "、".join(backups))
     icon_dir = base / "_internal" / "icons"
-    captured = (sorted(item.name for item in icon_dir.glob("captured_*"))
+    captured = (sorted(item.name for item in icon_dir.glob("captured_*") if item.is_file())
                 if icon_dir.is_dir() else [])
     if captured:
         problems.append(f"包含用户抓图 {len(captured)} 张（captured_*.png）")

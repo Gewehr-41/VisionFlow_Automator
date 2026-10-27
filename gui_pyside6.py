@@ -476,9 +476,10 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
                 continue
             source = node_items[source_index]
             target = node_items[target_index]
-            source_collapsed = self._collapsed_group_for(source_index)
-            target_collapsed = self._collapsed_group_for(target_index)
-            if source_collapsed is not None and source_collapsed == target_collapsed:
+            source_box = self._collapsed_box(source_index)
+            target_box = self._collapsed_box(target_index)
+            if source_box is not None and source_box is target_box:
+                # 两端都被折叠进同一个组框（含嵌套折叠）：这条线在框内不可见，跳过
                 continue
             wire = BlueprintWireItem()
             self.scene.addItem(wire)

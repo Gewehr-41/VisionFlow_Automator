@@ -15,6 +15,21 @@ from PySide6.QtWidgets import QColorDialog, QInputDialog, QMenu, QMessageBox
 from blueprint_canvas import BlueprintGroupItem, BlueprintNodeItem
 
 
+def group_inside_focus(group_id, focus_group, parents):
+    """该组是否位于当前聚焦的子图内部（含聚焦组自己）。纯函数，便于单测。"""
+    if not focus_group:
+        return False
+    current = str(group_id)
+    seen = set()
+    while current and current not in seen:
+        if current == str(focus_group):
+            return True
+        seen.add(current)
+        parent = parents.get(current)
+        current = str(parent) if parent else ""
+    return False
+
+
 class BlueprintGroupMixin:
     """分组相关方法；依赖宿主窗口提供 scene / tasks / group_metadata / layout_data 等。"""
 
@@ -104,12 +119,19 @@ class BlueprintGroupMixin:
                 current = parents.get(str(current))
             return False
 
+        focus = getattr(self, "focus_group", None)
+        parents_map = self._group_parents()
+
+        def inside_focus(group_id):
+            return group_inside_focus(group_id, focus, parents_map)
+
         def render(group_id):
             group_id = str(group_id)
             if group_id == "group_default" or group_id in rendered:
                 return
-            if has_collapsed_ancestor(group_id):
-                # 上级组已收起成"群组节点"时，子组框不该再画出来（否则根层会多一个空框）
+            if has_collapsed_ancestor(group_id) and not inside_focus(group_id):
+                # 上级组已收起成"群组节点"时，子组框不该再画出来（否则根层会多一个空框）；
+                # 但聚焦在这个折叠组内部时必须渲染，否则"看不到组内的组"。
                 return
             rendered.add(group_id)
             bounds = bounds_for(group_id)
@@ -132,9 +154,8 @@ class BlueprintGroupMixin:
                 box.set_move_callback(self._on_empty_group_moved)
                 self.scene.addItem(box)
                 self._group_items[group_id] = box
-            if group_id not in self.collapsed_groups:
-                for child in children.get(group_id, []):
-                    render(child)
+            for child in children.get(group_id, []):
+                render(child)
 
         for group_id in order:
             render(group_id)

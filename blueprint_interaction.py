@@ -13,6 +13,29 @@ from PySide6.QtWidgets import QGraphicsTextItem
 from blueprint_canvas import BendHandleItem, BlueprintGroupItem, BlueprintNodeItem, BlueprintWireItem
 
 
+def find_rendered_collapsed_box(tasks, index, collapsed_groups, group_items, parents):
+    """节点所属的、**实际渲染出来**的最近折叠组框；找不到返回 None。
+
+    嵌套子组的框在祖先折叠时不会渲染（见 _render_groups），所以不能直接取"最近折叠组"，
+    必须往上找到第一个真的有框的折叠组；否则连线端点会退回到隐藏节点坐标（悬空线）。
+    抽成纯函数便于单测（不需要 Qt 场景）。
+    """
+    if not (0 <= index < len(tasks)):
+        return None
+    group_id = str(tasks[index].get("group_id") or "group_default")
+    current = group_id
+    seen = set()
+    while current and current != "group_default" and current not in seen:
+        seen.add(current)
+        if str(current) in collapsed_groups:
+            box = group_items.get(str(current))
+            if box is not None:
+                return box
+        parent = parents.get(current)
+        current = str(parent) if parent else ""
+    return None
+
+
 class BlueprintInteractionMixin:
     """画布交互相关方法；依赖宿主窗口提供 scene / view / tasks / layout_data 等。"""
 
@@ -70,15 +93,21 @@ class BlueprintInteractionMixin:
                 sy = node.port_y(spec[2]) if spec else node.rect().height() / 2
                 return QPointF(node.x() + node.rect().width(), node.y() + sy)
             return QPointF(node.x(), node.y() + node.rect().height() / 2)
-        # 隐藏节点 → 路由到折叠组框
-        group_id = self._collapsed_group_for(index)
-        box = self._group_items.get(group_id) if group_id else None
+        # 隐藏节点 → 路由到**实际渲染出来**的折叠组框。
+        # 嵌套子组的框在祖先折叠时不会渲染（见 _render_groups），若直接按最近折叠组取框，
+        # 会拿到不存在的框、退回到隐藏节点坐标 → 线悬在空处（"组内的组连线没被折叠"）。
+        box = self._collapsed_box(index)
         if box is not None:
             rect = box.sceneBoundingRect()
             if side == "output":
                 return QPointF(rect.right(), rect.center().y())
             return QPointF(rect.left(), rect.center().y())
         return QPointF(node.x(), node.y() + node.rect().height() / 2)
+
+    def _collapsed_box(self, index):
+        """节点所属的、**已渲染**的最近折叠组框；找不到返回 None。"""
+        return find_rendered_collapsed_box(
+            self.tasks, index, self.collapsed_groups, self._group_items, self._group_parents())
 
     def _on_node_moved(self, node):
         positions = self.layout_data.setdefault("positions", {})

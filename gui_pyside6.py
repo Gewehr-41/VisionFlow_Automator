@@ -64,6 +64,7 @@ from nodes import JUMP_FIELD_LABELS, NodeGraph, fill_missing_connections, remap_
 from capture_overlay import CaptureOverlay, CaptureOverlayMixin, _build_step_list_editor
 from blueprint_groups import BlueprintGroupMixin
 from blueprint_interaction import BlueprintInteractionMixin
+from blueprint_snippets import BlueprintSnippetMixin
 from blueprint_canvas import (
     BendHandleItem,
     BlueprintGroupItem,
@@ -104,7 +105,7 @@ from ui_common import (
 
 
 class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
-                     CaptureOverlayMixin, QMainWindow):
+                     BlueprintSnippetMixin, CaptureOverlayMixin, QMainWindow):
     _BASIC_FIELDS = {
         "id", "type", "mode", "enabled", "template", "templates", "description",
         "threshold", "timeout", "wait_timeout", "after_wait", "click", "optional", "required",
@@ -115,10 +116,14 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
         "detour_jump_to", "detour_success_jump_to",
     }
 
-    def __init__(self, tasks, layout_data, save_callback, group_metadata=None, parent=None, execution_states=None):
+    def __init__(self, tasks, layout_data, save_callback, group_metadata=None, parent=None,
+                 execution_states=None, snippets_provider=None, snippets_save=None):
         super().__init__(parent)
         self.tasks = tasks
         self.save_callback = save_callback
+        # 片段库由主窗口注入（同一份 __snippets__ 数据，蓝图不另存一份）
+        self.snippets_provider = snippets_provider
+        self.snippets_save = snippets_save
         self.layout_data = layout_data if isinstance(layout_data, dict) else {}
         self.group_metadata = group_metadata if isinstance(group_metadata, dict) else {}
         self.history = []
@@ -667,6 +672,8 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
             self._add_group_menu(menu)
         paste_action = menu.addAction("粘贴", self.paste_tasks)
         paste_action.setEnabled(bool(self.clipboard))
+        menu.addSeparator()
+        self._add_snippet_menu(menu, (scene_position.x(), scene_position.y()))
         menu.exec(self.view.mapToGlobal(position))
 
 
@@ -2782,6 +2789,8 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             group_metadata,
             self,
             self.execution_states,
+            snippets_provider=lambda: self.snippets,
+            snippets_save=self._save_presets,
         )
         self.blueprint_window.show()
         if repaired:

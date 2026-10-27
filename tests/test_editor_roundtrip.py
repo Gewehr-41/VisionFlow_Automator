@@ -914,7 +914,8 @@ class BlueprintGraphWiringTests(unittest.TestCase):
 
         class StubBlueprintWindow:
             def __init__(self, tasks_arg, layout_data, save_callback,
-                         group_metadata=None, parent=None, execution_states=None):
+                         group_metadata=None, parent=None, execution_states=None,
+                         snippets_provider=None, snippets_save=None):
                 captured["tasks"] = tasks_arg
                 captured["layout"] = layout_data
                 captured["group"] = group_metadata

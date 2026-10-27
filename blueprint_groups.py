@@ -352,6 +352,9 @@ class BlueprintGroupMixin:
         edit_action.triggered.connect(lambda: self._edit_group(group_id))
         add_task_action.triggered.connect(lambda: self.add_task(group_id, (scene_position.x(), scene_position.y())))
         delete_action.triggered.connect(lambda: self._delete_group(group_id))
+        if hasattr(self, "_add_group_snippet_menu"):
+            menu.addSeparator()
+            self._add_group_snippet_menu(menu, group_id)
         menu.exec(self.view.mapToGlobal(position))
 
     def add_group(self, parent_group_id=None, position=None):

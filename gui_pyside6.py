@@ -86,8 +86,9 @@ from preset_manager import PresetManagerMixin
 from qt_translations import install_qt_translations
 from recognition_debug_window import RecognitionDebugWindow
 from update_ui import (UpdateCheckRunner, UpdateDownloadRunner, ask_update_choice,
-                       build_update_helper, can_auto_update, extract_update_zip,
-                       launch_update_helper, notify_update, report_check_failure)
+                       build_update_helper, can_auto_update, cleanup_update_leftovers,
+                       extract_update_zip, launch_update_helper, notify_update,
+                       report_check_failure)
 import snippets as snippet_store
 import settings_store
 from execution_control import ExecutionControlMixin
@@ -3137,12 +3138,12 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             self.append_log(f"已取消安装；更新包保留在 {zip_path}")
             self._restore_step_progress()
             return
-        self._install_update(update_root)
+        self._install_update(update_root, zip_path)
 
-    def _install_update(self, update_root):
+    def _install_update(self, update_root, zip_path=None):
         install_dir = paths.app_root()
         try:
-            helper = build_update_helper(install_dir, update_root, os.getpid())
+            helper = build_update_helper(install_dir, update_root, os.getpid(), zip_path=zip_path)
         except OSError as exc:
             QMessageBox.warning(self, "更新失败", f"无法创建更新脚本：{exc}")
             return
@@ -3606,6 +3607,10 @@ def _apply_window_icon(app):
 
 def main():
     app = QApplication(sys.argv)
+    try:
+        cleanup_update_leftovers()
+    except Exception:
+        pass
     # 加载 Qt 官方中文翻译：QMessageBox 的「显示详细信息」、是/否/确定/取消等
     # 标准文字才会是中文（否则固定显示英文，所有者 2026-10-26 反馈过）。
     install_qt_translations(app)

@@ -8,6 +8,7 @@
 import os
 import sys
 import tempfile
+import time
 import unittest
 import zipfile
 from pathlib import Path
@@ -95,8 +96,9 @@ class UpdateHelperTests(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def _script(self, pid=4321):
-        return Path(update_ui.build_update_helper(self.install, self.staged, pid, log_dir=self.root))
+    def _script(self, pid=4321, zip_path=None):
+        return Path(update_ui.build_update_helper(
+            self.install, self.staged, pid, log_dir=self.root, zip_path=zip_path))
 
     def test_helper_contains_wait_backup_copy_restart(self):
         text = self._script().read_text(encoding="utf-8")
@@ -107,6 +109,7 @@ class UpdateHelperTests(unittest.TestCase):
         self.assertIn("robocopy", text)
         self.assertIn("Restore-From-Backup", text, "复制失败要回滚")
         self.assertIn("Start-Process -FilePath (Join-Path $DST", text, "替换完要重启程序")
+        self.assertIn("$ZIP", text, "成功后应删除下载的更新包")
         self.assertNotIn("saved_tasks.json", text, "更新助手不应碰用户数据")
 
     def test_helper_is_utf8_bom_for_chinese_paths(self):
@@ -119,22 +122,25 @@ class UpdateHelperTests(unittest.TestCase):
         self.assertIn(str(self.install.resolve()), text)
         self.assertIn(str(self.staged.resolve()), text)
 
+    def _prepare_runnable(self, pid, zip_path=None):
+        script = self._script(pid=pid, zip_path=zip_path)
+        lines = []
+        for line in script.read_text(encoding="utf-8-sig").splitlines():
+            if "Start-Process -FilePath (Join-Path $DST" in line:
+                lines.append("Write-UpLog 'skip launch'")
+            else:
+                lines.append(line)
+        script.write_bytes(b"\xef\xbb\xbf" + "\r\n".join(lines).encode("utf-8"))
+        return script
+
     @unittest.skipUnless(os.name == "nt", "替换助手是 PowerShell 脚本")
     def test_helper_waits_for_live_process_to_exit(self):
-        """旧进程还没退出时助手必须等待，不能立刻替换（旧版卡住/抢跑都源于此）。"""
+        """旧进程还活着时助手必须等待，不能立刻替换。"""
         import subprocess
-        import time
 
         child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(2)"])
         try:
-            script = self._script(pid=child.pid)
-            lines = []
-            for line in script.read_text(encoding="utf-8-sig").splitlines():
-                if "Start-Process -FilePath (Join-Path $DST" in line:
-                    lines.append("Write-UpLog 'skip launch'")
-                else:
-                    lines.append(line)
-            script.write_bytes(b"\xef\xbb\xbf" + "\r\n".join(lines).encode("utf-8"))
+            script = self._prepare_runnable(child.pid)
             started = time.time()
             completed = subprocess.run(
                 ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)],
@@ -148,30 +154,63 @@ class UpdateHelperTests(unittest.TestCase):
         self.assertEqual((self.install / update_ui.UPDATE_EXE).read_text(encoding="utf-8"), "new")
 
     @unittest.skipUnless(os.name == "nt", "替换助手是 PowerShell 脚本")
-    def test_helper_replaces_files_and_backs_up_old_program(self):
-        """实际跑一遍助手（把启动程序替换成写日志），验证备份 + 替换 + 用户数据不动。"""
+    def test_helper_replaces_files_backs_up_and_deletes_zip(self):
+        """实际跑一遍：备份旧程序 + 替换 + 用户数据不动 + 安装成功后删除下载包。"""
         import subprocess
 
-        script = self._script(pid=999999)
-        lines = []
-        for line in script.read_text(encoding="utf-8-sig").splitlines():
-            if "Start-Process -FilePath (Join-Path $DST" in line:
-                lines.append("Write-UpLog 'skip launch'")
-            else:
-                lines.append(line)
-        script.write_bytes(b"\xef\xbb\xbf" + "\r\n".join(lines).encode("utf-8"))
+        zip_path = self.root / "downloaded_update.zip"
+        zip_path.write_bytes(b"fake-update-package")
+        script = self._prepare_runnable(pid=999999, zip_path=zip_path)
         completed = subprocess.run(
             ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)],
             timeout=90, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        self.assertEqual(completed.returncode, 0,
-                         completed.stdout.decode("utf-8", "replace"))
+        self.assertEqual(completed.returncode, 0, completed.stdout.decode("utf-8", "replace"))
         self.assertEqual((self.install / update_ui.UPDATE_EXE).read_text(encoding="utf-8"), "new")
         self.assertTrue((self.install / "_internal" / "new.dll").exists())
+        self.assertFalse(zip_path.exists(), "安装成功后应删除下载的更新包")
         self.assertEqual((self.install / "saved_tasks.json").read_text(encoding="utf-8"), "user-data",
                          "用户数据不能被更新助手改动")
         backups = list(self.install.glob(update_ui.UPDATE_BACKUP_PREFIX + "*"))
         self.assertEqual(len(backups), 1)
         self.assertEqual((backups[0] / update_ui.UPDATE_EXE).read_text(encoding="utf-8"), "old")
+
+
+class CleanupLeftoversTests(unittest.TestCase):
+    """%TEMP% 里过期的更新临时文件会在下次启动时清理。"""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _old_file(self, name, hours=48):
+        path = self.root / name
+        path.write_text("x", encoding="utf-8")
+        stamp = time.time() - hours * 3600
+        os.utime(path, (stamp, stamp))
+        return path
+
+    def test_removes_expired_update_files_only(self):
+        old_zip = self._old_file("vf_update_20260101_000000.zip")
+        old_log = self._old_file("vf_update_20260101_000000.log")
+        fresh_zip = self.root / "vf_update_today.zip"
+        fresh_zip.write_text("x", encoding="utf-8")
+        old_stage = self.root / "vf_update_stage_old"
+        old_stage.mkdir()
+        (old_stage / "x.txt").write_text("x", encoding="utf-8")
+        stamp = time.time() - 48 * 3600
+        os.utime(old_stage, (stamp, stamp))
+        unrelated = self._old_file("something_else.zip")
+
+        removed = update_ui.cleanup_update_leftovers(root=self.root, max_age_hours=24)
+        self.assertGreaterEqual(removed, 3)
+        self.assertFalse(old_zip.exists())
+        self.assertFalse(old_log.exists())
+        self.assertFalse(old_stage.exists())
+        self.assertTrue(fresh_zip.exists(), "今天刚下载的更新包不能删")
+        self.assertTrue(unrelated.exists(), "不相关文件不能删")
 
 
 class AutoUpdateGuardTests(unittest.TestCase):
@@ -186,6 +225,7 @@ class AutoUpdateGuardTests(unittest.TestCase):
         self.assertIn("def can_auto_update", ui)
         self.assertIn("def build_update_helper", ui)
         self.assertIn("def extract_update_zip", ui)
+        self.assertIn("def cleanup_update_leftovers", ui)
 
 
 if __name__ == "__main__":

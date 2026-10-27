@@ -12,7 +12,9 @@
 `UpdateCheckRunner.finished` 信号回到 GUI 线程——Qt 的跨线程信号默认排队投递，
 所以在主线程里弹对话框是安全的。
 """
+import fnmatch
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -128,7 +130,7 @@ def extract_update_zip(zip_path, extract_root):
     return root
 
 
-def build_update_helper(install_dir, staged_dir, pid, log_dir=None):
+def build_update_helper(install_dir, staged_dir, pid, log_dir=None, zip_path=None):
     """生成"退出后替换并重启"的 PowerShell 助手，返回 .ps1 路径。
 
     - 用 `Get-Process` 轮询等待旧进程退出（带 120 秒超时，不会无限卡住）；
@@ -143,6 +145,7 @@ def build_update_helper(install_dir, staged_dir, pid, log_dir=None):
     backup = install / f"{UPDATE_BACKUP_PREFIX}{stamp}"
     script = log_dir / f"vf_update_{stamp}_{pid}.ps1"
     log = log_dir / f"vf_update_{stamp}_{pid}.log"
+    downloaded_zip = str(zip_path) if zip_path else ""
 
     def ps(value):
         return "'" + str(value).replace("'", "''") + "'"
@@ -157,6 +160,7 @@ def build_update_helper(install_dir, staged_dir, pid, log_dir=None):
         f"$DST = {ps(install)}",
         f"$BACKUP = {ps(backup)}",
         f"$LOG = {ps(log)}",
+        f"$ZIP = {ps(downloaded_zip)}",
         "function Write-UpLog([string]$text) {",
         "  Add-Content -LiteralPath $LOG -Value ('[{0}] {1}' -f (Get-Date -Format 'HH:mm:ss'), $text)",
         "}",
@@ -195,6 +199,7 @@ def build_update_helper(install_dir, staged_dir, pid, log_dir=None):
         "  Write-UpLog 'restart updated app'",
         f"  Start-Process -FilePath (Join-Path $DST {ps(UPDATE_EXE)}) -WorkingDirectory $DST",
         f"  Remove-Item -LiteralPath $SRC -Recurse -Force -ErrorAction SilentlyContinue",
+        f"  if ($ZIP -and (Test-Path -LiteralPath $ZIP)) {{ Remove-Item -LiteralPath $ZIP -Force -ErrorAction SilentlyContinue }}",
         "  exit 0",
         "} catch {",
         "  Write-UpLog ('update failed: ' + $_)",
@@ -212,6 +217,35 @@ def build_update_helper(install_dir, staged_dir, pid, log_dir=None):
     # 用 UTF-8 BOM 写入，保证 "打包版" 这种路径能正确解析。
     script.write_bytes(b"\xef\xbb\xbf" + ("\r\n".join(lines)).encode("utf-8"))
     return str(script)
+
+
+def cleanup_update_leftovers(root=None, max_age_hours=24):
+    """清理 %TEMP% 里过期的更新临时文件（下载包/助手脚本/日志/解压目录）。
+
+    只删自己命名规则、且超过 max_age_hours 的项；刚下载/刚取消的更新包不会被误删。
+    返回删除数量。
+    """
+    base = Path(root or tempfile.gettempdir())
+    cutoff = time.time() - max_age_hours * 3600
+    patterns = ("vf_update_*.zip", "vf_update_*.log", "vf_update_*.ps1", "vf_update_*.bat")
+    removed = 0
+    try:
+        for item in base.iterdir():
+            if not item.is_file():
+                continue
+            if not any(fnmatch.fnmatch(item.name, pattern) for pattern in patterns):
+                continue
+            if item.stat().st_mtime >= cutoff:
+                continue
+            item.unlink()
+            removed += 1
+        for item in base.glob("vf_update_stage_*"):
+            if item.is_dir() and item.stat().st_mtime < cutoff:
+                shutil.rmtree(item, ignore_errors=True)
+                removed += 1
+    except OSError:
+        pass
+    return removed
 
 
 def launch_update_helper(helper_path):

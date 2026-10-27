@@ -90,15 +90,15 @@ class MainToolbarLayoutTests(unittest.TestCase):
     def test_window_combo_is_bounded(self):
         self.assertLessEqual(self.window.window_combo.maximumWidth(), 420)
 
-    def test_tool_buttons_lay_out_three_plus_two(self):
+    def test_tool_buttons_lay_out_four_plus_one(self):
         buttons = self.window.tool_buttons
         self.assertEqual(len(buttons), 5)
         rows = [(button.y(), button.x()) for button in buttons]
         first_row_y = rows[0][0]
-        second_row_y = rows[3][0]
+        second_row_y = rows[4][0]
         self.assertGreater(second_row_y, first_row_y, "工具按钮应排成两行")
-        self.assertTrue(all(row[0] == first_row_y for row in rows[:3]), "第一行 3 个")
-        self.assertTrue(all(row[0] == second_row_y for row in rows[3:]), "第二行 2 个")
+        self.assertTrue(all(row[0] == first_row_y for row in rows[:4]), "第一行 4 个")
+        self.assertEqual(rows[4][0], second_row_y, "「检查更新」单独在第二行")
 
     def test_tool_buttons_unchanged(self):
         self.assertEqual([button.text() for button in self.window.tool_buttons],

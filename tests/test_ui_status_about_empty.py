@@ -58,12 +58,21 @@ class UiStateBase(unittest.TestCase):
 
 
 class StatusBarTests(UiStateBase):
-    def test_target_window_controls_are_in_status_bar(self):
+    def test_target_window_controls_back_in_control_row(self):
+        """L2 之后按所有者要求把目标窗口放回控制行（不在状态栏里）。"""
         self.assertIsNotNone(getattr(self.window, "status_bar_widget", None))
         self.assertTrue(self.window.status_bar_widget.isVisible())
-        self.assertTrue(self.window.status_bar_widget.isAncestorOf(self.window.window_combo))
-        self.assertTrue(self.window.status_bar_widget.isAncestorOf(self.window.refresh_window_button))
+        self.assertFalse(self.window.status_bar_widget.isAncestorOf(self.window.window_combo),
+                         "目标窗口应回到控制行")
+        self.assertFalse(self.window.status_bar_widget.isAncestorOf(self.window.refresh_window_button))
+        combo_y = self.window.window_combo.mapTo(self.window, self.window.window_combo.rect().topLeft()).y()
+        self.assertLess(combo_y, self.window.status_bar_widget.y(), "目标窗口应在状态栏上方")
         self.assertEqual(self.window.refresh_window_button.text(), "刷新窗口")
+
+    def test_status_capsule_is_stretched_on_the_row(self):
+        """运行状态一栏拉长占满整排。"""
+        self.assertGreaterEqual(self.window.status_label.minimumWidth(), 220)
+        self.assertGreater(self.window.status_label.width(), 300, "状态胶囊应占据较宽的一栏")
 
     def test_status_capsule_defaults_to_idle(self):
         self.assertEqual(self.window.status_label.property("statusKind"), "idle")

@@ -39,7 +39,6 @@ from PySide6.QtWidgets import (
     QWidget,
     QToolButton,
     QSizePolicy,
-    QFrame,
     QProgressBar,
     QStackedWidget,
 )
@@ -1297,6 +1296,17 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.step_button.setToolTip("暂停状态下点一次执行一个步骤")
         control_bar.addWidget(self.step_button)
         control_bar.addStretch(1)
+        control_bar.addWidget(QLabel("目标窗口:"))
+        self.window_combo = QComboBox()
+        self.window_combo.setEditable(True)
+        self.window_combo.setMinimumWidth(240)
+        self.window_combo.setMaximumWidth(420)
+        control_bar.addWidget(self.window_combo)
+        self.refresh_window_button = QPushButton("刷新窗口")
+        self.refresh_window_button.setObjectName("secondaryButton")
+        self.refresh_window_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.refresh_window_button.clicked.connect(self.refresh_window_list)
+        control_bar.addWidget(self.refresh_window_button)
         root_layout.addLayout(control_bar)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -1350,12 +1360,12 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         for index, (label, handler) in enumerate(tool_specs):
             button = QPushButton(label)
             button.clicked.connect(handler)
-            # 3 列布局：5 个工具排成 3+2，避免最后一行只剩一个按钮显得空
+            # 恢复原布局：4 列一行（前 4 个一行，第 5 个「检查更新」落到第二行）
             button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-            tool_grid.addWidget(button, index // 3, index % 3)
+            tool_grid.addWidget(button, index // 4, index % 4)
             self.tool_buttons.append(button)
             self.tool_actions[label] = button
-        tool_grid.setColumnStretch(3, 1)
+        tool_grid.setColumnStretch(4, 1)
         task_layout.addLayout(tool_grid)
 
         # 任务列表右键菜单：常用编辑动作不必回按钮区找（列表此前完全没有右键菜单）
@@ -1441,28 +1451,13 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         status_layout.setContentsMargins(6, 2, 6, 2)
         status_layout.setSpacing(8)
 
-        status_layout.addWidget(QLabel("目标窗口:"))
-        self.window_combo = QComboBox()
-        self.window_combo.setEditable(True)
-        self.window_combo.setMinimumWidth(220)
-        self.window_combo.setMaximumWidth(360)
-        status_layout.addWidget(self.window_combo)
-        self.refresh_window_button = QPushButton("刷新窗口")
-        self.refresh_window_button.setObjectName("secondaryButton")
-        self.refresh_window_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        self.refresh_window_button.clicked.connect(self.refresh_window_list)
-        status_layout.addWidget(self.refresh_window_button)
-
-        divider = QFrame()
-        divider.setFrameShape(QFrame.Shape.VLine)
-        divider.setFrameShadow(QFrame.Shadow.Sunken)
-        status_layout.addWidget(divider)
-
+        # 运行状态一栏：去掉目标窗口后整行拉长（占满一整排）
         self.status_label = QLabel("● 待机")
         self.status_label.setObjectName("statusLabel")
         self.status_label.setProperty("statusKind", "idle")
-        self.status_label.setMinimumWidth(110)
-        status_layout.addWidget(self.status_label)
+        self.status_label.setMinimumWidth(220)
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        status_layout.addWidget(self.status_label, 2)
         self.preset_info_label = QLabel("预设: custom")
         self.preset_info_label.setObjectName("statusInfo")
         status_layout.addWidget(self.preset_info_label)

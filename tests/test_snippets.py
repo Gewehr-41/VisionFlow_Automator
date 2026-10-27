@@ -504,6 +504,111 @@ class SnippetGuiTests(unittest.TestCase):
         self.assertIn("B", lines[3])
         self.assertIn("C", lines[4])
 
+    # ---------- 所有者 2026-10-27 复现场景：组 + 两个步骤 ----------
+
+    def test_group_with_steps_keeps_membership_after_insert(self):
+        """选中「组 + 组内两个步骤」保存，插入后两个步骤必须还在新组里。"""
+        self._metadata()
+        g.TASKS[:] = [_task("S1", "g1"), _task("S2", "g1")]
+        self.window.refresh_task_list()
+        _APP.processEvents()
+        self._save_group("g1", "组合片段")
+        # 再显式把两个步骤也选中（模拟用户同时选中组和步骤）
+        self.window._group_items()["g1"].setSelected(True)
+        for index in range(2):
+            self.window._find_task_item(index).setSelected(True)
+        payload = self.window.snippets["组合片段"]
+        self.assertTrue(payload["tasks"], "片段里应有步骤")
+        self.assertEqual({str(t.get("group_id")) for t in payload["tasks"]}, {"g1"})
+
+        # 插入到一个全新预设
+        g.TASKS[:] = []
+        self.window.mode_group_metadata[self.mode] = {
+            "names": {}, "colors": {}, "parents": {}, "children": {}, "order": [], "expanded": {},
+        }
+        self.window.refresh_task_list()
+        _APP.processEvents()
+        self._insert("组合片段")
+        kinds = ["G" if "[G]" in line else "T" for line in self._tree_lines()]
+        self.assertEqual(kinds, ["G", "T", "T"], f"步骤应留在组内，不能变成空组+根层步骤: {self._tree_lines()}")
+
+    def test_insert_ignores_memberless_groups_from_old_snippet(self):
+        """旧片段：步骤是根层 + 夹带两个没有步骤的分组（其中一个名字就是 group_xxx）。"""
+        self.window.snippets = {
+            "旧片段": {
+                "version": 2,
+                "tasks": [{"id": "x1", "type": "normal", "description": "X1", "template": "1"},
+                          {"id": "x2", "type": "normal", "description": "X2", "template": "1"}],
+                "groups": {
+                    "group_5fae0cff": {"name": "组 1", "color": "", "parent": None},
+                    "group_ee59d652": {"name": "group_ee59d652", "color": "", "parent": None},
+                },
+                "group_order": ["group_5fae0cff", "group_ee59d652"],
+            }
+        }
+        self.window.mode_group_metadata[self.mode] = {
+            "names": {}, "colors": {}, "parents": {}, "children": {}, "order": [], "expanded": {},
+        }
+        g.TASKS[:] = []
+        self.window.refresh_task_list()
+        _APP.processEvents()
+        self._insert("旧片段")
+        self.assertEqual(len(g.TASKS), 2)
+        self.assertEqual(self.window._group_items(), {}, "没有成员步骤的分组不应被创建成空壳组")
+        names = list(self.window.mode_group_metadata[self.mode].get("names", {}).values())
+        self.assertFalse(any(str(name).startswith("group_") for name in names), f"不该出现 group_xxx 组名: {names}")
+
+    def test_save_mixed_selection_drops_empty_groups(self):
+        """同时选中"空组 + 根层步骤"保存时，忽略空组并提示。"""
+        metadata = self._metadata()
+        metadata["names"]["empty"] = "空组"
+        metadata["parents"]["empty"] = None
+        metadata["children"]["empty"] = []
+        metadata["order"].append("empty")
+        g.TASKS[:] = [_task("R1"), _task("R2")]
+        self.window.refresh_task_list()
+        _APP.processEvents()
+        self.window.task_list.clearSelection()
+        self.window._group_items()["empty"].setSelected(True)
+        self.window._find_task_item(0).setSelected(True)
+        self.window._find_task_item(1).setSelected(True)
+        with mock.patch.object(g.QInputDialog, "getText", staticmethod(lambda *a, **k: ("混合片段", True))):
+            self.window.save_selection_as_snippet()
+        payload = self.window.snippets["混合片段"]
+        self.assertEqual(len(payload["tasks"]), 2)
+        self.assertEqual(payload["groups"], {}, "空组不应写进片段")
+        self.assertIn("没有步骤的分组", self._logs(), "应提示忽略了空组")
+
+    # ---------- 元数据自愈 ----------
+
+    def test_refresh_heals_orphan_group_reference(self):
+        """children 里引用了没有元数据、也没有步骤的组 id：刷新时清掉，不再出现 group_xxx。"""
+        self.window.mode_group_metadata[self.mode] = {
+            "names": {"g1": "组1"},
+            "colors": {},
+            "parents": {"g1": None},
+            "children": {"g1": ["group_deadbeef"]},
+            "order": ["g1"],
+        }
+        g.TASKS[:] = [_task("A", "g1")]
+        self.window.refresh_task_list()
+        _APP.processEvents()
+        labels = " ".join(item.text(0) for item in self.window._group_items().values())
+        self.assertNotIn("group_deadbeef", labels, f"失效引用不该显示成组名: {labels}")
+        self.assertNotIn("group_deadbeef", self.window.mode_group_metadata[self.mode]["children"]["g1"])
+
+    def test_refresh_names_missing_group_used_by_steps(self):
+        """步骤指向一个元数据里没有名字的组：刷新时补「分组」占位名，不显示 group_xxx。"""
+        self.window.mode_group_metadata[self.mode] = {
+            "names": {}, "colors": {}, "parents": {}, "children": {}, "order": [],
+        }
+        g.TASKS[:] = [_task("A", "group_abc12345")]
+        self.window.refresh_task_list()
+        _APP.processEvents()
+        labels = " ".join(item.text(0) for item in self.window._group_items().values())
+        self.assertIn("分组", labels)
+        self.assertNotIn("group_abc12345", labels)
+
     def test_insert_log_reports_target_group(self):
         self._metadata()
         g.TASKS[:] = [_task("A", "g1")]

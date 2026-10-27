@@ -2414,6 +2414,24 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         if not snippet.get("tasks") and not snippet.get("groups"):
             QMessageBox.warning(self, "无法保存", "选中的内容里没有步骤或分组。")
             return
+        # 同时选了"步骤 + 一些空组"时，空组大概率是误选/失效引用：不写进片段，日志说明
+        if snippet.get("tasks") and snippet.get("groups"):
+            used_groups = {str(task.get("group_id")) for task in snippet["tasks"] if task.get("group_id")}
+            keep = set()
+            for group_id in used_groups:
+                current = group_id
+                seen = set()
+                while current and current in snippet["groups"] and current not in seen:
+                    seen.add(current)
+                    keep.add(current)
+                    parent = (snippet["groups"].get(current) or {}).get("parent")
+                    current = str(parent) if parent else ""
+            dropped = [group_id for group_id in snippet["groups"] if group_id not in keep]
+            if dropped:
+                snippet["groups"] = {gid: info for gid, info in snippet["groups"].items() if gid in keep}
+                snippet["group_order"] = [gid for gid in snippet.get("group_order", []) if gid in keep]
+                self.append_log(
+                    f"保存片段时忽略了 {len(dropped)} 个没有步骤的分组（避免插入后出现空组）。")
         self.snippets[name] = snippet
         self._save_presets()
         self.append_log(

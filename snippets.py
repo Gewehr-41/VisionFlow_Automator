@@ -122,8 +122,15 @@ def extract_snippet(tasks, indices, group_metadata=None, group_ids=()):
     for group_id in involved:
         parent = parents.get(group_id)
         parent = str(parent) if parent else None
+        # 组名回退顺序：元数据名 → 组内步骤的 group_name → 通用名
+        # （直接回退到 group_id 会让界面出现 "group_xxxx" 这种看不懂的名字）
+        member_name = ""
+        for task in snippet_tasks:
+            if str(task.get("group_id") or "") == str(group_id) and task.get("group_name"):
+                member_name = str(task["group_name"])
+                break
         groups[group_id] = {
-            "name": str(names.get(group_id) or group_id),
+            "name": str(names.get(group_id) or member_name or "分组"),
             "color": str(colors.get(group_id) or ""),
             # 片段外的父组不算数：插入时统一挂到目标分组（或根层）
             "parent": parent if parent in involved else None,
@@ -144,6 +151,21 @@ def insert_snippet(target_tasks, snippet, position=None, parent_group_id=None):
     snippet_tasks, snippet_groups, snippet_order = normalize_payload(snippet)
     if not snippet_tasks and not snippet_groups:
         return tasks, []
+    if snippet_tasks and snippet_groups:
+        # 片段里既然有步骤，就不再为"没有任何步骤的组"创建空壳组（它们通常只是保存时
+        # 顺带选中的空组/失效引用）。祖先组如果是被需要的，会在下面 used 链里保留。
+        used = {str(task.get("group_id")) for task in snippet_tasks if task.get("group_id")}
+        keep = set()
+        for group_id in used:
+            current = group_id
+            seen = set()
+            while current and current in snippet_groups and current not in seen:
+                seen.add(current)
+                keep.add(current)
+                parent = (snippet_groups.get(current) or {}).get("parent")
+                current = str(parent) if parent else ""
+        snippet_order = [group_id for group_id in snippet_order if group_id in keep]
+        snippet_groups = {group_id: info for group_id, info in snippet_groups.items() if group_id in keep}
     if position is None:
         position = len(tasks)
     position = max(0, min(int(position), len(tasks)))

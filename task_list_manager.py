@@ -106,6 +106,42 @@ class TaskListMixin:
         group_expanded = group_metadata.get("expanded", {}) if isinstance(group_metadata.get("expanded"), dict) else {}
         group_parents = group_metadata.get("parents", {}) if isinstance(group_metadata.get("parents"), dict) else {}
         group_children = group_metadata.get("children", {}) if isinstance(group_metadata.get("children"), dict) else {}
+        # --- 自愈：历史数据里可能残留"没有元数据的组 id"或"名字恰好是 group_xxx"的组 ---
+        # 这些会让界面出现 "分组: group_ee59d652" 这种看不懂的空组。
+        raw_id_names = {group_id for group_id, name in group_names.items()
+                        if str(name) == str(group_id) or
+                        (str(name).startswith("group_") and len(str(name)) == 14)}
+        used_group_ids = {str(task.get("group_id")) for task in TASKS if task.get("group_id")}
+        for group_id in raw_id_names:
+            if group_id in group_names:
+                group_names[group_id] = "分组"
+        referenced = set(str(gid) for gid in (group_metadata.get("order") or []))
+        for parent_id, child_ids in (group_children or {}).items():
+            referenced.add(str(parent_id))
+            referenced.update(str(child) for child in (child_ids or []))
+        # 步骤自己指向的组也算"被引用"（即使元数据里完全没登记）
+        referenced |= {str(gid) for gid in used_group_ids}
+        for group_id in referenced:
+            if group_id == "group_default":
+                continue
+            if group_id in group_names:
+                continue
+            if group_id in used_group_ids:
+                # 有步骤指向它：补一个占位组，避免显示原始 id
+                group_names[group_id] = "分组"
+                group_parents.setdefault(group_id, None)
+                group_children.setdefault(group_id, [])
+            else:
+                # 没有任何步骤使用、也没有元数据：属于失效引用，直接从结构里清掉
+                for parent_id, child_ids in list(group_children.items()):
+                    group_children[parent_id] = [child for child in child_ids if str(child) != group_id]
+                group_parents.pop(group_id, None)
+                group_children.pop(group_id, None)
+                order = group_metadata.get("order")
+                if isinstance(order, list):
+                    group_metadata["order"] = [item for item in order if str(item) != group_id]
+
+
 
         def make_group(group_id):
             group_label = group_names.get(group_id) or ("默认分组" if group_id == "group_default" else group_id)

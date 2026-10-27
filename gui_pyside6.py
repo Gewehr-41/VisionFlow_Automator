@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
+    QToolButton,
 )
 
 import config
@@ -1230,7 +1231,9 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.mode_combo.currentTextChanged.connect(self.on_mode_selected)
         self.mode_combo.setMinimumWidth(118)
         preset_bar.addWidget(self.mode_combo)
-        self.preset_buttons = []
+        # 预设管理收进「预设 ▾」下拉：这 6 个操作都是低频管理动作，
+        # 常驻按钮会把主界面挤成三行按钮（对比 MaaEnd/MXU：主操作常驻、其余收进菜单）。
+        preset_menu = QMenu(self)
         for label, handler in (
             ("新建预设", self.create_preset),
             ("重命名预设", self.rename_current_preset),
@@ -1238,12 +1241,26 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             ("导出预设", self.export_current_preset),
             ("导入预设", self.import_preset),
             ("删除预设", self.delete_current_preset),
-            ("保存当前任务", self.save_current_tasks),
         ):
-            button = QPushButton(label)
-            button.clicked.connect(handler)
-            preset_bar.addWidget(button)
-            self.preset_buttons.append(button)
+            action = preset_menu.addAction(label)
+            action.triggered.connect(handler)
+        self.preset_menu = preset_menu
+        self.preset_menu_button = QToolButton()
+        self.preset_menu_button.setText("预设 ▾")
+        self.preset_menu_button.setMenu(preset_menu)
+        self.preset_menu_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.preset_menu_button.setToolTip("新建 / 重命名 / 复制 / 导入导出 / 删除预设")
+        preset_bar.addWidget(self.preset_menu_button)
+        self.save_button = QPushButton("保存当前任务")
+        self.save_button.clicked.connect(self.save_current_tasks)
+        self.save_button.setToolTip("把当前预设的步骤与分组立即保存到文件（Ctrl+S）")
+        preset_bar.addWidget(self.save_button)
+        self.save_shortcut = QAction(self)
+        self.save_shortcut.setShortcut(QKeySequence("Ctrl+S"))
+        self.save_shortcut.triggered.connect(self.save_current_tasks)
+        self.addAction(self.save_shortcut)
+        # 运行中需要禁用这些入口：保留列表给 _set_running_state 统一处理
+        self.preset_buttons = [self.preset_menu_button, self.save_button]
         root_layout.addLayout(preset_bar)
 
         control_bar = QHBoxLayout()
@@ -1262,8 +1279,10 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.pause_button.setEnabled(False)
         control_bar.addWidget(self.pause_button)
         self.step_button = QPushButton("单步")
+        self.step_button.setObjectName("secondaryButton")
         self.step_button.clicked.connect(self.step_script)
         self.step_button.setEnabled(False)
+        self.step_button.setToolTip("暂停状态下点一次执行一个步骤")
         control_bar.addWidget(self.step_button)
         control_bar.addSpacing(8)
         control_bar.addWidget(QLabel("目标窗口:"))
@@ -1405,6 +1424,14 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             "QPushButton:hover { background: #e0f2fe; border-color: #0284c7; }"
             "QPushButton:pressed { background: #bae6fd; }"
             "QPushButton:disabled { color: #94a3b8; background: #e2e8f0; }"
+            "QToolButton { min-height: 26px; padding: 3px 10px; border: 1px solid #94a3b8; border-radius: 4px;"
+            " background: #ffffff; color: #1e293b; }"
+            "QToolButton:hover { background: #e0f2fe; border-color: #0284c7; }"
+            "QToolButton:pressed { background: #bae6fd; }"
+            "QToolButton:disabled { color: #94a3b8; background: #e2e8f0; }"
+            "QToolButton::menu-indicator { width: 0px; }"
+            "#secondaryButton { color: #475569; background: #f1f5f9; border-color: #cbd5e1; }"
+            "#secondaryButton:hover { background: #e2e8f0; border-color: #94a3b8; }"
             "QLineEdit, QPlainTextEdit, QComboBox, QTreeWidget { border: 1px solid #cbd5e1; border-radius: 4px; background: #ffffff; padding: 4px; }"
             "QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QTreeWidget:focus { border-color: #0284c7; }"
             "QTreeWidget { padding: 6px; }"

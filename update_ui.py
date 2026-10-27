@@ -68,5 +68,5 @@ def report_check_failure(parent, result):
     """手动检查失败时的提示（自动检查不弹，只在日志里留一句）。"""
     QMessageBox.information(parent, "检查更新失败",
                             f"{result.error}\n\n"
-                            "如果本机访问 GitHub 需要代理，可在 config.py 里设置 UPDATE_PROXY，"
-                            "或先开启系统代理后重试。")
+                            "如果本机访问 GitHub 需要代理，可点主界面底部状态栏的「设置」填写代理地址"
+                            "（留空=自动探测环境变量 / Windows 系统代理 / 直连），保存后再试。")

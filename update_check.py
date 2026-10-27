@@ -29,6 +29,7 @@ import urllib.error
 import urllib.request
 
 import config
+import settings_store
 
 _API_ROOT = "https://api.github.com/repos/{repo}"
 _TAG_IN_URL = re.compile(r"/releases/tag/([^/?#]+)")
@@ -107,11 +108,23 @@ def _registry_proxy():
     return server if "://" in server else "http://" + server
 
 
+def _user_proxy():
+    """程序内「设置」里保存的更新代理（空串=未设置）。读取失败不影响检查。"""
+    try:
+        return settings_store.get_update_proxy()
+    except Exception:
+        return ""
+
+
 def resolve_proxy():
     """按"显式配置 → 环境变量 → 系统代理"的顺序返回代理地址；都没有返回 None。"""
     explicit = (getattr(config, "UPDATE_PROXY", "") or "").strip()
     if explicit:
         return explicit
+    # 程序内「设置」保存的代理（本次 L3）；优先于环境变量/系统代理
+    user_proxy = _user_proxy()
+    if user_proxy:
+        return user_proxy
     for name in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"):
         value = os.environ.get(name)
         if value:

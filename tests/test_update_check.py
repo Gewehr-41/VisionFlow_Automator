@@ -153,20 +153,23 @@ class ProxyTests(unittest.TestCase):
 
     def test_env_var_is_used_when_config_empty(self):
         with mock.patch.object(config, "UPDATE_PROXY", ""):
-            with mock.patch.dict(os.environ, {"HTTPS_PROXY": "http://127.0.0.1:7890"}, clear=False):
-                self.assertEqual(uc.resolve_proxy(), "http://127.0.0.1:7890")
+            with mock.patch.object(uc, "_user_proxy", lambda: ""):
+                with mock.patch.dict(os.environ, {"HTTPS_PROXY": "http://127.0.0.1:7890"}, clear=False):
+                    self.assertEqual(uc.resolve_proxy(), "http://127.0.0.1:7890")
 
     def test_registry_proxy_is_last_resort(self):
         with mock.patch.object(config, "UPDATE_PROXY", ""):
-            with mock.patch.dict(os.environ, {}, clear=True):
-                with mock.patch.object(uc, "_registry_proxy", lambda: "http://127.0.0.1:7892"):
-                    self.assertEqual(uc.resolve_proxy(), "http://127.0.0.1:7892")
+            with mock.patch.object(uc, "_user_proxy", lambda: ""):
+                with mock.patch.dict(os.environ, {}, clear=True):
+                    with mock.patch.object(uc, "_registry_proxy", lambda: "http://127.0.0.1:7892"):
+                        self.assertEqual(uc.resolve_proxy(), "http://127.0.0.1:7892")
 
     def test_no_proxy_returns_none(self):
         with mock.patch.object(config, "UPDATE_PROXY", ""):
-            with mock.patch.dict(os.environ, {}, clear=True):
-                with mock.patch.object(uc, "_registry_proxy", lambda: None):
-                    self.assertIsNone(uc.resolve_proxy())
+            with mock.patch.object(uc, "_user_proxy", lambda: ""):
+                with mock.patch.dict(os.environ, {}, clear=True):
+                    with mock.patch.object(uc, "_registry_proxy", lambda: None):
+                        self.assertIsNone(uc.resolve_proxy())
 
 
 # ---------------------------------------------------------------------------

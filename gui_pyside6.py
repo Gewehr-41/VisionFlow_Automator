@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QProgressBar,
     QStackedWidget,
+    QLineEdit,
 )
 
 import config
@@ -84,6 +85,7 @@ from qt_translations import install_qt_translations
 from recognition_debug_window import RecognitionDebugWindow
 from update_ui import UpdateCheckRunner, notify_update, report_check_failure
 import snippets as snippet_store
+import settings_store
 from execution_control import ExecutionControlMixin
 from task_list_manager import TaskListMixin
 from ui_common import (
@@ -1520,6 +1522,12 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.progress_bar.setFormat("%v / %m 步")
         self.progress_bar.setVisible(True)
         status_layout.addWidget(self.progress_bar, 1)
+        self.settings_button = QPushButton("设置")
+        self.settings_button.setObjectName("secondaryButton")
+        self.settings_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.settings_button.setToolTip("检查更新的代理地址等用户设置")
+        self.settings_button.clicked.connect(self.open_settings_dialog)
+        status_layout.addWidget(self.settings_button)
         self.help_button = QPushButton("使用说明")
         self.help_button.setObjectName("secondaryButton")
         self.help_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
@@ -3289,6 +3297,56 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
     def clear_log(self):
         """清空日志面板（M6：日志有上限，也给一个手动清空入口）。"""
         self.log_box.clear()
+
+    # ---------- L3：程序内「设置」（目前是检查更新的代理） ----------
+
+    def _create_settings_dialog(self):
+        """构建设置对话框（测试直接调用它检查预填/保存，不弹模态）。"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("设置")
+        dialog.resize(520, 220)
+        layout = QVBoxLayout(dialog)
+        hint = QLabel(
+            "检查更新需要访问 GitHub。\n"
+            "如果网络需要代理，在这里填写（例如 http://127.0.0.1:7892）。\n"
+            "留空 = 自动探测：环境变量 → Windows 系统代理 → 直连。")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        edit = QLineEdit(settings_store.get_update_proxy())
+        edit.setPlaceholderText("例如 http://127.0.0.1:7892（留空=自动）")
+        layout.addWidget(edit)
+        path_label = QLabel(f"设置文件：{settings_store.SETTINGS_FILE}")
+        path_label.setObjectName("statusInfo")
+        path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(path_label)
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        cancel_button = QPushButton("取消")
+        cancel_button.clicked.connect(dialog.reject)
+        save_button = QPushButton("保存")
+        save_button.clicked.connect(lambda: self._save_update_proxy(edit, dialog))
+        buttons.addWidget(cancel_button)
+        buttons.addWidget(save_button)
+        layout.addLayout(buttons)
+        dialog.proxy_edit = edit
+        return dialog
+
+    def open_settings_dialog(self):
+        self._create_settings_dialog().exec()
+
+    def _save_update_proxy(self, edit, dialog=None):
+        value = (edit.text() or "").strip()
+        try:
+            settings_store.set_update_proxy(value)
+        except OSError as exc:
+            QMessageBox.warning(self, "保存失败", f"无法写入设置文件：{exc}")
+            return
+        if value:
+            self.append_log(f"已保存更新代理：{value}（下次检查更新时生效）。")
+        else:
+            self.append_log("已清空更新代理：恢复自动探测（环境变量 / 系统代理 / 直连）。")
+        if dialog is not None:
+            dialog.accept()
 
     def show_about(self):
         data_dir = paths.data_dir()

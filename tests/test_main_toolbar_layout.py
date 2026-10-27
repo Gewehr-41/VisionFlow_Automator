@@ -68,6 +68,24 @@ class MainToolbarLayoutTests(unittest.TestCase):
                    self.window.stop_button, self.window.pause_button, self.window.step_button)]
         self.assertEqual(labels, ["开始执行", "从当前步骤执行", "停止", "暂停", "单步"])
 
+    def test_control_buttons_stretch_to_fill_row(self):
+        """控制行左侧 5 个按钮等比拉伸、填满整行剩余宽度，窗口变宽会自动适应。"""
+        from PySide6.QtWidgets import QSizePolicy
+
+        for button in self.window.control_buttons:
+            self.assertEqual(button.sizePolicy().horizontalPolicy(), QSizePolicy.Policy.Expanding)
+        widths = [button.width() for button in self.window.control_buttons]
+        self.assertLessEqual(max(widths) - min(widths), 2, "5 个按钮应等宽")
+        before = widths[0]
+        self.window.resize(1500, 900)
+        _APP.processEvents()
+        try:
+            self.assertGreater(self.window.control_buttons[0].width(), before,
+                               "窗口变宽后按钮应跟着变宽")
+        finally:
+            self.window.resize(1180, 860)
+            _APP.processEvents()
+
     def test_single_step_is_secondary_style(self):
         self.assertEqual(self.window.step_button.objectName(), "secondaryButton")
 

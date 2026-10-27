@@ -65,11 +65,20 @@ class EditorStateIndicatorTests(unittest.TestCase):
         self.assertEqual(self.window.editor_state_label.property("stateKind"), "saved")
 
     def test_pill_is_on_the_same_row_as_type_label(self):
-        type_y = self.window.selected_label.mapTo(
-            self.window, self.window.selected_label.rect().topLeft()).y()
-        state_y = self.window.editor_state_label.mapTo(
-            self.window, self.window.editor_state_label.rect().topLeft()).y()
-        self.assertLessEqual(abs(type_y - state_y), 4, "状态胶囊应与「类型 / ID」在同一行")
+        type_pos = self.window.selected_label.mapTo(
+            self.window, self.window.selected_label.rect().topLeft())
+        state_pos = self.window.editor_state_label.mapTo(
+            self.window, self.window.editor_state_label.rect().topLeft())
+        self.assertLessEqual(abs(type_pos.y() - state_pos.y()), 4, "状态胶囊应与「类型 / ID」在同一行")
+
+    def test_pill_is_at_the_far_right_of_the_row(self):
+        type_pos = self.window.selected_label.mapTo(
+            self.window, self.window.selected_label.rect().topLeft())
+        state_pos = self.window.editor_state_label.mapTo(
+            self.window, self.window.editor_state_label.rect().topLeft())
+        label_right = type_pos.x() + self.window.selected_label.width()
+        self.assertGreater(state_pos.x(), label_right + 100,
+                           "状态胶囊应贴在这一行的最右边（中间留伸缩空白）")
 
     def test_typing_marks_unsaved(self):
         self._type_in(self.window.description_edit, "改过的名字")

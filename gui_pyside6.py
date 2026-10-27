@@ -1453,8 +1453,9 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         state_row.setContentsMargins(0, 0, 0, 0)
         state_row.setSpacing(8)
         state_row.addWidget(self.selected_label)
-        state_row.addWidget(self.editor_state_label)
+        # 状态胶囊贴到这一行的最右边（中间留伸缩空白）
         state_row.addStretch(1)
+        state_row.addWidget(self.editor_state_label)
         editor_layout.insertLayout(selected_index, state_row)
         self._connect_editor_dirty_signals()
         splitter.addWidget(editor_panel)

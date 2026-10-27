@@ -434,6 +434,7 @@ class BlueprintGroupItem(QGraphicsRectItem):
         self._color = QColor(color)
         # 收起态：画成一个带输入/输出端口的群组节点（F14 第二轮）
         self.collapsed = False
+        self._hover_port = None
         self.setPen(Qt.NoPen)
         self.setBrush(Qt.NoBrush)
         self.setZValue(-2)
@@ -481,6 +482,26 @@ class BlueprintGroupItem(QGraphicsRectItem):
         rect = self.sceneBoundingRect()
         return QPointF(rect.right(), rect.center().y())
 
+    def port_at(self, local_pos, tolerance=14.0):
+        """收起卡片左右边缘的输入/输出端口命中测试；返回 "input"/"output"/None。"""
+        if not self.collapsed:
+            return None
+        rect = self.rect()
+        if abs(local_pos.y() - rect.center().y()) > tolerance:
+            return None
+        if abs(local_pos.x() - rect.left()) <= tolerance:
+            return "input"
+        if abs(local_pos.x() - rect.right()) <= tolerance:
+            return "output"
+        return None
+
+    def set_hover_port(self, port):
+        port = port if port in ("input", "output") else None
+        if port == self._hover_port:
+            return
+        self._hover_port = port
+        self.update()
+
     def paint(self, painter, option, widget=None):
         rect = self.rect()
         if self.collapsed:
@@ -515,6 +536,7 @@ class BlueprintGroupItem(QGraphicsRectItem):
         # 标题栏
         header = QRectF(body.left(), body.top(), body.width(), 26.0)
         header_path = QPainterPath()
+        header_path.setFillRule(Qt.FillRule.WindingFill)     # 取并集，否则重叠区被挖空（下半截发黑）
         header_path.addRoundedRect(header, radius, radius)
         header_path.addRect(QRectF(header.left(), header.bottom() - radius, header.width(), radius))
         painter.setPen(Qt.NoPen)
@@ -528,12 +550,17 @@ class BlueprintGroupItem(QGraphicsRectItem):
         painter.setFont(QFont("Microsoft YaHei", 8))
         painter.drawText(body.adjusted(12, 32, -12, 0),
                          Qt.AlignLeft | Qt.AlignTop, f"{self._info} · 双击进入子图")
-        # 输入 / 输出端口
+        # 输入 / 输出端口（hover 时画高亮圈，提示"这里可以拉线"）
         center_y = body.center().y()
         painter.setPen(QPen(QColor("#e5e7eb"), 1))
         painter.setBrush(QBrush(QColor("#4b5563")))
         painter.drawEllipse(QPointF(body.left(), center_y), 5, 5)
         painter.drawEllipse(QPointF(body.right(), center_y), 5, 5)
+        if self._hover_port in ("input", "output"):
+            center = QPointF(body.left() if self._hover_port == "input" else body.right(), center_y)
+            painter.setPen(QPen(QColor("#22c55e"), 2))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawEllipse(center, 9, 9)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -668,6 +695,14 @@ class BlueprintView(QGraphicsView):
                 self.pending_connection = (node, "input", "input")
                 event.accept()
                 return
+        # 收起的群组节点：左右边缘的端口也能拉线（这是"群组当一个节点用"的关键交互）
+        card = self._group_card_at_scene_pos(scene_position, self._START_MARGIN_PX)
+        if card is not None:
+            side = card.port_at(card.mapFromScene(scene_position), self._port_tolerance())
+            if side is not None:
+                self.pending_connection = (card, side, side)
+                event.accept()
+                return
         item = self.scene().itemAt(scene_position, self.transform())
         if isinstance(item, BlueprintWireItem):
             self.wire_clicked.emit(item)
@@ -714,6 +749,12 @@ class BlueprintView(QGraphicsView):
                 port = "input"
             if port is not None:
                 hovered = (node, port)
+        if hovered is None:
+            card = self._group_card_at_scene_pos(scene_pos, self._START_MARGIN_PX)
+            if card is not None:
+                side = card.port_at(card.mapFromScene(scene_pos), self._port_tolerance())
+                if side is not None:
+                    hovered = (card, side)
         self._apply_hover(hovered)
         want_cross = hovered is not None
         if want_cross != self._hover_cross:
@@ -837,6 +878,8 @@ class BlueprintView(QGraphicsView):
         self.unsetCursor()
 
     def _connection_start_position(self, node, side, port):
+        if isinstance(node, BlueprintGroupItem):
+            return node.output_port_point() if side == "output" else node.input_port_point()
         if side == "output":
             spec = node.port_for_name(port) if port else None
             sy = node.port_y(spec[2]) if spec else node.rect().height() / 2
@@ -881,8 +924,26 @@ class BlueprintView(QGraphicsView):
                 best_distance = distance
         return best
 
+    def _group_card_at_scene_pos(self, scene_pos, margin_px=0.0):
+        """命中收起的群组节点（卡片）；展开的组框不算。"""
+        if margin_px <= 0:
+            candidates = self.scene().items(scene_pos)
+        else:
+            margin = self._scene_margin(margin_px)
+            area = QRectF(scene_pos.x() - margin, scene_pos.y() - margin, margin * 2, margin * 2)
+            candidates = self.scene().items(area)
+        for item in candidates:
+            if isinstance(item, BlueprintGroupItem) and item.collapsed and item.isVisible():
+                return item
+        return None
+
     def _connection_target(self, scene_pos, source_node, side):
         target = self._node_at_scene_pos(scene_pos, self._DROP_MARGIN_PX)
+        if target is None:
+            # 拖到收起的群组节点上也算命中（群组节点左右边缘即端口）
+            card = self._group_card_at_scene_pos(scene_pos, self._DROP_MARGIN_PX)
+            if card is not None and card is not source_node:
+                return card, ("input" if side == "output" else "output")
         if target is None or target is source_node:
             return None, None
         local = target.mapFromScene(scene_pos)
@@ -897,6 +958,30 @@ class BlueprintView(QGraphicsView):
                 best = name
                 best_distance = distance
         return target, best
+
+    def _connection_index(self, item, role):
+        """连线端点对应的步骤下标：普通节点用自己的 index；折叠群组用
+        「作为源=组内最后一步 / 作为目标=组内第一步」（与画布上卡片端口的含义一致）。"""
+        if item is None:
+            return None
+        if isinstance(item, BlueprintGroupItem):
+            window = self._host_window()
+            if window is None:
+                return None
+            try:
+                members = window._group_all_node_indices(item.group_id)
+            except Exception:
+                return None
+            if not members:
+                return None
+            return max(members) if role == "source" else min(members)
+        return getattr(item, "index", None)
+
+    def _host_window(self):
+        for candidate in (self.window(), self.parent()):
+            if candidate is not None and hasattr(candidate, "_group_all_node_indices"):
+                return candidate
+        return None
 
     def _update_connection_preview(self, view_pos):
         if self.pending_connection is None:
@@ -940,15 +1025,23 @@ class BlueprintView(QGraphicsView):
         if self.pending_connection is not None:
             scene_position = self.mapToScene(event.position().toPoint())
             source_node, port, side = self.pending_connection
-            source_index = source_node.index
             self.pending_connection = None
             self._clear_connection_preview()
             target, target_port = self._connection_target(scene_position, source_node, side)
-            if target is not None and target.index != source_index:
+            source_index = self._connection_index(source_node, "source" if side == "output" else "target")
+            target_role = "target" if side == "output" else "source"
+            target_index = self._connection_index(target, target_role) if target is not None else None
+            same_group = (isinstance(source_node, BlueprintGroupItem) and target is source_node)
+            if (target_index is not None and source_index is not None
+                    and target_index != source_index and not same_group):
                 if side == "output":
-                    self.connection_requested.emit(source_index, target.index, port)
+                    self.connection_requested.emit(
+                        source_index, target_index,
+                        port if not isinstance(source_node, BlueprintGroupItem) else "output")
                 else:
-                    self.connection_requested.emit(target.index, source_index, target_port)
+                    self.connection_requested.emit(
+                        target_index, source_index,
+                        target_port if not isinstance(target, BlueprintGroupItem) else "output")
             self.interaction_finished.emit()
             event.accept()
             return

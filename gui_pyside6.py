@@ -1194,9 +1194,8 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.history = []
         self.redo_history = []
         self._restoring_history = False
-        # 编辑器脏标记（M2：应用修改是否压撤销栈）与最近一次保存快照（L4：保存状态）
+        # 编辑器脏标记（M2：决定「应用修改」要不要压撤销栈）
         self._editor_dirty = False
-        self._saved_snapshot = None
         self.blueprint_layouts = load_blueprint_layouts()
         self.blueprint_graphs = load_blueprint_graphs()
         self.mode_tasks = {"custom": deepcopy(TASKS)}
@@ -1512,12 +1511,6 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.preset_info_label = QLabel("预设: custom")
         self.preset_info_label.setObjectName("statusInfo")
         status_layout.addWidget(self.preset_info_label)
-        self.save_state_label = QLabel("● 已保存")
-        self.save_state_label.setObjectName("saveStateLabel")
-        self.save_state_label.setProperty("saveKind", "saved")
-        self.save_state_label.setToolTip(
-            "当前内容已保存。日常操作（增删/拖动/分组等）会自动保存，也可以随时点「保存」或按 Ctrl+S 手动保存。")
-        status_layout.addWidget(self.save_state_label)
         self.last_save_label = QLabel("")
         self.last_save_label.setObjectName("statusInfo")
         status_layout.addWidget(self.last_save_label)
@@ -1584,11 +1577,6 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             "#statusLabel[statusKind=\"done\"] { color: #ffffff; background: #16a34a; }"
             "#statusLabel[statusKind=\"stopped\"] { color: #475569; background: #e2e8f0; }"
             "#statusInfo { color: #64748b; }"
-            "#saveStateLabel { color: #475569; font-weight: bold; padding: 1px 10px; border-radius: 9px;"
-            " background: #e2e8f0; }"
-            "#saveStateLabel[saveKind=\"saved\"] { color: #166534; background: #dcfce7; }"
-            "#saveStateLabel[saveKind=\"dirty\"] { color: #92400e; background: #fef3c7; }"
-            "#saveStateLabel[saveKind=\"unsaved\"] { color: #ffffff; background: #dc2626; }"
             "#editorState { color: #475569; font-weight: bold; padding: 1px 10px; border-radius: 9px;"
             " background: #e2e8f0; }"
             "#editorState[stateKind=\"dirty\"] { color: #92400e; background: #fef3c7; }"
@@ -1657,9 +1645,8 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.mode_tasks.setdefault(mode, deepcopy(get_tasks_for_mode(mode)))
         TASKS[:] = deepcopy(self.mode_tasks[mode])
         self.current_task_index = -1
-        # 切换预设：加载进来的就是已保存的数据；上一预设的编辑器脏标记不该带过来
+        # 切换预设：上一预设的编辑器脏标记不该带过来
         self._editor_dirty = False
-        self._refresh_saved_snapshot()
         self._update_preset_info()
         self.refresh_task_list()
         self.append_log(f"已切换到预设: {mode}")
@@ -2487,9 +2474,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             save_tasks(TASKS)
         else:
             self._save_presets()
-        self._refresh_saved_snapshot()
         self._touch_saved_time()
-        self._refresh_save_state()
         self.append_log(f"任务已保存到预设“{mode_name}”。")
 
     @Slot()
@@ -3135,44 +3120,9 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             mode = self.mode_combo.currentText() or "custom"
             self.preset_info_label.setText(f"预设: {mode}")
 
-    # ---------- L4：保存状态（已保存 / 未保存 / 有未应用修改） ----------
-
-    def _refresh_saved_snapshot(self):
-        """记录"刚刚写入磁盘"的数据快照（用于判断是否还有未保存改动）。"""
-        self._saved_snapshot = (deepcopy(TASKS), deepcopy(self.mode_group_metadata))
-
-    def _has_unsaved_changes(self):
-        if self._saved_snapshot is None:
-            self._refresh_saved_snapshot()
-            return False
-        saved_tasks, saved_metadata = self._saved_snapshot
-        return saved_tasks != TASKS or saved_metadata != self.mode_group_metadata
-
-    def _refresh_save_state(self):
-        label = getattr(self, "save_state_label", None)
-        if label is None:
-            return
-        if getattr(self, "_editor_dirty", False):
-            kind, text = "dirty", "● 有未应用修改"
-            tooltip = "编辑器里有改动还没点「应用修改」，这部分还没写入步骤。"
-        elif self._has_unsaved_changes():
-            kind, text = "unsaved", "● 未保存"
-            tooltip = "内存里有改动还没写入磁盘：点「保存」或按 Ctrl+S。"
-        else:
-            kind, text = "saved", "● 已保存"
-            tooltip = ("当前内容已保存。日常操作（增删/拖动/分组等）会自动保存，"
-                       "也可以随时点「保存」或按 Ctrl+S 手动保存。")
-        label.setText(text)
-        label.setProperty("saveKind", kind)
-        label.setToolTip(tooltip)
-        style = label.style()
-        style.unpolish(label)
-        style.polish(label)
-
     def _touch_saved_time(self):
         if hasattr(self, "last_save_label"):
             self.last_save_label.setText(f"保存于 {time.strftime('%H:%M:%S')}")
-        self._refresh_save_state()
 
     def _show_editor_page(self, empty):
         """空编辑器提示：在编辑区顶部显示「选择一个步骤」，编辑区本身保持可见。"""
@@ -3185,7 +3135,6 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         if hasattr(self, "_apply_execution_marks"):
             self._apply_execution_marks()
         self._refresh_idle_progress()
-        self._refresh_save_state()
 
     def _refresh_idle_progress(self):
         """空闲时把进度条显示为 0 / 启用步数；运行中不要覆盖实际进度。"""
@@ -3332,7 +3281,6 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         style = label.style()
         style.unpolish(label)
         style.polish(label)
-        self._refresh_save_state()
 
     def _hide_editor_state(self):
         label = getattr(self, "editor_state_label", None)
@@ -3348,7 +3296,6 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         if label is None or not label.isVisible():
             return
         self._set_editor_state(False)
-        self._refresh_save_state()
 
     def clear_log(self):
         """清空日志面板（M6：日志有上限，也给一个手动清空入口）。"""

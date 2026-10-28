@@ -42,7 +42,15 @@ def get_window_rect():
 
 
 def to_global_position(local_x, local_y):
-    """把窗口内坐标转成屏幕全局坐标。"""
+    """把识别/点击坐标转成屏幕全局坐标。
+
+    - 窗口模式：截图是目标窗口局部坐标，需要加窗口左上角；
+    - 前景窗口/全屏模式：`capture_screen()` 截的是整个显示器，坐标本来就是全局的，
+      **不能**再加当前前台窗口偏移。之前自动最小化主窗口后，前台窗口变成游戏/其它
+      窗口，偏移被错误加了一次，表现为“识别到了但点击没反应”。
+    """
+    if not getattr(config, "USE_WINDOW_MODE", False):
+        return (int(local_x), int(local_y))
     rect = get_window_rect()
     if rect is None:
         return (local_x, local_y)

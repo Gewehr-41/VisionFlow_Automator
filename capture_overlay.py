@@ -1658,6 +1658,8 @@ class CaptureOverlayMixin:
                 ("key", "按键", "text"),
                 ("delay_before", "执行前延时(秒)", "float"),
                 ("hold_time", "按住时长(秒)", "float"),
+                ("press_count", "按下次数", "int"),
+                ("press_interval", "每次间隔(秒)", "float"),
                 ("after_wait", "执行后等待(秒)", "float"),
             ]
         if task_type == "drag":
@@ -1738,6 +1740,10 @@ class CaptureOverlayMixin:
             elif kind == "bool":
                 editor = QCheckBox()
                 editor.setChecked(bool(task.get(key, False)))
+            elif key == "press_count":
+                editor = QLineEdit(str(task.get(key, 1)))
+            elif key == "press_interval":
+                editor = QLineEdit(str(task.get(key, 0.0)))
             else:
                 editor = QLineEdit(str(task.get(key, "")))
             target.special_edits[key] = editor

@@ -649,11 +649,20 @@ def execute_keyboard_move_task(task, stop_flag=None, log_callback=None):
 
 
 def execute_key_press_task(task, stop_flag=None, log_callback=None):
-    """执行单次按键步骤。"""
+    """执行按键步骤：支持一次执行多次按下，并设置每次之间的间隔。"""
     key = str(task.get("key") or task.get("template") or "E").upper()
     hold_time = float(task.get("hold_time", 0.1))
     delay_before = max(0.0, float(task.get("delay_before", 0.0)))
-    log(f"\n>>> 按键任务: {task.get('description', f'按键 {key}')}", log_callback)
+    try:
+        press_count = max(1, min(1000, int(task.get("press_count", 1) or 1)))
+    except (TypeError, ValueError):
+        press_count = 1
+    try:
+        press_interval = max(0.0, float(task.get("press_interval", 0.0) or 0.0))
+    except (TypeError, ValueError):
+        press_interval = 0.0
+    log(f"\n>>> 按键任务: {task.get('description', f'按键 {key}')}"
+        f"（{press_count} 次，间隔 {press_interval:g} 秒）", log_callback)
 
     if stop_flag is not None and stop_flag.is_set():
         log("用户中止脚本执行。", log_callback)
@@ -667,11 +676,18 @@ def execute_key_press_task(task, stop_flag=None, log_callback=None):
             log("用户中止脚本执行。", log_callback)
             return False
 
-    key_down(key)
-    if interruptible_sleep(max(0.05, hold_time), stop_flag):
+    for index in range(press_count):
+        if stop_flag is not None and stop_flag.is_set():
+            log("用户中止脚本执行。", log_callback)
+            return False
+        key_down(key)
+        if interruptible_sleep(max(0.05, hold_time), stop_flag):
+            key_up(key)
+            return False
         key_up(key)
-        return False
-    key_up(key)
+        if index < press_count - 1 and press_interval > 0:
+            if interruptible_sleep(press_interval, stop_flag):
+                return False
     after_wait = max(0.0, float(task.get("after_wait", 0.2)))
     if after_wait > 0:
         log(f"  按键完成后等待 {after_wait} 秒。", log_callback)

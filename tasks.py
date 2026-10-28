@@ -59,7 +59,8 @@ def make_keyboard_move_task(task_id, mode, description, *, move_steps, after_wai
     }
 
 
-def make_key_press_task(task_id, mode, description, key, *, delay_before=0.0, hold_time=0.1, after_wait=0.2, required=True):
+def make_key_press_task(task_id, mode, description, key, *, delay_before=0.0, hold_time=0.1,
+                        press_count=1, press_interval=0.0, after_wait=0.2, required=True):
     return {
         "id": task_id,
         "mode": mode,
@@ -70,6 +71,8 @@ def make_key_press_task(task_id, mode, description, key, *, delay_before=0.0, ho
         "key": key,
         "delay_before": delay_before,
         "hold_time": hold_time,
+        "press_count": press_count,
+        "press_interval": press_interval,
         "click": False,
         "after_wait": after_wait,
         "wait_for": "time",

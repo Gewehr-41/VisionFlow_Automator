@@ -173,6 +173,22 @@ class CaptureOverlayMixin:
     def _capture_after_task_changed(self):
         """步骤数据被修改后调用（保存、刷新、选中态同步）。"""
 
+    def _capture_apply_template_binding(self):
+        """绑定图片对话框点「保存」后，走各窗口的「应用修改」路径真正写入并持久化。"""
+        apply_selected = getattr(self, "apply_selected_task", None)
+        if callable(apply_selected):
+            apply_selected()
+            return
+        apply_editor = getattr(self, "_apply_editor", None)
+        if callable(apply_editor):
+            apply_editor()
+
+    def _capture_mark_editor_dirty(self):
+        """绑定图片对话框点「叉」退出时，把变化保留为未应用状态。"""
+        marker = getattr(self, "_mark_editor_dirty", None)
+        if callable(marker):
+            marker()
+
     def _capture_show_parent(self):
         """恢复显示父窗口（仅蓝图窗口需要，主窗口无父窗口）。"""
 
@@ -708,6 +724,16 @@ class CaptureOverlayMixin:
         self.template_preview.setText("")
         self.template_preview.setToolTip(f"{names_hint}  {pixmap.width()}x{pixmap.height()}")
         self.template_preview.setVisible(True)
+    def _set_template_binding_widgets(self, values, task=None):
+        """把绑定图片列表写回当前识别/连点步骤的编辑控件（不落盘）。"""
+        task = task or self._capture_current_task()
+        value = ", ".join(values)
+        if task is not None and task.get("type") == "click_until_gone":
+            self.click_until_template_edit.setText(value)
+        else:
+            self.template_edit.setText(value)
+            self._update_template_preview(value)
+
     def select_template_file(self):
         """绑定图片对话框：选择 / 手动框选 / 预览 / 删除候选模板。
 
@@ -730,8 +756,12 @@ class CaptureOverlayMixin:
         current = self.template_edit.text()
         if task.get("type") == "click_until_gone":
             current = self.click_until_template_edit.text()
-        for name in [item.strip() for item in current.replace("，", ",").split(",") if item.strip()]:
+        initial_values = [item.strip() for item in current.replace("，", ",").split(",") if item.strip()]
+        for name in initial_values:
             image_list.addItem(name)
+
+        def current_values():
+            return [image_list.item(i).text() for i in range(image_list.count())]
 
         def choose_images():
             paths, _ = QFileDialog.getOpenFileNames(dialog, "选择要绑定的图片", config.ICON_DIR, "PNG 图片 (*.png)")
@@ -790,20 +820,27 @@ class CaptureOverlayMixin:
         buttons_row.addWidget(remove_btn)
         layout.addLayout(buttons_row)
 
+        state = {"saved": False}
+
         def save():
-            values = [image_list.item(i).text() for i in range(image_list.count())]
-            template_value = ", ".join(values)
-            if task.get("type") == "click_until_gone":
-                self.click_until_template_edit.setText(template_value)
-            else:
-                self.template_edit.setText(template_value)
-                self._update_template_preview(template_value)
+            self._set_template_binding_widgets(current_values(), task)
+            state["saved"] = True
             dialog.accept()
 
         save_btn = QPushButton("保存")
         save_btn.clicked.connect(save)
         layout.addWidget(save_btn)
         dialog.exec()
+        changed = current_values() != initial_values
+        if state["saved"]:
+            # 点「保存」：立即按「应用修改」同样的路径写入步骤并持久化，
+            # 不再要求用户关掉对话框后再点一次「应用修改」。
+            self._capture_apply_template_binding()
+        elif changed:
+            # 点「叉」退出：把改动保留在编辑控件里并标成「未应用」，
+            # 用户接下来点「应用修改」才真正写入步骤。
+            self._set_template_binding_widgets(current_values(), task)
+            self._capture_mark_editor_dirty()
 
     def open_detour_editor(self):
         task = self._capture_current_task()

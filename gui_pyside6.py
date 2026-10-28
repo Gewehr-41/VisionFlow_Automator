@@ -3566,6 +3566,8 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
     def on_execution_completed(self, state):
         if self.completion_notified:
             return
+        # 先恢复窗口，再弹完成/失败提示，避免对话框挂在最小化的窗口后面
+        self._restore_after_run()
         self.completion_notified = True
         if hasattr(self, "progress_bar"):
             self.progress_bar.setFormat("%v / %m 步")

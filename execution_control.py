@@ -85,6 +85,36 @@ class ExecutionControlMixin:
     def start_script(self):
         self._start_worker(None)
 
+    def _minimize_for_run(self):
+        """脚本开始执行时最小化主窗口，让目标窗口在前台；记录原窗口状态。"""
+        self._auto_minimized = False
+        try:
+            self._pre_run_window_state = self.windowState()
+            if self.isMinimized():
+                return
+            self.showMinimized()
+            self._auto_minimized = True
+        except Exception:
+            self._auto_minimized = False
+
+    def _restore_after_run(self):
+        """脚本结束/停止/异常时恢复主窗口（只恢复本程序主动最小化的情况）。"""
+        if not getattr(self, "_auto_minimized", False):
+            return
+        self._auto_minimized = False
+        try:
+            state = getattr(self, "_pre_run_window_state", None)
+            if state is not None and state & Qt.WindowState.WindowFullScreen:
+                self.showFullScreen()
+            elif state is not None and state & Qt.WindowState.WindowMaximized:
+                self.showMaximized()
+            else:
+                self.showNormal()
+            self.raise_()
+            self.activateWindow()
+        except Exception:
+            pass
+
     def _target_window_exists(self, title):
         """开始执行前校验目标窗口是否真的存在。
 
@@ -140,6 +170,8 @@ class ExecutionControlMixin:
         self._set_status("running")
         self.append_log(f"脚本启动，共 {len(tasks)} 个启用步骤。")
 
+        # 脚本真正开始执行：先最小化主窗口，避免挡住目标窗口
+        self._minimize_for_run()
         self.worker_thread = QThread(self)
         self.worker = TaskWorker(tasks, self.loop_checkbox.isChecked(), self.stop_event, self.pause_event, self.single_step_event, start_node_id, self._fallback_steps_for_mode())
         self.worker.moveToThread(self.worker_thread)
@@ -232,6 +264,7 @@ class ExecutionControlMixin:
         self._saved_config = None
 
     def on_worker_finished(self):
+        self._restore_after_run()
         self._set_running_state(False)
         self._restore_config_after_run()
         self.pause_button.setText("暂停")

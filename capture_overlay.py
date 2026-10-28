@@ -15,6 +15,8 @@ import os
 import uuid
 from functools import partial
 
+import step_types
+
 from PySide6.QtCore import QRect, QTimer, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
@@ -59,17 +61,18 @@ def _build_step_list_editor(dialog, steps, layout, configure_callback, type_opti
         step_list.clear()
         for step in steps:
             description = step.get("description") or step.get("template") or step.get("type", "步骤")
-            step_list.addItem(f"{step.get('type', 'normal')} - {description}")
+            step_list.addItem(f"{step_types.type_label(step.get('type', 'normal'))} - {description}")
 
     refresh_list()
 
     add_row = QHBoxLayout()
     type_combo = QComboBox()
-    type_combo.addItems(type_options)
+    for label, value in step_types.type_options(type_options):
+        type_combo.addItem(label, value)
     add_row.addWidget(type_combo, 1)
 
     def add_step():
-        steps.append({"type": type_combo.currentText() or "normal"})
+        steps.append({"type": type_combo.currentData() or step_types.type_from_label(type_combo.currentText())})
         refresh_list()
 
     add_button = QPushButton("新增步骤")
@@ -964,11 +967,12 @@ class CaptureOverlayMixin:
 
         # ---------- 基本 ----------
         type_combo = QComboBox()
-        type_combo.addItems([
+        for label, value in step_types.type_options([
             "normal", "loop", "key_press", "keyboard_move",
             "drag", "click_until_gone", "delay",
-        ])
-        type_combo.setCurrentText(str(detour_task.get("type", "normal")))
+        ]):
+            type_combo.addItem(label, value)
+        type_combo.setCurrentIndex(max(0, type_combo.findData(str(detour_task.get("type", "normal")))))
         form.addRow("类型:", type_combo)
 
         description_edit = QLineEdit(str(detour_task.get("description", "")))
@@ -1176,15 +1180,15 @@ class CaptureOverlayMixin:
         self._rebuild_special_form(detour_task, form=special_host)
 
         def sync_visibility():
-            task_type = type_combo.currentText()
+            task_type = type_combo.currentData() or "normal"
             normal_group.setVisible(task_type in ("normal", "advanced"))
             region_group.setVisible(task_type in ("normal", "advanced", "click_until_gone"))
             click_until_group.setVisible(task_type == "click_until_gone")
             special_group.setVisible(bool(self._special_field_specs({"type": task_type})))
 
-        def on_type_changed(new_type):
+        def on_type_changed(_label):
             sync_visibility()
-            self._rebuild_special_form({**detour_task, "type": new_type}, form=special_host)
+            self._rebuild_special_form({**detour_task, "type": (type_combo.currentData() or "normal")}, form=special_host)
 
         type_combo.currentTextChanged.connect(on_type_changed)
         sync_visibility()
@@ -1268,7 +1272,7 @@ class CaptureOverlayMixin:
         layout.addStretch(1)
 
         def save():
-            task_type = type_combo.currentText()
+            task_type = type_combo.currentData() or "normal"
             detour_task["type"] = task_type
             description = description_edit.text().strip()
             if description:

@@ -8,6 +8,8 @@
 """
 import time
 
+import step_types
+
 from PySide6.QtCore import QLineF, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QPainterPath, QPainterPathStroker, QPen, QPolygonF
 from PySide6.QtWidgets import (
@@ -158,7 +160,7 @@ class BlueprintNodeItem(QGraphicsRectItem):
         painter.drawRect(QRectF(rect.left(), rect.top() + header_height / 2, rect.width(), header_height / 2))
         painter.setPen(QPen(QColor("#ffffff")))
         painter.setFont(QFont("Microsoft YaHei", 9, QFont.Bold))
-        painter.drawText(header_rect.adjusted(8, 0, -4, 0), Qt.AlignLeft | Qt.AlignVCenter, f"{self.index + 1:02d}  {self.task.get('type', 'normal')}")
+        painter.drawText(header_rect.adjusted(8, 0, -4, 0), Qt.AlignLeft | Qt.AlignVCenter, f"{self.index + 1:02d}  {step_types.type_label(self.task.get('type', 'normal'))}")
 
         # 主体基本信息
         if not collapsed:

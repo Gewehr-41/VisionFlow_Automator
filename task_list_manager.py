@@ -9,6 +9,8 @@
 之前，否则会被那里的空实现盖住（窗口类声明已按此顺序排列）。
 """
 import uuid
+
+import step_types
 from copy import deepcopy
 
 from PySide6.QtCore import Qt, QTimer, Slot
@@ -191,7 +193,7 @@ class TaskListMixin:
             task_type = task.get("type", "normal")
             detour_status = " · 已启用迂回" if detour_active(task) else ""
             ocr_status = " · 文字识别" if task.get("ocr_enabled") else ""
-            item = QTreeWidgetItem([f"{index + 1:02d}. [{task_type}] {description}{ocr_status}{detour_status}"])
+            item = QTreeWidgetItem([f"{index + 1:02d}. [{step_types.type_label(task_type)}] {description}{ocr_status}{detour_status}"])
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsDragEnabled)
             item.setData(0, Qt.UserRole, str(task.get("id", index)))
             item.setData(0, Qt.UserRole + 1, index)

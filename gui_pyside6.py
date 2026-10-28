@@ -48,6 +48,7 @@ from PySide6.QtWidgets import (
 
 import config
 import paths
+import step_types
 from main import reload_templates
 from tasks import (
     DELETED_PRESET_NAMES,
@@ -729,7 +730,7 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
 
 
     def _load_editor_for_task(self, task):
-        self.selected_label.setText(f"第 {self.current_index + 1} 步 · 类型: {task.get('type', 'normal')}")
+        self.selected_label.setText(f"第 {self.current_index + 1} 步 · 类型: {step_types.type_label(task.get('type', 'normal'))}")
         self._update_editor_visibility(task)
         self._load_common_editor_fields(task)
 
@@ -908,12 +909,15 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
             return
         types = ["normal", "loop", "keyboard_move", "key_press", "drag", "click_until_gone", "delay", "condition", "switch", "event"]
         current = self.tasks[index].get("type", "normal")
-        task_type, ok = QInputDialog.getItem(self, "更改步骤类型", "步骤类型:", types, max(0, types.index(current) if current in types else 0), False)
+        labels = [step_types.type_label(value) for value in types]
+        current_label = step_types.type_label(current)
+        selected, ok = QInputDialog.getItem(self, "修改步骤类型", "步骤类型:", labels, max(0, labels.index(current_label) if current_label in labels else 0), False)
         if not ok:
             return
         task = self.tasks[index]
         self._push_history()
-        task["type"] = task_type
+        task["type"] = step_types.type_from_label(selected, current)
+        task_type = task["type"]
         task["click"] = task_type in ("normal", "advanced", "click_until_gone")
         if task_type == "key_press":
             task["key"] = task.get("key") or "E"
@@ -973,10 +977,11 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
 
 
     def add_task(self, group_id=None, position=None):
-        types = ["normal", "loop", "keyboard_move", "key_press", "drag", "click_until_gone", "delay"]
-        task_type, ok = QInputDialog.getItem(self, "新增步骤类型", "请选择步骤类型:", types, 0, False)
+        labels = [step_types.type_label(value) for value in ["normal", "loop", "keyboard_move", "key_press", "drag", "click_until_gone", "delay"]]
+        selected, ok = QInputDialog.getItem(self, "新增步骤类型", "请选择步骤类型:", labels, 0, False)
         if not ok:
             return
+        task_type = step_types.type_from_label(selected, "normal")
         self._push_history()
         new_task = {
             "id": str(uuid.uuid4()),
@@ -984,7 +989,7 @@ class BlueprintWindow(BlueprintGroupMixin, BlueprintInteractionMixin,
             "mode": "custom",
             "enabled": True,
             "template": "new_step" if task_type in ("normal", "advanced") else "",
-            "description": f"新增{task_type}步骤",
+            "description": f"新增{step_types.type_label(task_type)}步骤",
             "click": task_type in ("normal", "advanced", "click_until_gone"),
             "required": True,
         }
@@ -1686,7 +1691,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             task = TASKS[index]
             # 显示用 ID 统一去掉分段横线（历史步骤是 uuid4 带横线、旧数据无横线，界面上统一）
             display_id = str(task.get("id", "")).replace("-", "")
-            self.selected_label.setText(f"类型: {task.get('type', 'normal')} | ID: {display_id}")
+            self.selected_label.setText(f"类型: {step_types.type_label(task.get('type', 'normal'))} | ID: {display_id}")
             is_click_until = task.get("type") == "click_until_gone"
             is_recognition = task.get("type", "normal") in ("normal", "advanced")
             self._update_editor_visibility(task)
@@ -2396,10 +2401,11 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
 
     @Slot()
     def add_task(self):
-        types = ["normal", "loop", "keyboard_move", "key_press", "drag", "click_until_gone", "delay"]
-        task_type, ok = QInputDialog.getItem(self, "新增步骤类型", "请选择步骤类型:", types, 0, False)
+        labels = [step_types.type_label(value) for value in ["normal", "loop", "keyboard_move", "key_press", "drag", "click_until_gone", "delay"]]
+        selected, ok = QInputDialog.getItem(self, "新增步骤类型", "请选择步骤类型:", labels, 0, False)
         if not ok:
             return
+        task_type = step_types.type_from_label(selected, "normal")
         self._push_history()
         group_ids = self._selected_group_ids()
         group_id = group_ids[0] if group_ids else None
@@ -2413,7 +2419,7 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             "mode": mode,
             "enabled": True,
             "template": "new_step" if task_type in ("normal", "advanced") else "",
-            "description": f"新增{task_type}步骤",
+            "description": f"新增{step_types.type_label(task_type)}步骤",
             "click": task_type in ("normal", "advanced", "click_until_gone"),
             "required": True,
         }

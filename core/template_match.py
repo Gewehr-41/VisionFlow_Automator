@@ -10,6 +10,7 @@
 """
 import hashlib
 import json
+import math
 import random
 from pathlib import Path
 
@@ -311,16 +312,24 @@ def _crop_screen(screen_bgr, rect):
 
 def _match_one_region(screen_bgr, screen_gray, tpl, name, scales, threshold,
                       offset_x, offset_y, area_filter=None, allow_mask=True,
-                      coord_scale=1.0):
-    """在给定区域里匹配单个模板；返回 (native candidates, best_score)。"""
+                      coord_scale=1.0, primary_scale=1.0):
+    """在给定区域里匹配单个模板；返回 (native candidates, best_score)。
+
+    速度优化：
+    - 按「期望尺度」由近到远搜索（同分辨率截图先命中 1.0，不必把 9 个尺度全跑完）；
+    - 分数足够高时提前结束（目标已经很确定），避免为了微小分差继续扫剩余尺度。
+    """
     bgr, _gray, mask = _split_template(tpl)
     use_mask = bool(mask is not None and allow_mask and getattr(config, "USE_TEMPLATE_MASK", True))
     passes = [True, False] if use_mask else [False]
     candidates = []
     best_val = -1.0
+    primary = max(1e-6, float(primary_scale or 1.0))
+    ordered_scales = sorted(scales, key=lambda value: abs(math.log(max(1e-6, value) / primary)))
+    early_exit_conf = min(0.99, max(0.93, float(threshold) + 0.12))
 
     for masked in passes:
-        for scale in scales:
+        for scale in ordered_scales:
             scaled_gray, scaled_mask = _scaled_template(tpl, scale)
             height, width = scaled_gray.shape[:2]
             if height > screen_gray.shape[0] or width > screen_gray.shape[1]:
@@ -348,6 +357,9 @@ def _match_one_region(screen_bgr, screen_gray, tpl, name, scales, threshold,
             if not candidates:
                 _, max_val, _, _ = cv2.minMaxLoc(scores)
                 best_val = max(best_val, float(max_val))
+            elif max(conf for _, conf in candidates) >= early_exit_conf:
+                # 已命中且足够确信：跳过剩余尺度/第二轮掩膜，直接返回
+                return candidates, best_val
         if candidates:
             break
     return candidates, best_val
@@ -587,8 +599,13 @@ def match_all_templates(screen_img, templates, threshold=THRESHOLD,
                     coarse_crop, coarse_gray, tpl, name, coarse_scales, coarse_threshold,
                     off_x * coarse_factor, off_y * coarse_factor, area_filter,
                     coord_scale=coord_scale * coarse_factor,
+                    primary_scale=base_scale * coarse_factor,
                 )
                 best_val = max(best_val, coarse_score)
+                miss_margin = float(getattr(config, "COARSE_MISS_MARGIN", 0.12))
+                if not coarse_found and coarse_score < float(threshold) - miss_margin:
+                    # 粗搜分数离阈值还很远：目标基本不在，跳过整幅全分辨率扫描
+                    continue
                 if coarse_found:
                     coarse_center = _dedupe_candidates(coarse_found)[0][0]
                     pad = int(max(24, max(bgr.shape[:2]) * max(1.0, base_scale) * 2.5))
@@ -602,6 +619,7 @@ def match_all_templates(screen_img, templates, threshold=THRESHOLD,
                         found, score = _match_one_region(
                             refine_crop, refine_gray, tpl, name, scales, threshold,
                             refine_x, refine_y, area_filter, coord_scale=coord_scale,
+                            primary_scale=base_scale,
                         )
                         best_val = max(best_val, score)
                         candidates.extend(found)
@@ -611,6 +629,7 @@ def match_all_templates(screen_img, templates, threshold=THRESHOLD,
             found, score = _match_one_region(
                 crop, crop_gray, tpl, name, scales, threshold,
                 off_x, off_y, area_filter, coord_scale=coord_scale,
+                primary_scale=base_scale,
             )
             best_val = max(best_val, score)
             candidates.extend(found)

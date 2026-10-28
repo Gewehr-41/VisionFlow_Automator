@@ -40,6 +40,31 @@ class ResolutionNormalizationTests(unittest.TestCase):
         self.assertLessEqual(abs(center[1] - 160), 3)
 
 
+class SpeedOptimizationTests(unittest.TestCase):
+    def setUp(self):
+        tm.clear_template_cache()
+        tm.clear_last_hits()
+
+    def test_high_confidence_hit_stops_scale_loop_early(self):
+        """同分辨率截图应先命中 1.0 尺度并早停，不再跑完 9 个尺度。"""
+        tpl = _pattern(24, seed=27)
+        screen = np.zeros((200, 240, 3), dtype=np.uint8)
+        screen[60:84, 80:104] = tpl
+        original = tm.cv2.matchTemplate
+        calls = []
+
+        def spy(*args, **kwargs):
+            calls.append(1)
+            return original(*args, **kwargs)
+
+        with mock.patch.object(tm.cv2, "matchTemplate", spy):
+            result = tm.match_all_templates(screen, {"t": tpl}, threshold=0.9,
+                                            use_multi_scale=True,
+                                            scale_range=(0.8, 1.2), scale_step=0.05)
+        self.assertIsNotNone(result["t"][0])
+        self.assertLessEqual(len(calls), 2, f"早停失效，调用了 {len(calls)} 次 matchTemplate")
+
+
 class CoarseToFineTests(unittest.TestCase):
     def setUp(self):
         tm.clear_template_cache()

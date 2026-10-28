@@ -28,6 +28,7 @@ MATCH_REFERENCE_HEIGHT = 0
 COARSE_TO_FINE = True
 COARSE_MIN_AREA = 900000          # 归一化后画面面积超过该值才启用粗搜
 COARSE_FACTOR = 0.5
+COARSE_MISS_MARGIN = 0.12        # 粗搜最高分低于「阈值-该值」时，认为目标不在，跳过全分辨率扫描
 # 2) 透明 PNG 模板使用 alpha 掩膜匹配；命中后做颜色二次校验
 USE_TEMPLATE_MASK = True
 COLOR_CHECK_ENABLED = True

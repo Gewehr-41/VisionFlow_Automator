@@ -104,6 +104,29 @@ class PersistedLastHitTests(unittest.TestCase):
         self.assertIsNotNone(second["t"][0], "命中点附近没找到时应退回框选区域")
         self.assertEqual(second["t"][0], (112, 112))
 
+    def test_preferred_radius_300_covers_moderate_move(self):
+        """半径 300(+模板半宽) 应覆盖 250px 的小幅移动，不再回退全屏。"""
+        tpl = _pattern(24, seed=17)
+        screen1 = np.zeros((160, 520, 3), dtype=np.uint8)
+        screen1[40:64, 30:54] = tpl
+        self._match(screen1, tpl)
+
+        screen2 = np.zeros((160, 520, 3), dtype=np.uint8)
+        screen2[40:64, 280:304] = tpl          # 相对上次命中点右移 250px
+        calls = []
+        original = tm._match_one_region
+
+        def spy(*args, **kwargs):
+            calls.append(args[0].shape[:2])
+            return original(*args, **kwargs)
+
+        with mock.patch.object(tm, "_match_one_region", spy):
+            result = self._match(screen2, tpl)
+        self.assertIsNotNone(result["t"][0])
+        self.assertLessEqual(abs(result["t"][0][0] - 292), 3)
+        self.assertEqual(len(calls), 1, "250px 移动应被优先窗口覆盖，不应回退全屏二次搜索")
+        self.assertLess(calls[0][1], 520, "第一次搜索应是优先小窗口而不是全屏")
+
     def test_no_hit_recorded_when_nothing_found(self):
         tpl = _pattern(24, seed=16)
         screen = np.zeros((120, 160, 3), dtype=np.uint8)

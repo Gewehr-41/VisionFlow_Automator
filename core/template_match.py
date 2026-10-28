@@ -33,6 +33,8 @@ _ORB_CACHE = {}
 _LAST_HITS = {}
 # 每个模板上次命中时对应的图片内容签名；图片换了 -> 签名不同 -> 命中点失效
 _LAST_HIT_SIGNATURES = {}
+# 模板首次命中时的屏幕高度：用于分辨率归一化（换分辨率时自动缩放）
+_LAST_HIT_SCREEN_HEIGHTS = {}
 _SIGNATURE_CACHE = {}
 # 持久化文件路径（None = 只在内存里，不写盘；GUI/主程序启动时会设置）
 _LAST_HITS_PATH = None
@@ -72,6 +74,7 @@ def clear_last_hits():
     """清空内存中的命中点（不删除文件）。"""
     _LAST_HITS.clear()
     _LAST_HIT_SIGNATURES.clear()
+    _LAST_HIT_SCREEN_HEIGHTS.clear()
 
 
 def save_last_hits():
@@ -82,7 +85,8 @@ def save_last_hits():
         "version": 1,
         "hits": {
             name: {"center": [int(center[0]), int(center[1])],
-                   "signature": _LAST_HIT_SIGNATURES.get(name, "")}
+                   "signature": _LAST_HIT_SIGNATURES.get(name, ""),
+                   "screen_height": int(_LAST_HIT_SCREEN_HEIGHTS.get(name) or 0)}
             for name, center in _LAST_HITS.items()
             if _LAST_HIT_SIGNATURES.get(name)
         },
@@ -125,6 +129,12 @@ def load_last_hits(path=None):
             continue
         _LAST_HITS[str(name)] = center
         _LAST_HIT_SIGNATURES[str(name)] = signature
+        try:
+            height = int(item.get("screen_height") or 0)
+        except (TypeError, ValueError):
+            height = 0
+        if height > 0:
+            _LAST_HIT_SCREEN_HEIGHTS[str(name)] = height
     return len(_LAST_HITS)
 
 
@@ -136,6 +146,7 @@ def prune_invalid_last_hits(templates):
         if tpl is None or _LAST_HIT_SIGNATURES.get(name) != _template_signature(tpl):
             _LAST_HITS.pop(name, None)
             _LAST_HIT_SIGNATURES.pop(name, None)
+            _LAST_HIT_SCREEN_HEIGHTS.pop(name, None)
             removed += 1
     if removed:
         save_last_hits()
@@ -150,18 +161,26 @@ def _get_last_hit(name, tpl):
     if _LAST_HIT_SIGNATURES.get(name) != _template_signature(tpl):
         _LAST_HITS.pop(name, None)
         _LAST_HIT_SIGNATURES.pop(name, None)
+        _LAST_HIT_SCREEN_HEIGHTS.pop(name, None)
         save_last_hits()
         return None
     return center
 
 
-def _record_last_hit(name, tpl, center):
-    """记录命中点（同位置不重复写盘）。"""
+def _record_last_hit(name, tpl, center, screen_height=None):
+    """记录命中点与首次命中时的屏幕高度（同位置不重复写盘）。"""
     signature = _template_signature(tpl)
-    if _LAST_HITS.get(name) == center and _LAST_HIT_SIGNATURES.get(name) == signature:
+    center = (int(center[0]), int(center[1]))
+    height = int(screen_height or 0)
+    height_changed = height > 0 and name not in _LAST_HIT_SCREEN_HEIGHTS
+    if (_LAST_HITS.get(name) == center and _LAST_HIT_SIGNATURES.get(name) == signature
+            and not height_changed):
         return
-    _LAST_HITS[name] = (int(center[0]), int(center[1]))
+    _LAST_HITS[name] = center
     _LAST_HIT_SIGNATURES[name] = signature
+    if height > 0 and name not in _LAST_HIT_SCREEN_HEIGHTS:
+        # 只记录首次命中时的高度，作为模板的“原始分辨率”基准；后续不覆盖
+        _LAST_HIT_SCREEN_HEIGHTS[name] = height
     save_last_hits()
 
 
@@ -228,13 +247,34 @@ def _split_template(tpl):
     return result
 
 
-def _scaled_template(tpl, scale):
-    """按比例缩放模板（灰/彩色/掩膜），带缓存。"""
-    cache_key = (id(tpl), tpl.shape, round(float(scale), 4))
+def _template_mask(tpl, green_mask=False):
+    """模板掩膜：alpha 透明区域 + 可选的纯绿 RGB(0,255,0) 区域。"""
+    cache_key = (id(tpl), tpl.shape, bool(green_mask))
+    cached = _GRAY_CACHE.get(("mask",) + cache_key)
+    if cached is not None:
+        return cached
+    bgr, _gray, alpha_mask = _split_template(tpl)
+    mask = alpha_mask
+    if green_mask:
+        tolerance = int(getattr(config, "GREEN_MASK_TOLERANCE", 40))
+        blue, green, red = cv2.split(bgr)
+        green_pixels = ((green >= 255 - tolerance) & (blue <= tolerance) & (red <= tolerance))
+        keep = np.where(green_pixels, 0, 255).astype(np.uint8)
+        mask = keep if mask is None else cv2.bitwise_and(mask, keep)
+    if mask is not None and int(mask.min()) == 255:
+        mask = None
+    _GRAY_CACHE[("mask",) + cache_key] = mask
+    return mask
+
+
+def _scaled_template(tpl, scale, green_mask=False):
+    """按比例缩放模板（灰/掩膜），带缓存。"""
+    cache_key = (id(tpl), tpl.shape, round(float(scale), 4), bool(green_mask))
     cached = _SCALED_CACHE.get(cache_key)
     if cached is not None:
         return cached
-    _bgr, gray, mask = _split_template(tpl)
+    _bgr, gray, _alpha = _split_template(tpl)
+    mask = _template_mask(tpl, green_mask)
     if abs(scale - 1.0) < 1e-6:
         result = (gray, mask)
     else:
@@ -262,12 +302,11 @@ def _color_distance(tpl_bgr, tpl_mask, patch_bgr, patch_mask=None):
     return float(diff)
 
 
-def _color_check(tpl_bgr, tpl_mask, screen_bgr, left, top, width, height):
+def _color_check(tpl_bgr, tpl_mask, screen_bgr, left, top, width, height, patch_mask=None):
     tolerance = float(getattr(config, "COLOR_CHECK_TOLERANCE", 48.0))
     if tolerance <= 0:
         return True
     patch = screen_bgr[top:top + height, left:left + width]
-    patch_mask = tpl_mask
     if patch_mask is not None and patch_mask.shape[:2] != patch.shape[:2]:
         patch_mask = None
     return _color_distance(tpl_bgr, tpl_mask, patch, patch_mask) <= tolerance
@@ -284,43 +323,70 @@ def _crop_screen(screen_bgr, rect):
     return screen_bgr[top:bottom, left:right], (left, top)
 
 
+_MATCH_METHODS = {
+    "ccoeff": cv2.TM_CCOEFF_NORMED,
+    "ccoeff_normed": cv2.TM_CCOEFF_NORMED,
+    5: cv2.TM_CCOEFF_NORMED,
+    "ccorr": cv2.TM_CCORR_NORMED,
+    "ccorr_normed": cv2.TM_CCORR_NORMED,
+    3: cv2.TM_CCORR_NORMED,
+    "sqdiff": cv2.TM_SQDIFF_NORMED,
+    "sqdiff_normed": cv2.TM_SQDIFF_NORMED,
+    1: cv2.TM_SQDIFF_NORMED,
+}
+
+
+def resolve_match_method(method):
+    """把任务字段/配置的 method 转成 cv2 模式；默认 CCOEFF_NORMED。"""
+    if method is None or method == "":
+        return cv2.TM_CCOEFF_NORMED
+    try:
+        key = int(method)
+    except (TypeError, ValueError):
+        key = str(method).strip().lower()
+    return _MATCH_METHODS.get(key, cv2.TM_CCOEFF_NORMED)
+
+
 def _match_one_region(screen_bgr, screen_gray, tpl, name, scales, threshold,
-                      offset_x, offset_y, area_filter=None, allow_mask=True):
-    """在给定区域里匹配单个模板；返回 (candidates, best_score)。"""
-    bgr, _gray, mask = _split_template(tpl)
+                      offset_x, offset_y, area_filter=None, allow_mask=True,
+                      green_mask=False, method=None, coord_scale=1.0):
+    """在给定区域里匹配单个模板；返回 (native candidates, best_score)。"""
+    bgr, _gray, _alpha = _split_template(tpl)
+    mask = _template_mask(tpl, green_mask) if allow_mask else None
+    if mask is not None and not getattr(config, "USE_TEMPLATE_MASK", True):
+        mask = None
     candidates = []
     best_val = -1.0
-    use_mask = bool(mask is not None and allow_mask and getattr(config, "USE_TEMPLATE_MASK", True))
-    passes = [True, False] if use_mask else [False]
+    requested_method = resolve_match_method(method)
+    # 掩膜只对 SQDIFF/CCORR 类方法可靠；请求 CCOEFF 时用 SQDIFF_NORMED 并在分数上取反
+    masked_method = (cv2.TM_CCORR_NORMED if requested_method == cv2.TM_CCORR_NORMED
+                     else cv2.TM_SQDIFF_NORMED)
+    passes = [True, False] if mask is not None else [False]
 
     for masked in passes:
         for scale in scales:
-            if masked and scale != scales[0]:
-                continue          # 掩膜方式只跑一个代表尺度，避免翻倍；后续有兜底
-            scaled_gray, scaled_mask = _scaled_template(tpl, scale)
+            scaled_gray, scaled_mask = _scaled_template(tpl, scale, green_mask)
             height, width = scaled_gray.shape[:2]
             if height > screen_gray.shape[0] or width > screen_gray.shape[1]:
                 continue
             if masked and scaled_mask is not None:
-                result = cv2.matchTemplate(screen_gray, scaled_gray, cv2.TM_SQDIFF_NORMED,
+                result = cv2.matchTemplate(screen_gray, scaled_gray, masked_method,
                                            mask=scaled_mask)
-                scores = 1.0 - result
+                scores = (1.0 - result) if masked_method == cv2.TM_SQDIFF_NORMED else result
             else:
-                result = cv2.matchTemplate(screen_gray, scaled_gray, cv2.TM_CCOEFF_NORMED)
-                scores = result
+                result = cv2.matchTemplate(screen_gray, scaled_gray, requested_method)
+                scores = ((1.0 - result) if requested_method == cv2.TM_SQDIFF_NORMED
+                          else result)
             ys, xs = np.where(scores >= threshold)
             for y, x in zip(ys, xs):
                 conf = float(scores[y, x])
-                left = int(x + offset_x)
-                top = int(y + offset_y)
-                center_x = left + width // 2
-                center_y = top + height // 2
+                center_x = int(round((x + offset_x + width / 2.0) / coord_scale))
+                center_y = int(round((y + offset_y + height / 2.0) / coord_scale))
                 if area_filter is not None and not area_filter(center_x, center_y):
                     continue
                 if getattr(config, "COLOR_CHECK_ENABLED", True):
-                    # 颜色校验用**裁剪区域内的相对坐标**（screen_bgr 是裁剪后的图，不是整屏）；
-                    # 之前传绝对坐标，在「上次位置优先」的小窗口里会取错 patch，导致把正确命中拒掉。
-                    if not _color_check(bgr, scaled_mask, screen_bgr, x, y, width, height):
+                    if not _color_check(bgr, mask, screen_bgr, x, y, width, height,
+                                        patch_mask=scaled_mask):
                         continue
                 candidates.append(((center_x, center_y), conf))
                 best_val = max(best_val, conf)
@@ -428,6 +494,33 @@ def feature_match_templates(screen_img, templates, threshold=0.0, min_matches=No
     return results
 
 
+def _scale_rect(rect, scale):
+    left, top, right, bottom = rect
+    return (int(round(left * scale)), int(round(top * scale)),
+            int(round(right * scale)), int(round(bottom * scale)))
+
+
+def _reference_height(templates, native_height):
+    """参考高度：优先 config，其次模板首次命中时的高度（取众数），否则当前屏幕高。"""
+    requested = int(getattr(config, "MATCH_REFERENCE_HEIGHT", 0) or 0)
+    if requested > 0:
+        return max(1, min(requested, native_height))
+    heights = [_LAST_HIT_SCREEN_HEIGHTS.get(name) for name in templates]
+    heights = [int(h) for h in heights if h]
+    if not heights:
+        return native_height
+    return max(1, min(max(set(heights), key=heights.count), native_height))
+
+
+def _order_candidates(candidates, order_by):
+    order = str(order_by or "confidence").strip().lower()
+    if order in ("horizontal", "left", "leftmost"):
+        return sorted(candidates, key=lambda item: (item[0][1] // 20, item[0][0]))
+    if order in ("vertical", "top", "topmost"):
+        return sorted(candidates, key=lambda item: (item[0][0] // 20, item[0][1]))
+    return sorted(candidates, key=lambda item: (-item[1], item[0][1], item[0][0]))
+
+
 def match_all_templates(screen_img, templates, threshold=THRESHOLD,
                         use_multi_scale=USE_MULTI_SCALE,
                         scale_range=SCALE_RANGE,
@@ -436,19 +529,35 @@ def match_all_templates(screen_img, templates, threshold=THRESHOLD,
                         search_radius=None,
                         search_rect=None,
                         stop_flag=None,
-                        allow_feature_fallback=False):
+                        allow_feature_fallback=False,
+                        green_mask=False,
+                        method=None,
+                        order_by="confidence",
+                        match_index=0):
     """在画面中匹配所有模板，返回 {模板名: ((x,y) 或 None, 最高分)}。
 
-    - 识别区域（search_rect）/中心+半径优先，保持旧语义；
-    - 未显式限制时，先用上次命中位置附近的小窗口（PREFERRED_SEARCH_RADIUS），
-      未命中再退回全屏；
-    - 多尺度模板带缓存；透明模板可用 alpha 掩膜；
-    - 命中后颜色二次校验；结果去重并按分数确定性选择。
+    P0 增强（默认兼容旧行为）：
+    - 分辨率归一化：按模板首次命中时的屏幕高度自动缩放画面/模板；
+    - method（ccoeff/ccorr/sqdiff）、green_mask（纯绿背景忽略）、
+      order_by + match_index（多个相同目标时取第 N 个）；
+    - 上次命中点优先 -> 框选区域/全屏；多尺度缓存、颜色校验、特征兜底保留。
     """
-    screen_bgr = screen_img
-    screen_gray = cv2.cvtColor(screen_img, cv2.COLOR_BGR2GRAY)
-    scales = ([1.0] if not use_multi_scale else
-              list(np.arange(scale_range[0], scale_range[1] + scale_step / 2.0, scale_step)))
+    native_height, native_width = screen_img.shape[:2]
+    reference_height = _reference_height(templates, native_height)
+    coord_scale = reference_height / float(native_height)
+    if abs(coord_scale - 1.0) > 1e-3:
+        work_screen = cv2.resize(
+            screen_img,
+            (max(1, int(round(native_width * coord_scale))), reference_height),
+            interpolation=cv2.INTER_AREA,
+        )
+    else:
+        work_screen = screen_img
+    screen_bgr = work_screen
+    screen_gray = cv2.cvtColor(work_screen, cv2.COLOR_BGR2GRAY)
+
+    base_scales = ([1.0] if not use_multi_scale else
+                   list(np.arange(scale_range[0], scale_range[1] + scale_step / 2.0, scale_step)))
     results = {}
 
     rect_left = rect_top = rect_right = rect_bottom = None
@@ -478,41 +587,94 @@ def match_all_templates(screen_img, templates, threshold=THRESHOLD,
         return (dx * dx + dy * dy) <= radius_sq
 
     explicit_region = (search_rect is not None) or (search_center is not None)
-    screen_height, screen_width = screen_gray.shape[:2]
+    norm_width = screen_gray.shape[1]
+    norm_height = screen_gray.shape[0]
 
     for name, tpl in templates.items():
         if stop_flag is not None and stop_flag.is_set():
             raise StopExecution()
         bgr, _gray, _mask = _split_template(tpl)
+
+        # 目标在当前画面里的比例：模板基准高度 h0，参考高度 ref ->
+        # 模板在当前画面中的大小 = 原尺寸 * (ref / h0) * (当前高 / ref)
+        template_height = _LAST_HIT_SCREEN_HEIGHTS.get(name)
+        base_scale = (reference_height / template_height) if template_height else 1.0
+        scales = [scale * base_scale for scale in base_scales]
+
         radius = int(getattr(config, "PREFERRED_SEARCH_RADIUS", 220))
-        # 搜索顺序：有上次命中点 -> 先搜命中点附近；没命中再退回框选区域/全屏。
         regions = []
         preferred = _get_last_hit(name, tpl)
         if preferred is not None:
             pad = int(max(radius, 1.0) + max(bgr.shape[:2]) / 2)
-            regions.append(((preferred[0] - pad, preferred[1] - pad,
-                             preferred[0] + pad, preferred[1] + pad), None))
+            regions.append((_scale_rect((preferred[0] - pad, preferred[1] - pad,
+                                         preferred[0] + pad, preferred[1] + pad),
+                                        coord_scale), None))
         if explicit_region:
             if search_rect is not None:
-                regions.append(((rect_left, rect_top, rect_right, rect_bottom),
-                                is_in_search_area))
+                regions.append((_scale_rect((rect_left, rect_top, rect_right, rect_bottom),
+                                            coord_scale), is_in_search_area))
             else:
                 search_radius_value = float(search_radius) if search_radius is not None else 0.0
                 pad = int(max(search_radius_value, 1.0) + max(bgr.shape[:2]) / 2)
-                regions.append(((center_x - pad, center_y - pad,
-                                 center_x + pad, center_y + pad), is_in_search_area))
+                regions.append((_scale_rect((center_x - pad, center_y - pad,
+                                             center_x + pad, center_y + pad),
+                                            coord_scale), is_in_search_area))
         else:
-            regions.append(((0, 0, screen_width, screen_height), None))
+            regions.append(((0, 0, norm_width, norm_height), None))
 
         candidates = []
         best_val = -1.0
+        coarse_enabled = bool(getattr(config, "COARSE_TO_FINE", True))
+        coarse_min_area = int(getattr(config, "COARSE_MIN_AREA", 900000))
+        coarse_factor = float(getattr(config, "COARSE_FACTOR", 0.5) or 0.5)
         for region, area_filter in regions:
             crop, (off_x, off_y) = _crop_screen(screen_bgr, region)
             if crop is None:
                 continue
             crop_gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-            found, score = _match_one_region(crop, crop_gray, tpl, name, scales, threshold,
-                                             off_x, off_y, area_filter)
+
+            # 粗到细：大区域先半分辨率找候选，再在原分辨率候选附近精修；
+            # 粗搜没找到时仍会退回原来的全区域全尺度匹配，不影响正确性。
+            if (coarse_enabled and 0.3 <= coarse_factor < 1.0
+                    and crop.shape[0] * crop.shape[1] >= coarse_min_area):
+                coarse_crop = cv2.resize(crop, None, fx=coarse_factor, fy=coarse_factor,
+                                         interpolation=cv2.INTER_AREA)
+                coarse_gray = cv2.cvtColor(coarse_crop, cv2.COLOR_BGR2GRAY)
+                coarse_scales = [scale * coarse_factor for scale in scales]
+                coarse_threshold = max(0.5, float(threshold) - 0.05)
+                coarse_found, coarse_score = _match_one_region(
+                    coarse_crop, coarse_gray, tpl, name, coarse_scales, coarse_threshold,
+                    off_x * coarse_factor, off_y * coarse_factor, area_filter,
+                    green_mask=green_mask, method=method,
+                    coord_scale=coord_scale * coarse_factor,
+                )
+                best_val = max(best_val, coarse_score)
+                if coarse_found:
+                    coarse_center = _order_candidates(
+                        _dedupe_candidates(coarse_found), order_by)[0][0]
+                    pad = int(max(24, max(bgr.shape[:2]) * max(1.0, base_scale) * 2.5))
+                    refine_rect = (coarse_center[0] * coord_scale - pad,
+                                   coarse_center[1] * coord_scale - pad,
+                                   coarse_center[0] * coord_scale + pad,
+                                   coarse_center[1] * coord_scale + pad)
+                    refine_crop, (refine_x, refine_y) = _crop_screen(screen_bgr, refine_rect)
+                    if refine_crop is not None:
+                        refine_gray = cv2.cvtColor(refine_crop, cv2.COLOR_BGR2GRAY)
+                        found, score = _match_one_region(
+                            refine_crop, refine_gray, tpl, name, scales, threshold,
+                            refine_x, refine_y, area_filter, green_mask=green_mask,
+                            method=method, coord_scale=coord_scale,
+                        )
+                        best_val = max(best_val, score)
+                        candidates.extend(found)
+                        if candidates:
+                            break
+
+            found, score = _match_one_region(
+                crop, crop_gray, tpl, name, scales, threshold,
+                off_x, off_y, area_filter, green_mask=green_mask,
+                method=method, coord_scale=coord_scale,
+            )
             best_val = max(best_val, score)
             candidates.extend(found)
             if candidates:
@@ -532,10 +694,16 @@ def match_all_templates(screen_img, templates, threshold=THRESHOLD,
                     best_val = max(best_val, feature_conf)
 
         if candidates:
-            candidates = _dedupe_candidates(candidates)
-            best_candidate = candidates[0]
-            results[name] = (best_candidate[0], float(best_candidate[1]))
-            _record_last_hit(name, tpl, best_candidate[0])
+            ordered = _order_candidates(_dedupe_candidates(candidates), order_by)
+            index = int(match_index or 0)
+            if index < 0:
+                index += len(ordered)
+            if 0 <= index < len(ordered):
+                chosen = ordered[index]
+                results[name] = (chosen[0], float(chosen[1]))
+                _record_last_hit(name, tpl, chosen[0], native_height)
+            else:
+                results[name] = (None, float(best_val))
         else:
             results[name] = (None, float(best_val))
 

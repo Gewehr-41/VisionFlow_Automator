@@ -20,6 +20,20 @@ OCR_MIN_CONFIDENCE = 0.5           # OCR 结果的最低置信度（低于它的
 # ==================== 识别算法增强（2026-10-28） ====================
 # 1) 上次命中位置优先搜索：先在上次位置附近找，未命中再退回全屏
 PREFERRED_SEARCH_RADIUS = 220
+
+# P0：分辨率归一化 / 粗到细 / 掩膜 / 排序 / 屏幕稳定
+# 0 = 自动（用模板首次命中时的屏幕高度做参考）；也可固定为 720/1080
+MATCH_REFERENCE_HEIGHT = 0
+# 粗到细：大屏幕先降采样粗搜，再在原分辨率精修
+COARSE_TO_FINE = True
+COARSE_MIN_AREA = 900000          # 归一化后画面面积超过该值才启用粗搜
+COARSE_FACTOR = 0.5
+# green_mask：模板里纯绿 RGB(0,255,0) 的像素不参与匹配
+GREEN_MASK_TOLERANCE = 40
+# 屏幕稳定等待：默认 0=关闭；步骤可用 wait_freezes / post_wait_freezes 覆盖（毫秒）
+WAIT_FREEZES_MS = 0
+WAIT_FREEZES_TIMEOUT_MS = 3000
+WAIT_FREEZES_DIFF_THRESHOLD = 2.0
 # 2) 透明 PNG 模板使用 alpha 掩膜匹配；命中后做颜色二次校验
 USE_TEMPLATE_MASK = True
 COLOR_CHECK_ENABLED = True

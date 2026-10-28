@@ -19,7 +19,10 @@
 `Windows.Media.Ocr` 体积更小、系统里已有 zh-cn 语言包（实测 `C:\\Windows\\OCR\\zh-cn`），
 但要依赖 `winrt-*` 绑定且 PyInstaller 打包这些 WinRT 组件比较麻烦；先留作后续可插拔后端。
 """
+import cv2
 import numpy as np
+
+import config
 
 BACKEND_NAME = "rapidocr"
 INSTALL_COMMAND = "pip install rapidocr-onnxruntime"
@@ -103,6 +106,13 @@ def recognize(image_bgr, rect=None):
         target, offset = _crop(image_bgr, rect)
         if target is None:
             return []
+    scale = 1.0
+    if getattr(config, "OCR_PREPROCESS", True):
+        # 小区域放大 2 倍：OCR 对小字/低分辨率裁剪的识别率明显更好
+        height, width = target.shape[:2]
+        if width < 800 or height < 160:
+            scale = 2.0
+            target = cv2.resize(target, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
     target = np.ascontiguousarray(target)
     try:
         # use_cls=False：跳过方向分类模型，实测能省一点时间（界面文字不会倒着放）
@@ -119,7 +129,7 @@ def recognize(image_bgr, rect=None):
         points = [tuple(float(value) for value in point) for point in box]
         if not points:
             continue
-        center_x = sum(point[0] for point in points) / len(points) + offset[0]
-        center_y = sum(point[1] for point in points) / len(points) + offset[1]
+        center_x = sum(point[0] for point in points) / len(points) / scale + offset[0]
+        center_y = sum(point[1] for point in points) / len(points) / scale + offset[1]
         blocks.append(TextBlock(text, score, (int(round(center_x)), int(round(center_y))), points))
     return blocks

@@ -17,6 +17,24 @@ DEFAULT_POLL_INTERVAL = 0.1        # 扫描间隔，减少反应延迟
 DEFAULT_RETRY_INTERVAL = 1.0       # 步骤级重试的默认间隔（秒）；重试次数默认 0 表示不启用
 OCR_MIN_CONFIDENCE = 0.5           # OCR 结果的最低置信度（低于它的文字不算命中）
 
+# ==================== 识别算法增强（2026-10-28） ====================
+# 1) 上次命中位置优先搜索：先在上次位置附近找，未命中再退回全屏
+PREFERRED_SEARCH_RADIUS = 220
+# 2) 透明 PNG 模板使用 alpha 掩膜匹配；命中后做颜色二次校验
+USE_TEMPLATE_MASK = True
+COLOR_CHECK_ENABLED = True
+COLOR_CHECK_TOLERANCE = 48.0
+# 3) 多帧确认：大于 1 时连续命中同样位置 N 帧才点击（1=旧行为）
+RECOGNITION_CONFIRM_FRAMES = 1
+# 4) OCR：区域裁剪预处理 + 编辑距离模糊匹配
+OCR_PREPROCESS = True
+OCR_FUZZY = True
+OCR_FUZZY_RATIO = 0.86
+# 5) 模板匹配失败后 ORB 特征匹配兜底（只在 execute_task 识别流程启用）
+FEATURE_FALLBACK = True
+FEATURE_MIN_MATCHES = 10
+# ============================================================
+
 # ==================== 版本与自动更新（F11） ====================
 # 程序版本号：打包版与源码版同源。发版时改这里 + 打同号 tag。
 APP_VERSION = "0.5.1"

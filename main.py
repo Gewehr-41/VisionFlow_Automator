@@ -6,6 +6,7 @@ import uuid
 
 import numpy as np
 
+import difflib
 import re
 
 import config
@@ -524,6 +525,7 @@ def match_task_templates(task, screen_img, template_names=None, stop_flag=None):
                 SCALE_STEP,
                 search_rect=search_rect,
                 stop_flag=stop_flag,
+                allow_feature_fallback=bool(getattr(config, "FEATURE_FALLBACK", False)),
             )
             for name, result in results.items():
                 current = merged_results.get(name)
@@ -558,6 +560,7 @@ def match_task_templates(task, screen_img, template_names=None, stop_flag=None):
         search_center=center,
         search_radius=radius,
         stop_flag=stop_flag,
+        allow_feature_fallback=bool(getattr(config, "FEATURE_FALLBACK", False)),
     )
 
 
@@ -928,6 +931,22 @@ def _ocr_text_matches(text, pattern, mode="contains", case_sensitive=False):
     return any(candidate in haystack for candidate in candidates)
 
 
+def _ocr_fuzzy_matches(text, pattern, mode="contains", case_sensitive=False, ratio=0.86):
+    """编辑距离相似度兜底（仅 contains/exact；regex 不做模糊）。"""
+    if mode == "regex":
+        return False
+    text = str(text or "")
+    pattern = str(pattern or "")
+    if not text or not pattern:
+        return False
+    haystack = text if case_sensitive else text.casefold()
+    candidates = [item.strip() for item in pattern.split("|") if item.strip()]
+    if not case_sensitive:
+        candidates = [item.casefold() for item in candidates]
+    return any(difflib.SequenceMatcher(None, haystack, candidate).ratio() >= ratio
+               for candidate in candidates)
+
+
 def _recognize_text_step(task, screen_img):
     """OCR 版"找目标"：返回 (命中的文字, 中心坐标, 置信度)，未命中返回 (None, None, 0.0)。
 
@@ -939,19 +958,27 @@ def _recognize_text_step(task, screen_img):
     mode = str(task.get("ocr_match") or "contains")
     case_sensitive = bool(task.get("ocr_case_sensitive", False))
     min_confidence = float(task.get("ocr_min_confidence", 0.0) or 0.0)
+    fuzzy = bool(task.get("ocr_fuzzy", getattr(config, "OCR_FUZZY", True)))
+    fuzzy_ratio = float(getattr(config, "OCR_FUZZY_RATIO", 0.86))
     rects = resolve_search_rects(task) or [None]
+    fuzzy_best = (None, None, 0.0)
     for rect in rects:
         blocks = ocr.recognize(screen_img, rect)
         best = (None, None, 0.0)
         for block in blocks:
             if block.score < min_confidence:
                 continue
-            if not _ocr_text_matches(block.text, pattern, mode, case_sensitive):
+            if _ocr_text_matches(block.text, pattern, mode, case_sensitive):
+                if best[1] is None or block.score > best[2]:
+                    best = (block.text, block.center, block.score)
                 continue
-            if best[1] is None or block.score > best[2]:
-                best = (block.text, block.center, block.score)
+            if fuzzy and _ocr_fuzzy_matches(block.text, pattern, mode, case_sensitive, fuzzy_ratio):
+                if fuzzy_best[1] is None or block.score > fuzzy_best[2]:
+                    fuzzy_best = (block.text, block.center, block.score)
         if best[1] is not None:
             return best
+    if fuzzy_best[1] is not None:
+        return fuzzy_best
     return (None, None, 0.0)
 
 
@@ -1022,6 +1049,11 @@ def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True, fal
                 return False
         return True
 
+    confirm_required = max(1, int(task.get("confirm_frames",
+                                           getattr(config, "RECOGNITION_CONFIRM_FRAMES", 1))))
+    confirm_streak = 0
+    confirm_name = None
+    confirm_center = None
     while True:
         if stop_flag is not None and stop_flag.is_set():
             log("用户中止脚本执行。", log_callback)
@@ -1036,6 +1068,10 @@ def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True, fal
             matched_name, center, conf = find_match_by_strategy(
                 results, template_names, get_task_match_strategy(task)
             )
+        if center is None:
+            confirm_streak = 0
+            confirm_name = None
+            confirm_center = None
         # 「识别调试」面板读的就是这里记下的快照（worker 线程写、GUI 线程读）
         recognition_debug.record(
             screen_img,
@@ -1051,6 +1087,22 @@ def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True, fal
         )
 
         if center is not None:
+            if confirm_required > 1:
+                same_target = (confirm_name == matched_name and confirm_center is not None
+                               and abs(center[0] - confirm_center[0]) <= 30
+                               and abs(center[1] - confirm_center[1]) <= 30)
+                confirm_streak = confirm_streak + 1 if same_target else 1
+                confirm_name = matched_name
+                confirm_center = center
+                if confirm_streak < confirm_required:
+                    log(f"  识别到 '{matched_name}'，等待多帧确认（{confirm_streak}/{confirm_required}）…",
+                        log_callback)
+                    if interruptible_sleep(0.08, stop_flag):
+                        return False
+                    continue
+            confirm_streak = 0
+            confirm_name = None
+            confirm_center = None
             tpl_name = matched_name
             log(f"  识别到 '{tpl_name}'，置信度: {conf:.2f}，坐标: {center}", log_callback)
             if task.get("click", True):

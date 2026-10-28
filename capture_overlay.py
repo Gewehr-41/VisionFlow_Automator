@@ -1747,7 +1747,23 @@ class CaptureOverlayMixin:
             else:
                 editor = QLineEdit(str(task.get(key, "")))
             target.special_edits[key] = editor
+            # 动态生成的类型专用字段也要触发「未应用」胶囊（主窗口的编辑面板）。
+            # 迂回子步骤对话框（form 非空）有自己独立的保存语义，不在这里标主编辑器脏。
+            if form is None:
+                self._connect_special_editor_dirty(editor)
             target.special_form.addRow(label + ":", editor)
+
+    def _connect_special_editor_dirty(self, editor):
+        """把动态生成的类型专用控件接到主窗口的「未应用」标记上。"""
+        marker = getattr(self, "_mark_editor_dirty", None)
+        if not callable(marker):
+            return
+        if isinstance(editor, QCheckBox):
+            editor.toggled.connect(lambda *_: marker())
+        elif isinstance(editor, QPlainTextEdit):
+            editor.textChanged.connect(lambda: marker())
+        elif isinstance(editor, QLineEdit):
+            editor.textEdited.connect(lambda *_: marker())
 
     def _apply_special_fields(self, task, form=None):
         target = form or self

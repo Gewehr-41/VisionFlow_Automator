@@ -167,6 +167,9 @@ class ExecutionControlMixin:
         self.completion_notified = False
         self._set_running_state(True)
         self._begin_run_progress()
+        begin_timing = getattr(self, "_begin_run_timing", None)
+        if callable(begin_timing):
+            begin_timing()
         self._set_status("running")
         self.append_log(f"脚本启动，共 {len(tasks)} 个启用步骤。")
 
@@ -265,6 +268,9 @@ class ExecutionControlMixin:
 
     def on_worker_finished(self):
         self._restore_after_run()
+        end_timing = getattr(self, "_end_run_timing", None)
+        if callable(end_timing):
+            end_timing()
         self._set_running_state(False)
         self._restore_config_after_run()
         self.pause_button.setText("暂停")

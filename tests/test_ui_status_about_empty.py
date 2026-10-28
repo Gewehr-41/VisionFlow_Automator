@@ -53,6 +53,13 @@ class UiStateBase(unittest.TestCase):
     def tearDown(self):
         g.TASKS[:] = []
         self.window.execution_states.clear()
+        # 耗时状态是窗口级字段，用例之间要复位，否则后续用例会读到上一次结果
+        self.window._run_started_at = None
+        self.window._run_final_elapsed = None
+        timer = getattr(self.window, "_run_elapsed_timer", None)
+        if timer is not None:
+            timer.stop()
+        self.window._update_run_elapsed()
         self.window.refresh_task_list()
         _APP.processEvents()
 
@@ -103,7 +110,23 @@ class StatusBarTests(UiStateBase):
         self.window.refresh_task_list()
         self.window.save_current_tasks()
         _APP.processEvents()
-        self.assertIn("保存于", self.window.last_save_label.text())
+        self.assertIn("本次耗时", self.window.last_save_label.text())
+
+
+class RunElapsedTests(UiStateBase):
+    def test_initial_label_is_idle(self):
+        self.assertIn("本次耗时", self.window.last_save_label.text())
+        self.assertIn("--", self.window.last_save_label.text())
+
+    def test_elapsed_is_frozen_after_run(self):
+        with mock.patch.object(g.time, "monotonic", side_effect=[100.0, 100.0, 102.5]):
+            self.window._begin_run_timing()
+            self.window._end_run_timing()
+        self.assertIn("2.5 秒", self.window.last_save_label.text())
+
+    def test_elapsed_formats_minutes(self):
+        self.assertEqual(self.window._format_run_elapsed(83.4), "1 分 23 秒")
+        self.assertEqual(self.window._format_run_elapsed(9.25), "9.2 秒")
 
 
 class RunProgressTests(UiStateBase):

@@ -1516,8 +1516,9 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         self.preset_info_label = QLabel("预设: custom")
         self.preset_info_label.setObjectName("statusInfo")
         status_layout.addWidget(self.preset_info_label)
-        self.last_save_label = QLabel("")
+        self.last_save_label = QLabel("本次耗时 --")
         self.last_save_label.setObjectName("statusInfo")
+        self.last_save_label.setToolTip("脚本最近一次执行的耗时")
         status_layout.addWidget(self.last_save_label)
 
         self.progress_bar = QProgressBar()
@@ -3248,8 +3249,55 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             self.preset_info_label.setText(f"预设: {mode}")
 
     def _touch_saved_time(self):
+        """保存后只更新提示，不再占用状态栏的「本次耗时」位置。"""
         if hasattr(self, "last_save_label"):
-            self.last_save_label.setText(f"保存于 {time.strftime('%H:%M:%S')}")
+            self.last_save_label.setToolTip(f"上次保存 {time.strftime('%H:%M:%S')}")
+
+    @staticmethod
+    def _format_run_elapsed(seconds):
+        seconds = max(0.0, float(seconds))
+        if seconds < 60:
+            return f"{seconds:.1f} 秒"
+        minutes = int(seconds // 60)
+        return f"{minutes} 分 {int(seconds % 60)} 秒"
+
+    def _update_run_elapsed(self):
+        label = getattr(self, "last_save_label", None)
+        if label is None:
+            return
+        started = getattr(self, "_run_started_at", None)
+        if started is not None:
+            elapsed = time.monotonic() - started
+        else:
+            elapsed = getattr(self, "_run_final_elapsed", None)
+        if elapsed is None:
+            label.setText("本次耗时 --")
+        else:
+            label.setText(f"本次耗时 {self._format_run_elapsed(elapsed)}")
+
+    def _begin_run_timing(self):
+        """脚本开始执行：记录起点并每 200ms 刷新一次耗时。"""
+        self._run_started_at = time.monotonic()
+        self._run_final_elapsed = None
+        self._update_run_elapsed()
+        timer = getattr(self, "_run_elapsed_timer", None)
+        if timer is None:
+            timer = QTimer(self)
+            timer.timeout.connect(self._update_run_elapsed)
+            self._run_elapsed_timer = timer
+        timer.start(200)
+
+    def _end_run_timing(self):
+        """脚本结束/停止/异常：冻结并显示本次总耗时。"""
+        started = getattr(self, "_run_started_at", None)
+        if started is None:
+            return
+        self._run_final_elapsed = time.monotonic() - started
+        self._run_started_at = None
+        timer = getattr(self, "_run_elapsed_timer", None)
+        if timer is not None:
+            timer.stop()
+        self._update_run_elapsed()
 
     def _show_editor_page(self, empty):
         """空编辑器提示：在编辑区顶部显示「选择一个步骤」，编辑区本身保持可见。"""

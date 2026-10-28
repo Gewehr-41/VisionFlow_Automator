@@ -74,21 +74,6 @@ class PersistedLastHitTests(unittest.TestCase):
         self.assertEqual(tm.prune_invalid_last_hits({}), 1)
         self.assertNotIn("t", tm._LAST_HITS)
 
-    def test_preferred_hit_wins_even_outside_manual_rect(self):
-        tpl = _pattern(24, seed=14)
-        box = (0, 0, 150, 300)
-        screen1 = np.zeros((320, 320, 3), dtype=np.uint8)
-        screen1[40:64, 40:64] = tpl
-        first = self._match(screen1, tpl, search_rect=box)
-        self.assertEqual(first["t"][0], (52, 52))
-
-        # 目标移出框选区域，但仍在「上次命中点」附近 -> 应优先命中
-        screen2 = np.zeros((320, 320, 3), dtype=np.uint8)
-        screen2[60:84, 260:284] = tpl
-        second = self._match(screen2, tpl, search_rect=box)
-        self.assertIsNotNone(second["t"][0], "有上次命中点时应优先于框选区域")
-        self.assertEqual(second["t"][0], (272, 72))
-
     def test_falls_back_to_manual_rect_when_preferred_misses(self):
         tpl = _pattern(24, seed=15)
         box = (0, 0, 200, 200)
@@ -103,6 +88,50 @@ class PersistedLastHitTests(unittest.TestCase):
             second = self._match(screen2, tpl, search_rect=box)
         self.assertIsNotNone(second["t"][0], "命中点附近没找到时应退回框选区域")
         self.assertEqual(second["t"][0], (112, 112))
+
+    def test_manual_rect_only_is_searched_when_target_absent(self):
+        """有手动框选且目标不在框内：不要额外搜命中点窗口（避免每个 miss 多花时间）。"""
+        tpl = _pattern(24, seed=19)
+        box = (0, 0, 100, 100)
+        screen = np.zeros((160, 200, 3), dtype=np.uint8)
+        screen[20:44, 20:44] = tpl
+        self._match(screen, tpl, search_rect=box)
+
+        blank = np.zeros((160, 200, 3), dtype=np.uint8)
+        calls = []
+        original = tm._match_one_region
+
+        def spy(*args, **kwargs):
+            calls.append(args[0].shape[:2])
+            return original(*args, **kwargs)
+
+        with mock.patch.object(tm, "_match_one_region", spy):
+            result = self._match(blank, tpl, search_rect=box)
+        self.assertIsNone(result["t"][0])
+        self.assertEqual(len(calls), 1, f"有框选时只应搜框，实际 {len(calls)} 次")
+        self.assertLessEqual(calls[0][1], 110, "搜索范围应是小框，而不是命中点窗口")
+
+    def test_small_manual_rect_is_searched_before_preferred_window(self):
+        """小框选命中时应直接搜框（旧行为），不要先白搜一个更大的命中点窗口。"""
+        tpl = _pattern(24, seed=18)
+        box = (0, 0, 100, 100)
+        screen = np.zeros((160, 200, 3), dtype=np.uint8)
+        screen[20:44, 20:44] = tpl
+        self._match(screen, tpl, search_rect=box)
+
+        calls = []
+        original = tm._match_one_region
+
+        def spy(*args, **kwargs):
+            calls.append(args[0].shape[:2])
+            return original(*args, **kwargs)
+
+        with mock.patch.object(tm, "_match_one_region", spy):
+            result = self._match(screen, tpl, search_rect=box)
+        self.assertIsNotNone(result["t"][0])
+        self.assertTrue(calls)
+        self.assertLessEqual(calls[0][1], 110,
+                            f"第一次应搜小框选区域，实际搜了 {calls[0]}")
 
     def test_preferred_radius_300_covers_moderate_move(self):
         """半径 300(+模板半宽) 应覆盖 250px 的小幅移动，不再回退全屏。"""

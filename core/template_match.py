@@ -540,15 +540,13 @@ def match_all_templates(screen_img, templates, threshold=THRESHOLD,
         base_scale = (reference_height / template_height) if template_height else 1.0
         scales = [scale * base_scale for scale in base_scales]
 
-        radius = int(getattr(config, "PREFERRED_SEARCH_RADIUS", 220))
+        radius = int(getattr(config, "PREFERRED_SEARCH_RADIUS", 300))
         regions = []
-        preferred = _get_last_hit(name, tpl)
-        if preferred is not None:
-            pad = int(max(radius, 1.0) + max(bgr.shape[:2]) / 2)
-            regions.append((_scale_rect((preferred[0] - pad, preferred[1] - pad,
-                                         preferred[0] + pad, preferred[1] + pad),
-                                        coord_scale), None))
         if explicit_region:
+            # 手动框选是用户明确指定的小区域：**只搜它**。
+            # 这里不再额外搜「上次命中点」窗口：框选命中时它纯属多余，框选未命中时
+            # 每个轮询都会多花一次窗口匹配（实测每个 miss 多 0.2~0.3s，几十步就是数秒）；
+            # 框外目标仍会由调用方的扩容兜底/全屏搜索找到。
             if search_rect is not None:
                 regions.append((_scale_rect((rect_left, rect_top, rect_right, rect_bottom),
                                             coord_scale), is_in_search_area))
@@ -559,6 +557,12 @@ def match_all_templates(screen_img, templates, threshold=THRESHOLD,
                                              center_x + pad, center_y + pad),
                                             coord_scale), is_in_search_area))
         else:
+            preferred = _get_last_hit(name, tpl)
+            if preferred is not None:
+                pad = int(max(radius, 1.0) + max(bgr.shape[:2]) / 2)
+                regions.append((_scale_rect(
+                    (preferred[0] - pad, preferred[1] - pad,
+                     preferred[0] + pad, preferred[1] + pad), coord_scale), None))
             regions.append(((0, 0, norm_width, norm_height), None))
 
         candidates = []

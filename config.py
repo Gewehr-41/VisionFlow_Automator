@@ -39,7 +39,7 @@ OCR_PREPROCESS = True
 OCR_FUZZY = True
 OCR_FUZZY_RATIO = 0.86
 # 5) 模板匹配失败后 ORB 特征匹配兜底（只在 execute_task 识别流程启用）
-FEATURE_FALLBACK = True
+FEATURE_FALLBACK = False          # 默认关闭；开启后模板未命中会用 ORB 兜底（慢，按需）
 FEATURE_MIN_MATCHES = 10
 # ============================================================
 

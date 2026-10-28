@@ -87,9 +87,10 @@ from preset_manager import PresetManagerMixin
 from qt_translations import install_qt_translations
 from recognition_debug_window import RecognitionDebugWindow
 from update_ui import (UpdateCheckRunner, UpdateDownloadRunner, ask_update_choice,
-                       build_update_helper, can_auto_update, cleanup_update_leftovers,
+                       build_delta_update_helper, build_update_helper, can_auto_update,
+                       choose_update_asset, cleanup_update_leftovers,
                        extract_update_zip, launch_update_helper, notify_update,
-                       report_check_failure)
+                       prepare_update_package, report_check_failure)
 import snippets as snippet_store
 import settings_store
 from execution_control import ExecutionControlMixin
@@ -3066,20 +3067,26 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
         if runner is not None:
             self.append_log("更新包正在下载，请稍候…")
             return
+        asset = choose_update_asset(result, paths.app_root())
+        if asset is None:
+            QMessageBox.warning(self, "无法更新", "Release 里没有可用的更新包。")
+            return
         destination = os.path.join(
             tempfile.gettempdir(),
             "vf_update_" + time.strftime("%Y%m%d_%H%M%S") + ".zip")
         self._update_download_path = destination
         self._update_info = result
+        self._update_asset_kind = asset.get("kind", "full")
         self._update_download_logged = -10
         runner = UpdateDownloadRunner(self)
         runner.progress.connect(self._on_update_download_progress)
         runner.finished.connect(self._on_update_download_finished)
         self._update_download_runner = runner
-        self.append_log(f"开始下载更新包：{result.asset_name or result.asset_url}")
+        kind_text = "增量更新包" if self._update_asset_kind == "delta" else "完整更新包"
+        self.append_log(f"开始下载{kind_text}：{asset.get('name') or asset.get('url')}")
         self._set_status("running", "下载更新")
         self._set_update_download_progress(0, 0)   # 底部进度条改为「下载进度」
-        runner.start(result.asset_url, destination)
+        runner.start(asset["url"], destination)
 
     def _set_update_download_progress(self, downloaded, total):
         """把底部进度条临时切换成更新包下载进度（下载结束后恢复步骤进度）。"""
@@ -3127,18 +3134,22 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             return
         zip_path = outcome.get("path")
         self.append_log(f"更新包下载完成：{zip_path}")
+        package = None
         try:
             stage_root = tempfile.mkdtemp(prefix="vf_update_stage_")
-            update_root = extract_update_zip(zip_path, stage_root)
+            package = prepare_update_package(zip_path, stage_root, paths.app_root())
+            update_root = package["root"]
         except RuntimeError as exc:
             self.append_log(f"更新包校验失败：{exc}")
             self._restore_step_progress()
             QMessageBox.warning(self, "更新包无效", str(exc))
             return
         version = getattr(self._update_info, "remote_version", "")
+        is_delta = bool(package and package.get("kind") == "delta")
+        mode_text = "增量更新" if is_delta else "完整更新"
         answer = QMessageBox.question(
             self, "更新已下载",
-            f"新版本 {version} 已下载并校验。\n\n"
+            f"新版本 {version} 已下载并校验（{mode_text}）。\n\n"
             "现在重启并安装吗？（程序会退出，替换完成后自动重新打开；"
             "用户步骤/预设等数据会保留）",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -3147,12 +3158,15 @@ class PySide6ScriptWindow(ExecutionControlMixin, TaskListMixin, PresetManagerMix
             self.append_log(f"已取消安装；更新包保留在 {zip_path}")
             self._restore_step_progress()
             return
-        self._install_update(update_root, zip_path)
+        self._install_update(update_root, zip_path, package)
 
-    def _install_update(self, update_root, zip_path=None):
+    def _install_update(self, update_root, zip_path=None, package=None):
         install_dir = paths.app_root()
         try:
-            helper = build_update_helper(install_dir, update_root, os.getpid(), zip_path=zip_path)
+            if package and package.get("kind") == "delta":
+                helper = build_delta_update_helper(install_dir, package, os.getpid(), zip_path=zip_path)
+            else:
+                helper = build_update_helper(install_dir, update_root, os.getpid(), zip_path=zip_path)
         except OSError as exc:
             QMessageBox.warning(self, "更新失败", f"无法创建更新脚本：{exc}")
             return

@@ -28,6 +28,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QMessageBox
 
 import update_check
+import update_manifest
 
 UPDATE_EXE = "VisionFlow_Automator.exe"      # 与打包产物保持一致
 UPDATE_BACKUP_PREFIX = "_backup_update_"     # 自动更新前的程序备份目录（不含用户数据）
@@ -94,6 +95,210 @@ class UpdateDownloadRunner(QObject):
                 self.finished.emit({"path": None, "error": str(exc)})
 
         threading.Thread(target=_work, daemon=True, name="vf-update-download").start()
+
+
+def choose_update_asset(result, install_dir):
+    """选择本次下载哪个资产：本地有匹配 manifest 时优先增量包，否则完整包。
+
+    返回 {url,name,size,kind}；没有可用资产返回 None。
+    """
+    local = update_manifest.load_local_manifest(install_dir)
+    delta_url = getattr(result, "delta_url", "")
+    if delta_url and local:
+        local_version = str(local.get("version") or "")
+        base_version = str(getattr(result, "delta_base_version", "") or "")
+        if base_version and local_version == base_version:
+            return {
+                "url": delta_url,
+                "name": getattr(result, "delta_name", "") or "update_delta.zip",
+                "size": int(getattr(result, "delta_size", 0) or 0),
+                "kind": update_manifest.KIND_DELTA,
+            }
+    full_url = getattr(result, "full_url", "")
+    if not full_url:
+        fallback = getattr(result, "asset_url", "")
+        # asset_url 可能是 delta（check_for_update 的默认选择）；不能把 delta 当完整包下载
+        if fallback and fallback != getattr(result, "delta_url", ""):
+            full_url = fallback
+    if full_url:
+        return {
+            "url": full_url,
+            "name": getattr(result, "full_name", "") or getattr(result, "asset_name", "") or "update.zip",
+            "size": int(getattr(result, "full_size", 0) or getattr(result, "asset_size", 0) or 0),
+            "kind": update_manifest.KIND_FULL,
+        }
+    return None
+
+
+def _extract_zip_safely(zip_path, target_root):
+    target_root = Path(target_root)
+    target_root.mkdir(parents=True, exist_ok=True)
+    try:
+        with zipfile.ZipFile(zip_path) as package:
+            bad = package.testzip()
+            if bad:
+                raise RuntimeError(f"更新包损坏（{bad}）")
+            for name in package.namelist():
+                normalized = name.replace("\\", "/")
+                parts = normalized.split("/")
+                if normalized.startswith("/") or ".." in parts or ":" in parts[0]:
+                    raise RuntimeError(f"更新包包含非法路径：{name}")
+            package.extractall(target_root)
+    except zipfile.BadZipFile as exc:
+        raise RuntimeError(f"更新包不是有效 zip：{exc}") from exc
+    return target_root
+
+
+def prepare_update_package(zip_path, extract_root, install_dir):
+    """解压并校验更新包，返回 {kind, root, manifest, changed, deleted}。
+
+    完整包仍走原来的整目录替换；增量包额外校验 base_version 和 payload 哈希。
+    """
+    target = _extract_zip_safely(zip_path, extract_root)
+    manifest = None
+    root = None
+    try:
+        manifest = update_manifest.read_manifest(target)
+        if (target / update_manifest.MANIFEST_NAME).is_file():
+            root = target
+    except update_manifest.ManifestError:
+        manifest = None
+    if root is None:
+        root = locate_update_root(target)
+        try:
+            manifest = update_manifest.read_manifest(root)
+        except update_manifest.ManifestError:
+            manifest = None
+    if manifest is None:
+        # 旧完整包没有 manifest：仍允许完整更新，只是下次无法走增量
+        return {"kind": update_manifest.KIND_FULL, "root": root, "manifest": None,
+                "changed": [], "deleted": []}
+    kind = str(manifest.get("kind") or update_manifest.KIND_FULL)
+    if kind != update_manifest.KIND_DELTA:
+        if not (root / "_internal").is_dir():
+            raise RuntimeError("完整更新包缺少 _internal 运行库目录")
+        return {"kind": update_manifest.KIND_FULL, "root": root, "manifest": manifest,
+                "changed": [], "deleted": []}
+
+    local = update_manifest.load_local_manifest(install_dir)
+    if not local:
+        raise RuntimeError("当前安装缺少 update_manifest.json，不能使用增量包；请改用完整包")
+    if str(local.get("version") or "") != str(manifest.get("base_version") or ""):
+        raise RuntimeError(
+            f"增量包基于 {manifest.get('base_version')}，当前安装是 {local.get('version')}，请改用完整包")
+    errors = update_manifest.verify_payload(target, manifest)
+    if errors:
+        raise RuntimeError("增量包校验失败：" + "；".join(errors[:5]))
+    return {
+        "kind": update_manifest.KIND_DELTA,
+        "root": target,
+        "manifest": manifest,
+        "changed": list(manifest.get("changed") or []),
+        "deleted": list(manifest.get("deleted") or []),
+    }
+
+
+def build_delta_update_helper(install_dir, package, pid, log_dir=None, zip_path=None):
+    """生成逐文件替换的 PowerShell 助手（只动 manifest 列出的文件）。"""
+    install = Path(install_dir).resolve()
+    staged = Path(package["root"]).resolve()
+    payload = staged / update_manifest.PAYLOAD_DIR
+    manifest_path = staged / update_manifest.MANIFEST_NAME
+    changed = [str(item) for item in package.get("changed") or []]
+    deleted = [str(item) for item in package.get("deleted") or []]
+    affected = sorted(set(changed) | set(deleted))
+    log_dir = Path(log_dir or tempfile.gettempdir()).resolve()
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    backup = install / f"{UPDATE_BACKUP_PREFIX}{stamp}"
+    script = log_dir / f"vf_update_{stamp}_{pid}.ps1"
+    log = log_dir / f"vf_update_{stamp}_{pid}.log"
+    downloaded_zip = str(zip_path) if zip_path else ""
+
+    def ps(value):
+        return "'" + str(value).replace("'", "''") + "'"
+
+    def ps_array(values):
+        if not values:
+            return "@()"
+        return "@(" + ", ".join(ps(value) for value in values) + ")"
+
+    lines = [
+        "$ErrorActionPreference = 'Stop'",
+        f"$PID_TO_WAIT = {int(pid)}",
+        f"$STAGE = {ps(payload)}",
+        f"$MANIFEST = {ps(manifest_path)}",
+        f"$DST = {ps(install)}",
+        f"$BACKUP = {ps(backup)}",
+        f"$LOG = {ps(log)}",
+        f"$ZIP = {ps(downloaded_zip)}",
+        f"$CHANGED = {ps_array(changed)}",
+        f"$DELETED = {ps_array(deleted)}",
+        f"$AFFECTED = {ps_array(affected)}",
+        "function Write-UpLog([string]$text) {",
+        "  Add-Content -LiteralPath $LOG -Value ('[{0}] {1}' -f (Get-Date -Format 'HH:mm:ss'), $text)",
+        "}",
+        "Write-UpLog 'wait for app exit'",
+        "$deadline = (Get-Date).AddSeconds(120)",
+        "while ($true) {",
+        "  $proc = Get-Process -Id $PID_TO_WAIT -ErrorAction SilentlyContinue",
+        "  if (-not $proc) { break }",
+        "  if ((Get-Date) -gt $deadline) { Write-UpLog 'timeout waiting for app exit'; exit 2 }",
+        "  Start-Sleep -Milliseconds 500",
+        "}",
+        "Write-UpLog 'backup changed files'",
+        "New-Item -ItemType Directory -Path $BACKUP -Force | Out-Null",
+        "foreach ($rel in $AFFECTED) {",
+        "  $target = Join-Path $DST $rel",
+        "  if (Test-Path -LiteralPath $target) {",
+        "    $backupFile = Join-Path $BACKUP $rel",
+        "    New-Item -ItemType Directory -Path (Split-Path -Parent $backupFile) -Force | Out-Null",
+        "    Copy-Item -LiteralPath $target -Destination $backupFile -Force",
+        "  }",
+        "}",
+        "if (Test-Path -LiteralPath (Join-Path $DST 'update_manifest.json')) {",
+        "  Copy-Item -LiteralPath (Join-Path $DST 'update_manifest.json') -Destination (Join-Path $BACKUP '_old_manifest.json') -Force",
+        "}",
+        "try {",
+        "  Write-UpLog 'apply changed files'",
+        "  foreach ($rel in $CHANGED) {",
+        "    $src = Join-Path $STAGE $rel",
+        "    $targetFile = Join-Path $DST $rel",
+        "    if (-not (Test-Path -LiteralPath $src)) { throw ('missing payload: ' + $rel) }",
+        "    New-Item -ItemType Directory -Path (Split-Path -Parent $targetFile) -Force | Out-Null",
+        "    Copy-Item -LiteralPath $src -Destination $targetFile -Force",
+        "  }",
+        "  foreach ($rel in $DELETED) {",
+        "    Remove-Item -LiteralPath (Join-Path $DST $rel) -Force -ErrorAction SilentlyContinue",
+        "  }",
+        "  Copy-Item -LiteralPath $MANIFEST -Destination (Join-Path $DST 'update_manifest.json') -Force",
+        f"  if (-not (Test-Path -LiteralPath (Join-Path $DST {ps(UPDATE_EXE)}))) {{ throw 'new exe missing after delta apply' }}",
+        "  Write-UpLog 'restart updated app'",
+        f"  Start-Process -FilePath (Join-Path $DST {ps(UPDATE_EXE)}) -WorkingDirectory $DST",
+        "  Remove-Item -LiteralPath $STAGE -Recurse -Force -ErrorAction SilentlyContinue",
+        f"  if ($ZIP -and (Test-Path -LiteralPath $ZIP)) {{ Remove-Item -LiteralPath $ZIP -Force -ErrorAction SilentlyContinue }}",
+        "  exit 0",
+        "} catch {",
+        "  Write-UpLog ('delta update failed: ' + $_)",
+        "  foreach ($rel in $AFFECTED) {",
+        "    $backupFile = Join-Path $BACKUP $rel",
+        "    $target = Join-Path $DST $rel",
+        "    if (Test-Path -LiteralPath $backupFile) {",
+        "      New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null",
+        "      Copy-Item -LiteralPath $backupFile -Destination $target -Force",
+        "    } else {",
+        "      Remove-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue",
+        "    }",
+        "  }",
+        "  $oldManifest = Join-Path $BACKUP '_old_manifest.json'",
+        "  if (Test-Path -LiteralPath $oldManifest) { Copy-Item -LiteralPath $oldManifest -Destination (Join-Path $DST 'update_manifest.json') -Force }",
+        "  Write-UpLog 'restart old app'",
+        f"  Start-Process -FilePath (Join-Path $DST {ps(UPDATE_EXE)}) -WorkingDirectory $DST -ErrorAction SilentlyContinue",
+        "  exit 1",
+        "}",
+        "",
+    ]
+    script.write_bytes(b"\xef\xbb\xbf" + ("\r\n".join(lines)).encode("utf-8"))
+    return str(script)
 
 
 def locate_update_root(extract_root):
@@ -195,6 +400,7 @@ def build_update_helper(install_dir, staged_dir, pid, log_dir=None, zip_path=Non
         "  Write-UpLog 'copy new program'",
         f"  & robocopy $SRC {d} /E /COPY:DAT /R:1 /W:1 /NFL /NDL /NJH /NJS /NP *>> $LOG",
         "  if ($LASTEXITCODE -ge 8) { throw ('robocopy failed: ' + $LASTEXITCODE) }",
+        "  if (-not (Test-Path -LiteralPath (Join-Path $SRC 'update_manifest.json'))) { Remove-Item -LiteralPath (Join-Path $DST 'update_manifest.json') -Force -ErrorAction SilentlyContinue }",
         f"  if (-not (Test-Path -LiteralPath (Join-Path $DST {ps(UPDATE_EXE)}))) {{ throw 'new exe missing after copy' }}",
         "  Write-UpLog 'restart updated app'",
         f"  Start-Process -FilePath (Join-Path $DST {ps(UPDATE_EXE)}) -WorkingDirectory $DST",

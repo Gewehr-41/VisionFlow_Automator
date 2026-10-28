@@ -143,10 +143,31 @@ python -c "from PIL import Image; Image.open('my_icon.png').save('app.ico', size
 ```powershell
 python build_package.py                             # 构建 + 部署
 python build_package.py --zip                       # 打一个纯净 zip 发给别人（不含预设/片段/抓图/设置）
+python build_package.py --zip --delta-from <上一版完整zip>  # 同时生成文件级增量包
 python build_package.py --sync-data                 # 【仅本机调试】把工程数据同步到分发目录（先备份；同步进去的数据也不会进 zip）
 python build_package.py --build-only                # 只构建，不动分发目录
 python build_package.py --from-dist <已有产物目录>   # 跳过构建，只更新分发目录
 ```
+
+### 2.1 增量更新（文件级，减少下载量）
+
+打包产物会带 `update_manifest.json`（每个程序文件的 SHA256）。生成增量包：
+
+```powershell
+python build_package.py --zip --delta-from "上一版完整包.zip"
+```
+
+会得到：
+
+- 完整包：`VisionFlow_Automator_打包版_时间.zip`（首次安装/兜底用）；
+- 增量包：`delta_from_v上一版_to_v当前版.zip`（只含变化文件 + manifest + 删除列表）。
+
+Release 上传两个 zip 后：
+
+- 新版客户端本地有匹配的 `update_manifest.json` 时，走**增量更新**（只下载变化文件，通常几 MB）；
+- 旧版本/没有 manifest/跨版本不匹配时，自动退回**完整包**；
+- 增量包只替换清单内文件，**不碰** `saved_*.json`、截图、设置；失败逐文件回滚。
+- 为了兼容旧版更新器：完整包文件名保留 `VisionFlow`，增量包文件名以 `delta` 开头（不要带 `VisionFlow`）。
 
 ## 3. 第一次运行
 

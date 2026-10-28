@@ -41,7 +41,9 @@ class UpdateInfo:
 
     def __init__(self, has_update=False, remote_version="", current_version="",
                  download_url="", release_name="", error=None,
-                 asset_url="", asset_name="", asset_size=0):
+                 asset_url="", asset_name="", asset_size=0,
+                 delta_url="", delta_name="", delta_size=0, delta_base_version="",
+                 full_url="", full_name="", full_size=0):
         self.has_update = has_update
         self.remote_version = remote_version
         self.current_version = current_version
@@ -52,6 +54,14 @@ class UpdateInfo:
         self.asset_url = asset_url
         self.asset_name = asset_name
         self.asset_size = int(asset_size or 0)
+        # 文件级增量包（有 base 匹配时才优先使用；否则 GUI 退回 full）
+        self.delta_url = delta_url
+        self.delta_name = delta_name
+        self.delta_size = int(delta_size or 0)
+        self.delta_base_version = delta_base_version
+        self.full_url = full_url
+        self.full_name = full_name
+        self.full_size = int(full_size or 0)
 
     def __repr__(self):
         return (f"UpdateInfo(has_update={self.has_update}, remote={self.remote_version!r}, "
@@ -200,6 +210,47 @@ def _api_url(repo, suffix):
     return _API_ROOT.format(repo=repo) + suffix
 
 
+_DELTA_FROM = re.compile(r"from[_-]?v?([0-9]+(?:\.[0-9]+)*)", re.IGNORECASE)
+
+
+def delta_base_version_from_name(name):
+    """从增量包文件名解析 base 版本，例如 delta_from_v0.5.2_to_v0.5.3.zip。"""
+    match = _DELTA_FROM.search(str(name or ""))
+    return match.group(1) if match else ""
+
+
+def _asset_entry(item):
+    return {
+        "url": str(item.get("browser_download_url") or ""),
+        "name": str(item.get("name") or "update.zip"),
+        "size": int(item.get("size") or 0),
+    }
+
+
+def pick_update_assets(assets, current_version=""):
+    """从 Release assets 中选出 full 和 delta 候选。"""
+    zips = [item for item in (assets or [])
+            if isinstance(item, dict)
+            and str(item.get("name") or "").lower().endswith(".zip")
+            and str(item.get("browser_download_url") or "")]
+    delta_candidates = [item for item in zips if "delta" in str(item.get("name") or "").lower()]
+    full_candidates = [item for item in zips if item not in delta_candidates]
+    named_full = [item for item in full_candidates
+                  if "visionflow" in str(item.get("name") or "").lower()]
+    full = (named_full or full_candidates or [None])[0]
+    current = parse_version(current_version)
+    delta = None
+    for item in delta_candidates:
+        base = parse_version(delta_base_version_from_name(item.get("name")))
+        if current and base and base == current:
+            delta = item
+            break
+    return {
+        "full": _asset_entry(full) if full else None,
+        "delta": _asset_entry(delta) if delta else None,
+    }
+
+
 def pick_update_asset(assets):
     """从 GitHub Release 的 assets 里挑自动更新用的 zip。
 
@@ -219,6 +270,31 @@ def pick_update_asset(assets):
         "name": str(chosen.get("name") or "update.zip"),
         "size": int(chosen.get("size") or 0),
     }
+
+
+def find_release_assets(tag, repo=None, timeout=None, proxy=None, opener=None,
+                        current_version=""):
+    """查询某个 tag 的 Release 资产，返回 {full, delta}（失败返回空 dict 值）。"""
+    repo = repo or getattr(config, "UPDATE_REPO", "")
+    timeout = timeout if timeout is not None else getattr(config, "UPDATE_CHECK_TIMEOUT", 4.0)
+    proxy = resolve_proxy() if proxy is None else proxy
+    opener = opener or _http_get
+    tag_text = str(tag or "").strip()
+    candidates = []
+    if tag_text:
+        candidates.append(_api_url(repo, "/releases/tags/" + urllib.parse.quote(tag_text)))
+    candidates.append(_api_url(repo, "/releases/latest"))
+    for url in candidates:
+        try:
+            _final, body = _split_response(opener(url, timeout, proxy))
+            payload = json.loads(body.decode("utf-8"))
+            assets = payload.get("assets") if isinstance(payload, dict) else None
+            selected = pick_update_assets(assets, current_version=current_version)
+            if selected.get("full") or selected.get("delta"):
+                return selected
+        except Exception:
+            continue
+    return {"full": None, "delta": None}
 
 
 def find_release_asset(tag, repo=None, timeout=None, proxy=None, opener=None):
@@ -366,10 +442,24 @@ def check_for_update(current=None, repo=None, timeout=None, proxy=None, opener=N
         return UpdateInfo(False, "", current, "", "", error)
     info = UpdateInfo(is_newer(remote, current), remote, current, url, name, None)
     if info.has_update:
-        asset = find_release_asset(remote, repo=repo, timeout=timeout,
-                                   proxy=proxy, opener=opener)
-        if asset:
-            info.asset_url = asset["url"]
-            info.asset_name = asset["name"]
-            info.asset_size = asset["size"]
+        assets = find_release_assets(remote, repo=repo, timeout=timeout,
+                                     proxy=proxy, opener=opener,
+                                     current_version=current)
+        full = assets.get("full")
+        delta = assets.get("delta")
+        if full:
+            info.full_url = full["url"]
+            info.full_name = full["name"]
+            info.full_size = full["size"]
+        if delta:
+            info.delta_url = delta["url"]
+            info.delta_name = delta["name"]
+            info.delta_size = delta["size"]
+            info.delta_base_version = delta_base_version_from_name(delta["name"])
+        # 默认选择：有匹配当前版本的 delta 就用 delta，否则 full；GUI 会再结合本地 manifest 校验
+        chosen = delta or full
+        if chosen:
+            info.asset_url = chosen["url"]
+            info.asset_name = chosen["name"]
+            info.asset_size = chosen["size"]
     return info

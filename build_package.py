@@ -38,7 +38,9 @@ import tempfile
 import time
 from pathlib import Path
 
+import config
 import paths
+import update_manifest
 
 ROOT = Path(paths.app_root()).resolve()
 SPEC = ROOT / "VisionFlow_Automator.spec"
@@ -415,6 +417,10 @@ def main(argv=None):
     parser.add_argument("--target", default=str(TARGET_DIR), help="分发目录（默认：工程同级）")
     parser.add_argument("--from-dist", default=None,
                         help="跳过构建，直接部署这个已有的产物目录（只更新分发目录时用）")
+    parser.add_argument("--delta-from", default=None,
+                        help="从上一版完整 zip / manifest 生成文件级增量包（配合 --zip 使用）")
+    parser.add_argument("--delta-zip", default=None,
+                        help="增量包输出路径（默认：分发目录同级的 delta_from_vA_to_vB.zip）")
     args = parser.parse_args(argv)
 
     target = Path(args.target).resolve()
@@ -453,6 +459,11 @@ def main(argv=None):
         if bundle is None:
             log("  ✗ 构建失败")
             return EXIT_BUILD
+    # 生成程序文件清单：完整包和后续增量包都以它为准；用户数据不会进入清单
+    manifest = update_manifest.build_manifest(bundle, config.APP_VERSION)
+    update_manifest.write_manifest(bundle, manifest)
+    log(f"  ✓ 更新清单：{len(manifest['files'])} 个程序文件（{update_manifest.MANIFEST_NAME}）")
+
     files, size = dir_stats(bundle)
     custom_icon = ROOT / "app.ico"
     if custom_icon.exists():
@@ -501,6 +512,24 @@ def main(argv=None):
             log(f"  分发目录里有 {len(user_data_entries(target))} 项用户数据（本地保留），zip 时会剔除")
         archive = make_zip(target, log_callback=log)
         log(f"  ✓ 已打包：{archive}（{archive.stat().st_size / 1024 / 1024:.1f} MB）")
+
+    if args.delta_from:
+        try:
+            previous = update_manifest.read_manifest(args.delta_from)
+            current = update_manifest.read_manifest(target / update_manifest.MANIFEST_NAME)
+            previous_version = str(previous.get("version") or "unknown")
+            current_version = str(current.get("version") or config.APP_VERSION)
+            delta_path = args.delta_zip or str(
+                target.parent / f"delta_from_v{previous_version}_to_v{current_version}.zip")
+            archive, changed, deleted, size = update_manifest.make_delta_zip(
+                target, current, previous, delta_path)
+            log(f"  ✓ 增量包：{archive}（{size / 1024 / 1024:.2f} MB；"
+                f"变化 {len(changed)} 个文件，删除 {len(deleted)} 个）")
+            if not changed and not deleted:
+                log("  提示：与上一版清单完全一致，增量包为空（只用于测试）")
+        except Exception as exc:
+            log(f"  ✗ 生成增量包失败：{exc}")
+            return EXIT_VERIFY
     if work_root is None:
         log("  （--from-dist：本次没有构建中间物）")
     elif args.keep_work:

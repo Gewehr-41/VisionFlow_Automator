@@ -53,7 +53,7 @@ FEATURE_MIN_MATCHES = 10
 
 # ==================== 版本与自动更新（F11） ====================
 # 程序版本号：打包版与源码版同源。发版时改这里 + 打同号 tag。
-APP_VERSION = "0.5.2"
+APP_VERSION = "0.5.3"
 UPDATE_REPO = "Gewehr-41/VisionFlow_Automator"   # GitHub 仓库（查 Releases）
 CHECK_UPDATE_ON_START = True       # 启动后在后台检查一次更新（只提示，不自动下载）
 UPDATE_CHECK_TIMEOUT = 4.0         # 单次请求超时（秒）；超时/断网时静默跳过

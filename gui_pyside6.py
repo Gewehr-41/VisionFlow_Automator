@@ -3611,6 +3611,15 @@ def main():
         cleanup_update_leftovers()
     except Exception:
         pass
+    # 启用「上次命中点」跨启动持久化；模板图片换了会由内容签名自动失效
+    try:
+        from core.template_match import load_last_hits, prune_invalid_last_hits, set_last_hits_path
+        import main as main_module
+        set_last_hits_path(paths.LAST_HITS_FILE)
+        load_last_hits()
+        prune_invalid_last_hits(main_module.templates)
+    except Exception:
+        pass
     # 加载 Qt 官方中文翻译：QMessageBox 的「显示详细信息」、是/否/确定/取消等
     # 标准文字才会是中文（否则固定显示英文，所有者 2026-10-26 反馈过）。
     install_qt_translations(app)

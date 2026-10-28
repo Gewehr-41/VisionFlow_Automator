@@ -61,12 +61,15 @@ TASKS_FILE = os.path.join(data_dir(), "saved_tasks.json")
 PRESETS_FILE = os.path.join(data_dir(), "saved_presets.json")
 BLUEPRINT_LAYOUT_FILE = os.path.join(data_dir(), "saved_blueprint_layouts.json")
 BLUEPRINT_GRAPH_FILE = os.path.join(data_dir(), "saved_blueprint_graphs.json")
+# 上次命中点（识别加速缓存）：与预设/任务分开存，换模板图片后按内容签名失效
+LAST_HITS_FILE = os.path.join(data_dir(), "saved_last_hits.json")
 
 DATA_FILE_NAMES = (
     "saved_tasks.json",
     "saved_presets.json",
     "saved_blueprint_layouts.json",
     "saved_blueprint_graphs.json",
+    "saved_last_hits.json",
 )
 
 

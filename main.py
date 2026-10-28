@@ -14,7 +14,8 @@ import ocr
 import recognition_debug
 from config import ICON_DIR, THRESHOLD, DEFAULT_TIMEOUT, DEFAULT_POLL_INTERVAL, DEFAULT_RETRY_INTERVAL, USE_MULTI_SCALE, SCALE_RANGE, SCALE_STEP
 from core.screen import capture_screen, to_global_position, get_window_rect
-from core.template_match import StopExecution, load_templates, match_all_templates
+from core.template_match import (StopExecution, load_templates, match_all_templates,
+                                prune_invalid_last_hits)
 from core.input import click_position, click_global_position, drag_position, key_down, key_up
 from tasks import TASKS
 from nodes import NodeGraph, TaskNode, detour_active
@@ -56,9 +57,17 @@ def interruptible_sleep(duration, stop_flag=None):
 
 
 def reload_templates():
-    """重新加载图标目录中的模板，使新绑定的截图立即可用于识别。"""
+    """重新加载图标目录中的模板，使新绑定的截图立即可用于识别。
+
+    图片内容变了（签名不同）或模板被删除时，清掉对应的「上次命中点」，
+    避免用旧图片的位置去优先搜索。
+    """
     global templates
     templates = load_templates(ICON_DIR)
+    try:
+        prune_invalid_last_hits(templates)
+    except Exception:
+        pass
     return templates
 
 
@@ -1433,4 +1442,13 @@ def run_task_queue(tasks, loop=False, stop_flag=None, log_callback=None, executi
 
 
 if __name__ == "__main__":
+    # 源码直接运行 main.py 时也启用「上次命中点」持久化
+    try:
+        import paths
+        from core.template_match import load_last_hits, prune_invalid_last_hits, set_last_hits_path
+        set_last_hits_path(paths.LAST_HITS_FILE)
+        load_last_hits()
+        prune_invalid_last_hits(templates)
+    except Exception:
+        pass
     run_task_queue(TASKS, loop=False)

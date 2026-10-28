@@ -8,6 +8,8 @@
 4. 候选去重 + 确定性选择（不再同分随机），配合执行层的多帧确认；
 5. 模板匹配失败时可用 ORB 特征匹配兜底（缩放/分辨率变化）。
 """
+import hashlib
+import json
 import random
 from pathlib import Path
 
@@ -29,15 +31,138 @@ _SCALED_CACHE = {}
 _ORB_CACHE = {}
 # 最近一次命中位置：模板名 -> (x, y)。用于「上次位置优先搜索」。
 _LAST_HITS = {}
+# 每个模板上次命中时对应的图片内容签名；图片换了 -> 签名不同 -> 命中点失效
+_LAST_HIT_SIGNATURES = {}
+_SIGNATURE_CACHE = {}
+# 持久化文件路径（None = 只在内存里，不写盘；GUI/主程序启动时会设置）
+_LAST_HITS_PATH = None
 _MASK_ALPHA_THRESHOLD = 8
 
 
 def clear_template_cache():
-    """模板重新加载/绑定后清空缓存。"""
+    """模板重新加载/绑定后清空图像缓存（命中点保留，靠内容签名判断是否失效）。"""
     _GRAY_CACHE.clear()
     _SCALED_CACHE.clear()
     _ORB_CACHE.clear()
+    _SIGNATURE_CACHE.clear()
+
+
+def _template_signature(tpl):
+    """模板图片的内容签名（形状 + 像素），用于判断图片是否被换过。"""
+    key = (id(tpl), tpl.shape)
+    cached = _SIGNATURE_CACHE.get(key)
+    if cached is not None:
+        return cached
+    digest = hashlib.blake2b(digest_size=16)
+    digest.update(str(tpl.shape).encode("ascii"))
+    digest.update(np.ascontiguousarray(tpl).tobytes())
+    value = digest.hexdigest()
+    _SIGNATURE_CACHE[key] = value
+    return value
+
+
+def set_last_hits_path(path):
+    """设置上次命中点的持久化文件路径；传 None 关闭写盘。"""
+    global _LAST_HITS_PATH
+    _LAST_HITS_PATH = str(path) if path else None
+    return _LAST_HITS_PATH
+
+
+def clear_last_hits():
+    """清空内存中的命中点（不删除文件）。"""
     _LAST_HITS.clear()
+    _LAST_HIT_SIGNATURES.clear()
+
+
+def save_last_hits():
+    """把命中点原子写入 JSON；未配置路径时不做任何事。"""
+    if not _LAST_HITS_PATH:
+        return False
+    payload = {
+        "version": 1,
+        "hits": {
+            name: {"center": [int(center[0]), int(center[1])],
+                   "signature": _LAST_HIT_SIGNATURES.get(name, "")}
+            for name, center in _LAST_HITS.items()
+            if _LAST_HIT_SIGNATURES.get(name)
+        },
+    }
+    try:
+        from tasks import dump_json_atomic
+        directory = Path(_LAST_HITS_PATH).parent
+        directory.mkdir(parents=True, exist_ok=True)
+        dump_json_atomic(str(_LAST_HITS_PATH), payload)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def load_last_hits(path=None):
+    """从 JSON 读取命中点；没有签名/格式不对的条目直接丢弃。"""
+    if path is not None:
+        set_last_hits_path(path)
+    clear_last_hits()
+    if not _LAST_HITS_PATH:
+        return 0
+    try:
+        data = json.loads(Path(_LAST_HITS_PATH).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return 0
+    if not isinstance(data, dict):
+        return 0
+    hits = data.get("hits", data)
+    if not isinstance(hits, dict):
+        return 0
+    for name, item in hits.items():
+        if not isinstance(item, dict):
+            continue
+        try:
+            center = (int(item["center"][0]), int(item["center"][1]))
+        except (KeyError, TypeError, ValueError, IndexError):
+            continue
+        signature = item.get("signature")
+        if not isinstance(signature, str) or not signature:
+            continue
+        _LAST_HITS[str(name)] = center
+        _LAST_HIT_SIGNATURES[str(name)] = signature
+    return len(_LAST_HITS)
+
+
+def prune_invalid_last_hits(templates):
+    """模板重新加载后调用：模板被删除或图片内容变了 -> 清掉对应命中点。"""
+    removed = 0
+    for name in list(_LAST_HITS.keys()):
+        tpl = templates.get(name)
+        if tpl is None or _LAST_HIT_SIGNATURES.get(name) != _template_signature(tpl):
+            _LAST_HITS.pop(name, None)
+            _LAST_HIT_SIGNATURES.pop(name, None)
+            removed += 1
+    if removed:
+        save_last_hits()
+    return removed
+
+
+def _get_last_hit(name, tpl):
+    """取模板的上次命中点；图片内容已变化时立即失效并返回 None。"""
+    center = _LAST_HITS.get(name)
+    if center is None:
+        return None
+    if _LAST_HIT_SIGNATURES.get(name) != _template_signature(tpl):
+        _LAST_HITS.pop(name, None)
+        _LAST_HIT_SIGNATURES.pop(name, None)
+        save_last_hits()
+        return None
+    return center
+
+
+def _record_last_hit(name, tpl, center):
+    """记录命中点（同位置不重复写盘）。"""
+    signature = _template_signature(tpl)
+    if _LAST_HITS.get(name) == center and _LAST_HIT_SIGNATURES.get(name) == signature:
+        return
+    _LAST_HITS[name] = (int(center[0]), int(center[1]))
+    _LAST_HIT_SIGNATURES[name] = signature
+    save_last_hits()
 
 
 def load_templates(icon_dir):
@@ -160,7 +285,7 @@ def _crop_screen(screen_bgr, rect):
 
 
 def _match_one_region(screen_bgr, screen_gray, tpl, name, scales, threshold,
-                      offset_x, offset_y, is_in_search_area, allow_mask=True):
+                      offset_x, offset_y, area_filter=None, allow_mask=True):
     """在给定区域里匹配单个模板；返回 (candidates, best_score)。"""
     bgr, _gray, mask = _split_template(tpl)
     candidates = []
@@ -190,7 +315,7 @@ def _match_one_region(screen_bgr, screen_gray, tpl, name, scales, threshold,
                 top = int(y + offset_y)
                 center_x = left + width // 2
                 center_y = top + height // 2
-                if not is_in_search_area(center_x, center_y):
+                if area_filter is not None and not area_filter(center_x, center_y):
                     continue
                 if getattr(config, "COLOR_CHECK_ENABLED", True):
                     # 颜色校验用**裁剪区域内的相对坐标**（screen_bgr 是裁剪后的图，不是整屏）；
@@ -359,33 +484,35 @@ def match_all_templates(screen_img, templates, threshold=THRESHOLD,
         if stop_flag is not None and stop_flag.is_set():
             raise StopExecution()
         bgr, _gray, _mask = _split_template(tpl)
-
+        radius = int(getattr(config, "PREFERRED_SEARCH_RADIUS", 220))
+        # 搜索顺序：有上次命中点 -> 先搜命中点附近；没命中再退回框选区域/全屏。
+        regions = []
+        preferred = _get_last_hit(name, tpl)
+        if preferred is not None:
+            pad = int(max(radius, 1.0) + max(bgr.shape[:2]) / 2)
+            regions.append(((preferred[0] - pad, preferred[1] - pad,
+                             preferred[0] + pad, preferred[1] + pad), None))
         if explicit_region:
             if search_rect is not None:
-                regions = [(rect_left, rect_top, rect_right, rect_bottom)]
+                regions.append(((rect_left, rect_top, rect_right, rect_bottom),
+                                is_in_search_area))
             else:
-                radius = float(search_radius) if search_radius is not None else 0.0
-                pad = int(max(radius, 1.0) + max(bgr.shape[:2]) / 2)
-                regions = [(center_x - pad, center_y - pad, center_x + pad, center_y + pad)]
+                search_radius_value = float(search_radius) if search_radius is not None else 0.0
+                pad = int(max(search_radius_value, 1.0) + max(bgr.shape[:2]) / 2)
+                regions.append(((center_x - pad, center_y - pad,
+                                 center_x + pad, center_y + pad), is_in_search_area))
         else:
-            regions = []
-            preferred = _LAST_HITS.get(name)
-            radius = int(getattr(config, "PREFERRED_SEARCH_RADIUS", 220))
-            if preferred is not None:
-                pad = int(max(radius, 1.0) + max(bgr.shape[:2]) / 2)
-                regions.append((preferred[0] - pad, preferred[1] - pad,
-                                preferred[0] + pad, preferred[1] + pad))
-            regions.append((0, 0, screen_width, screen_height))
+            regions.append(((0, 0, screen_width, screen_height), None))
 
         candidates = []
         best_val = -1.0
-        for region in regions:
+        for region, area_filter in regions:
             crop, (off_x, off_y) = _crop_screen(screen_bgr, region)
             if crop is None:
                 continue
             crop_gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
             found, score = _match_one_region(crop, crop_gray, tpl, name, scales, threshold,
-                                             off_x, off_y, is_in_search_area)
+                                             off_x, off_y, area_filter)
             best_val = max(best_val, score)
             candidates.extend(found)
             if candidates:
@@ -408,7 +535,7 @@ def match_all_templates(screen_img, templates, threshold=THRESHOLD,
             candidates = _dedupe_candidates(candidates)
             best_candidate = candidates[0]
             results[name] = (best_candidate[0], float(best_candidate[1]))
-            _LAST_HITS[name] = best_candidate[0]
+            _record_last_hit(name, tpl, best_candidate[0])
         else:
             results[name] = (None, float(best_val))
 

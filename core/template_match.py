@@ -247,34 +247,20 @@ def _split_template(tpl):
     return result
 
 
-def _template_mask(tpl, green_mask=False):
-    """模板掩膜：alpha 透明区域 + 可选的纯绿 RGB(0,255,0) 区域。"""
-    cache_key = (id(tpl), tpl.shape, bool(green_mask))
-    cached = _GRAY_CACHE.get(("mask",) + cache_key)
-    if cached is not None:
-        return cached
-    bgr, _gray, alpha_mask = _split_template(tpl)
-    mask = alpha_mask
-    if green_mask:
-        tolerance = int(getattr(config, "GREEN_MASK_TOLERANCE", 40))
-        blue, green, red = cv2.split(bgr)
-        green_pixels = ((green >= 255 - tolerance) & (blue <= tolerance) & (red <= tolerance))
-        keep = np.where(green_pixels, 0, 255).astype(np.uint8)
-        mask = keep if mask is None else cv2.bitwise_and(mask, keep)
-    if mask is not None and int(mask.min()) == 255:
-        mask = None
-    _GRAY_CACHE[("mask",) + cache_key] = mask
-    return mask
+def _template_mask(tpl):
+    """模板掩膜：透明 PNG 的 alpha 区域。"""
+    _bgr, _gray, alpha_mask = _split_template(tpl)
+    return alpha_mask
 
 
-def _scaled_template(tpl, scale, green_mask=False):
+def _scaled_template(tpl, scale):
     """按比例缩放模板（灰/掩膜），带缓存。"""
-    cache_key = (id(tpl), tpl.shape, round(float(scale), 4), bool(green_mask))
+    cache_key = (id(tpl), tpl.shape, round(float(scale), 4))
     cached = _SCALED_CACHE.get(cache_key)
     if cached is not None:
         return cached
     _bgr, gray, _alpha = _split_template(tpl)
-    mask = _template_mask(tpl, green_mask)
+    mask = _template_mask(tpl)
     if abs(scale - 1.0) < 1e-6:
         result = (gray, mask)
     else:
@@ -323,60 +309,29 @@ def _crop_screen(screen_bgr, rect):
     return screen_bgr[top:bottom, left:right], (left, top)
 
 
-_MATCH_METHODS = {
-    "ccoeff": cv2.TM_CCOEFF_NORMED,
-    "ccoeff_normed": cv2.TM_CCOEFF_NORMED,
-    5: cv2.TM_CCOEFF_NORMED,
-    "ccorr": cv2.TM_CCORR_NORMED,
-    "ccorr_normed": cv2.TM_CCORR_NORMED,
-    3: cv2.TM_CCORR_NORMED,
-    "sqdiff": cv2.TM_SQDIFF_NORMED,
-    "sqdiff_normed": cv2.TM_SQDIFF_NORMED,
-    1: cv2.TM_SQDIFF_NORMED,
-}
-
-
-def resolve_match_method(method):
-    """把任务字段/配置的 method 转成 cv2 模式；默认 CCOEFF_NORMED。"""
-    if method is None or method == "":
-        return cv2.TM_CCOEFF_NORMED
-    try:
-        key = int(method)
-    except (TypeError, ValueError):
-        key = str(method).strip().lower()
-    return _MATCH_METHODS.get(key, cv2.TM_CCOEFF_NORMED)
-
-
 def _match_one_region(screen_bgr, screen_gray, tpl, name, scales, threshold,
                       offset_x, offset_y, area_filter=None, allow_mask=True,
-                      green_mask=False, method=None, coord_scale=1.0):
+                      coord_scale=1.0):
     """在给定区域里匹配单个模板；返回 (native candidates, best_score)。"""
-    bgr, _gray, _alpha = _split_template(tpl)
-    mask = _template_mask(tpl, green_mask) if allow_mask else None
-    if mask is not None and not getattr(config, "USE_TEMPLATE_MASK", True):
-        mask = None
+    bgr, _gray, mask = _split_template(tpl)
+    use_mask = bool(mask is not None and allow_mask and getattr(config, "USE_TEMPLATE_MASK", True))
+    passes = [True, False] if use_mask else [False]
     candidates = []
     best_val = -1.0
-    requested_method = resolve_match_method(method)
-    # 掩膜只对 SQDIFF/CCORR 类方法可靠；请求 CCOEFF 时用 SQDIFF_NORMED 并在分数上取反
-    masked_method = (cv2.TM_CCORR_NORMED if requested_method == cv2.TM_CCORR_NORMED
-                     else cv2.TM_SQDIFF_NORMED)
-    passes = [True, False] if mask is not None else [False]
 
     for masked in passes:
         for scale in scales:
-            scaled_gray, scaled_mask = _scaled_template(tpl, scale, green_mask)
+            scaled_gray, scaled_mask = _scaled_template(tpl, scale)
             height, width = scaled_gray.shape[:2]
             if height > screen_gray.shape[0] or width > screen_gray.shape[1]:
                 continue
             if masked and scaled_mask is not None:
-                result = cv2.matchTemplate(screen_gray, scaled_gray, masked_method,
+                result = cv2.matchTemplate(screen_gray, scaled_gray, cv2.TM_SQDIFF_NORMED,
                                            mask=scaled_mask)
-                scores = (1.0 - result) if masked_method == cv2.TM_SQDIFF_NORMED else result
+                scores = 1.0 - result
             else:
-                result = cv2.matchTemplate(screen_gray, scaled_gray, requested_method)
-                scores = ((1.0 - result) if requested_method == cv2.TM_SQDIFF_NORMED
-                          else result)
+                result = cv2.matchTemplate(screen_gray, scaled_gray, cv2.TM_CCOEFF_NORMED)
+                scores = result
             ys, xs = np.where(scores >= threshold)
             for y, x in zip(ys, xs):
                 conf = float(scores[y, x])
@@ -512,15 +467,6 @@ def _reference_height(templates, native_height):
     return max(1, min(max(set(heights), key=heights.count), native_height))
 
 
-def _order_candidates(candidates, order_by):
-    order = str(order_by or "confidence").strip().lower()
-    if order in ("horizontal", "left", "leftmost"):
-        return sorted(candidates, key=lambda item: (item[0][1] // 20, item[0][0]))
-    if order in ("vertical", "top", "topmost"):
-        return sorted(candidates, key=lambda item: (item[0][0] // 20, item[0][1]))
-    return sorted(candidates, key=lambda item: (-item[1], item[0][1], item[0][0]))
-
-
 def match_all_templates(screen_img, templates, threshold=THRESHOLD,
                         use_multi_scale=USE_MULTI_SCALE,
                         scale_range=SCALE_RANGE,
@@ -529,18 +475,13 @@ def match_all_templates(screen_img, templates, threshold=THRESHOLD,
                         search_radius=None,
                         search_rect=None,
                         stop_flag=None,
-                        allow_feature_fallback=False,
-                        green_mask=False,
-                        method=None,
-                        order_by="confidence",
-                        match_index=0):
+                        allow_feature_fallback=False):
     """在画面中匹配所有模板，返回 {模板名: ((x,y) 或 None, 最高分)}。
 
-    P0 增强（默认兼容旧行为）：
-    - 分辨率归一化：按模板首次命中时的屏幕高度自动缩放画面/模板；
-    - method（ccoeff/ccorr/sqdiff）、green_mask（纯绿背景忽略）、
-      order_by + match_index（多个相同目标时取第 N 个）；
-    - 上次命中点优先 -> 框选区域/全屏；多尺度缓存、颜色校验、特征兜底保留。
+    保留 P0 中**自动**的两项能力（无新增步骤字段）：
+    - 分辨率归一化：按模板首次命中时的屏幕高度自动缩放；
+    - 粗到细：大区域半分辨率粗搜，再回原分辨率精修。
+    其余行为与之前一致：上次命中点优先 -> 框选/全屏、多尺度缓存、alpha 掩膜、颜色校验、特征兜底。
     """
     native_height, native_width = screen_img.shape[:2]
     reference_height = _reference_height(templates, native_height)
@@ -595,8 +536,6 @@ def match_all_templates(screen_img, templates, threshold=THRESHOLD,
             raise StopExecution()
         bgr, _gray, _mask = _split_template(tpl)
 
-        # 目标在当前画面里的比例：模板基准高度 h0，参考高度 ref ->
-        # 模板在当前画面中的大小 = 原尺寸 * (ref / h0) * (当前高 / ref)
         template_height = _LAST_HIT_SCREEN_HEIGHTS.get(name)
         base_scale = (reference_height / template_height) if template_height else 1.0
         scales = [scale * base_scale for scale in base_scales]
@@ -633,8 +572,6 @@ def match_all_templates(screen_img, templates, threshold=THRESHOLD,
                 continue
             crop_gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
 
-            # 粗到细：大区域先半分辨率找候选，再在原分辨率候选附近精修；
-            # 粗搜没找到时仍会退回原来的全区域全尺度匹配，不影响正确性。
             if (coarse_enabled and 0.3 <= coarse_factor < 1.0
                     and crop.shape[0] * crop.shape[1] >= coarse_min_area):
                 coarse_crop = cv2.resize(crop, None, fx=coarse_factor, fy=coarse_factor,
@@ -645,13 +582,11 @@ def match_all_templates(screen_img, templates, threshold=THRESHOLD,
                 coarse_found, coarse_score = _match_one_region(
                     coarse_crop, coarse_gray, tpl, name, coarse_scales, coarse_threshold,
                     off_x * coarse_factor, off_y * coarse_factor, area_filter,
-                    green_mask=green_mask, method=method,
                     coord_scale=coord_scale * coarse_factor,
                 )
                 best_val = max(best_val, coarse_score)
                 if coarse_found:
-                    coarse_center = _order_candidates(
-                        _dedupe_candidates(coarse_found), order_by)[0][0]
+                    coarse_center = _dedupe_candidates(coarse_found)[0][0]
                     pad = int(max(24, max(bgr.shape[:2]) * max(1.0, base_scale) * 2.5))
                     refine_rect = (coarse_center[0] * coord_scale - pad,
                                    coarse_center[1] * coord_scale - pad,
@@ -662,8 +597,7 @@ def match_all_templates(screen_img, templates, threshold=THRESHOLD,
                         refine_gray = cv2.cvtColor(refine_crop, cv2.COLOR_BGR2GRAY)
                         found, score = _match_one_region(
                             refine_crop, refine_gray, tpl, name, scales, threshold,
-                            refine_x, refine_y, area_filter, green_mask=green_mask,
-                            method=method, coord_scale=coord_scale,
+                            refine_x, refine_y, area_filter, coord_scale=coord_scale,
                         )
                         best_val = max(best_val, score)
                         candidates.extend(found)
@@ -672,8 +606,7 @@ def match_all_templates(screen_img, templates, threshold=THRESHOLD,
 
             found, score = _match_one_region(
                 crop, crop_gray, tpl, name, scales, threshold,
-                off_x, off_y, area_filter, green_mask=green_mask,
-                method=method, coord_scale=coord_scale,
+                off_x, off_y, area_filter, coord_scale=coord_scale,
             )
             best_val = max(best_val, score)
             candidates.extend(found)
@@ -694,16 +627,9 @@ def match_all_templates(screen_img, templates, threshold=THRESHOLD,
                     best_val = max(best_val, feature_conf)
 
         if candidates:
-            ordered = _order_candidates(_dedupe_candidates(candidates), order_by)
-            index = int(match_index or 0)
-            if index < 0:
-                index += len(ordered)
-            if 0 <= index < len(ordered):
-                chosen = ordered[index]
-                results[name] = (chosen[0], float(chosen[1]))
-                _record_last_hit(name, tpl, chosen[0], native_height)
-            else:
-                results[name] = (None, float(best_val))
+            chosen = _dedupe_candidates(candidates)[0]
+            results[name] = (chosen[0], float(chosen[1]))
+            _record_last_hit(name, tpl, chosen[0], native_height)
         else:
             results[name] = (None, float(best_val))
 

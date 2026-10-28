@@ -462,7 +462,8 @@ icons/back_to_main_menu.png -> back_to_main_menu
   每个模板的「上次命中点」会持久化到 `saved_last_hits.json`：下次启动/下次识别优先在该点附近找，
   没命中再退回手动框选区域/全屏；模板图片内容一换（签名不同）该命中点自动清除。
   阈值与开关都在 `config.py` 的「识别算法增强」一节。
-- **P0 识别能力（可选步骤字段）**：分辨率归一化（按模板首次命中时的屏幕高度自动缩放，`MATCH_REFERENCE_HEIGHT` 可固定参考高度）；大画面粗到细搜索（`COARSE_TO_FINE`）；`green_mask`（模板里纯绿 RGB(0,255,0) 不参与匹配）；`match_method`（ccoeff/ccorr/sqdiff）、`order_by`（confidence/horizontal/vertical）与 `match_index`；`wait_freezes` / `post_wait_freezes` 屏幕稳定等待；OCR `ocr_only_rec`（精确单行 ROI 跳过检测）与 `ocr_replace`（识别结果纠错）。
+- **P0 识别自动优化**：分辨率归一化（按模板首次命中时的屏幕高度自动缩放，`MATCH_REFERENCE_HEIGHT` 可固定参考高度）；
+  大画面粗到细搜索（`COARSE_TO_FINE`，先半分辨率粗搜再原分辨率精修）。不新增步骤字段。
 - **固定点击点**：记录的是屏幕坐标，不会自动换算。
 - **识别区域**：主识别区域支持多个分段矩形；“下一模板”出现位置仍为单个矩形。所有坐标与录制时相关，窗口布局变化后应重新框选。
 - **拖曳步骤**：起点和终点是屏幕坐标，拖动时长控制整个拖曳过程，必须重新设置坐标。

@@ -91,7 +91,7 @@ def _crop(image_bgr, rect):
     return image_bgr[top:bottom, left:right], (left, top)
 
 
-def recognize(image_bgr, rect=None, only_rec=False):
+def recognize(image_bgr, rect=None):
     """识别整图或指定区域，返回 [TextBlock]（画面坐标）。
 
     失败时抛 RuntimeError（带后端提示），由引擎包装成这一步的错误信息。
@@ -114,20 +114,6 @@ def recognize(image_bgr, rect=None, only_rec=False):
             scale = 2.0
             target = cv2.resize(target, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
     target = np.ascontiguousarray(target)
-    if only_rec:
-        # 精确单行 ROI：跳过检测模型，直接识别（实测约 0.2s，远快于整条 det+rec）
-        try:
-            texts, _elapsed = _get_engine().text_rec([target])
-        except Exception as exc:
-            raise RuntimeError(f"OCR 识别失败：{exc}") from exc
-        blocks = []
-        height, width = target.shape[:2]
-        for text, score in texts or []:
-            center_x = width / 2.0 / scale + offset[0]
-            center_y = height / 2.0 / scale + offset[1]
-            blocks.append(TextBlock(text, score,
-                                    (int(round(center_x)), int(round(center_y)))))
-        return blocks
 
     try:
         # use_cls=False：跳过方向分类模型，实测能省一点时间（界面文字不会倒着放）

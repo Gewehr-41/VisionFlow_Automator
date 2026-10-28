@@ -535,10 +535,6 @@ def match_task_templates(task, screen_img, template_names=None, stop_flag=None):
                 search_rect=search_rect,
                 stop_flag=stop_flag,
                 allow_feature_fallback=bool(getattr(config, "FEATURE_FALLBACK", False)),
-                green_mask=bool(task.get("green_mask", False)),
-                method=task.get("match_method"),
-                order_by=task.get("order_by", "confidence"),
-                match_index=task.get("match_index", 0),
             )
             for name, result in results.items():
                 current = merged_results.get(name)
@@ -574,10 +570,6 @@ def match_task_templates(task, screen_img, template_names=None, stop_flag=None):
         search_radius=radius,
         stop_flag=stop_flag,
         allow_feature_fallback=bool(getattr(config, "FEATURE_FALLBACK", False)),
-        green_mask=bool(task.get("green_mask", False)),
-        method=task.get("match_method"),
-        order_by=task.get("order_by", "confidence"),
-        match_index=task.get("match_index", 0),
     )
 
 
@@ -919,57 +911,6 @@ def execute_event_task(task, stop_flag=None, log_callback=None):
     return {"execution_state": "timeout"}
 
 
-def wait_screen_stable(duration_ms=None, timeout_ms=None, threshold=None,
-                       rect=None, stop_flag=None, poll_interval=0.05):
-    """等画面连续 duration_ms 毫秒基本不变（用于点击前/后避开动画）。
-
-    返回 True=已稳定/无需等待；False=被停止或超时。默认关闭（duration=0）。
-    """
-    if duration_ms is None:
-        duration_ms = int(getattr(config, "WAIT_FREEZES_MS", 0) or 0)
-    if duration_ms <= 0:
-        return True
-    if timeout_ms is None:
-        timeout_ms = int(getattr(config, "WAIT_FREEZES_TIMEOUT_MS", 3000) or 3000)
-    if threshold is None:
-        threshold = float(getattr(config, "WAIT_FREEZES_DIFF_THRESHOLD", 2.0) or 2.0)
-    try:
-        duration_ms = int(duration_ms)
-        timeout_ms = int(timeout_ms)
-    except (TypeError, ValueError):
-        return True
-    if duration_ms <= 0:
-        return True
-
-    def _crop(image):
-        if rect is None:
-            return image
-        left, top, right, bottom = (int(v) for v in rect)
-        return image[max(0, top):max(0, bottom), max(0, left):max(0, right)]
-
-    start = time.time()
-    previous = _crop(capture_screen())
-    stable_since = time.time()
-    while time.time() - start <= timeout_ms / 1000.0:
-        if stop_flag is not None and stop_flag.is_set():
-            return False
-        if interruptible_sleep(poll_interval, stop_flag):
-            return False
-        current = _crop(capture_screen())
-        try:
-            difference = float(np.mean(np.abs(current.astype(np.int16) - previous.astype(np.int16))))
-        except ValueError:
-            difference = 0.0
-        previous = current
-        now = time.time()
-        if difference <= threshold:
-            if (now - stable_since) * 1000.0 >= duration_ms:
-                return True
-        else:
-            stable_since = now
-    return False
-
-
 def _ocr_text_matches(text, pattern, mode="contains", case_sensitive=False):
     """判断一块 OCR 文字是否命中目标。
 
@@ -997,32 +938,6 @@ def _ocr_text_matches(text, pattern, mode="contains", case_sensitive=False):
     if mode == "exact":
         return haystack.strip() in candidates
     return any(candidate in haystack for candidate in candidates)
-
-
-def _parse_ocr_replace(value):
-    """解析 OCR 纠错规则：支持 [[旧, 新], ...] 或 "旧=新|旧2=新2"。"""
-    rules = []
-    if not value:
-        return rules
-    if isinstance(value, str):
-        for part in value.split("|"):
-            if "=" in part:
-                old, new = part.split("=", 1)
-                rules.append((old, new))
-        return rules
-    if isinstance(value, (list, tuple)):
-        for item in value:
-            if isinstance(item, (list, tuple)) and len(item) >= 2:
-                rules.append((str(item[0]), str(item[1])))
-    return rules
-
-
-def _apply_ocr_replace(text, rules):
-    result = str(text or "")
-    for old, new in rules or []:
-        if old:
-            result = result.replace(old, new)
-    return result
 
 
 def _ocr_fuzzy_matches(text, pattern, mode="contains", case_sensitive=False, ratio=0.86):
@@ -1054,27 +969,21 @@ def _recognize_text_step(task, screen_img):
     min_confidence = float(task.get("ocr_min_confidence", 0.0) or 0.0)
     fuzzy = bool(task.get("ocr_fuzzy", getattr(config, "OCR_FUZZY", True)))
     fuzzy_ratio = float(getattr(config, "OCR_FUZZY_RATIO", 0.86))
-    only_rec = bool(task.get("ocr_only_rec", False))
-    replace_rules = _parse_ocr_replace(task.get("ocr_replace"))
     rects = resolve_search_rects(task) or [None]
     fuzzy_best = (None, None, 0.0)
     for rect in rects:
-        if only_rec:
-            blocks = ocr.recognize(screen_img, rect, only_rec=True)
-        else:
-            blocks = ocr.recognize(screen_img, rect)
+        blocks = ocr.recognize(screen_img, rect)
         best = (None, None, 0.0)
         for block in blocks:
             if block.score < min_confidence:
                 continue
-            text = _apply_ocr_replace(block.text, replace_rules)
-            if _ocr_text_matches(text, pattern, mode, case_sensitive):
+            if _ocr_text_matches(block.text, pattern, mode, case_sensitive):
                 if best[1] is None or block.score > best[2]:
-                    best = (text, block.center, block.score)
+                    best = (block.text, block.center, block.score)
                 continue
-            if fuzzy and _ocr_fuzzy_matches(text, pattern, mode, case_sensitive, fuzzy_ratio):
+            if fuzzy and _ocr_fuzzy_matches(block.text, pattern, mode, case_sensitive, fuzzy_ratio):
                 if fuzzy_best[1] is None or block.score > fuzzy_best[2]:
-                    fuzzy_best = (text, block.center, block.score)
+                    fuzzy_best = (block.text, block.center, block.score)
         if best[1] is not None:
             return best
     if fuzzy_best[1] is not None:
@@ -1203,11 +1112,6 @@ def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True, fal
             confirm_streak = 0
             confirm_name = None
             confirm_center = None
-            pre_freeze = task.get("wait_freezes", getattr(config, "WAIT_FREEZES_MS", 0))
-            if pre_freeze:
-                log("  等待画面稳定后点击…", log_callback)
-                wait_screen_stable(pre_freeze, rect=task.get("wait_freezes_rect"),
-                                   stop_flag=stop_flag)
             tpl_name = matched_name
             log(f"  识别到 '{tpl_name}'，置信度: {conf:.2f}，坐标: {center}", log_callback)
             if task.get("click", True):
@@ -1220,9 +1124,6 @@ def execute_task(task, stop_flag=None, log_callback=None, allow_detour=True, fal
                     screen_x, screen_y = to_global_position(center[0], center[1])
                     click_source = "识别中心"
                 click_global_position(screen_x, screen_y, offset)
-                post_freeze = task.get("post_wait_freezes", 0)
-                if post_freeze:
-                    wait_screen_stable(post_freeze, stop_flag=stop_flag)
                 log(f"  已点击{click_source}: ({screen_x + offset[0]}, {screen_y + offset[1]})", log_callback)
 
             wait_mode = task.get("wait_for", "time")

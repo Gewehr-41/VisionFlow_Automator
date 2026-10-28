@@ -29,6 +29,9 @@ INSTALL_COMMAND = "pip install rapidocr-onnxruntime"
 
 _detected = None          # None=未探测；""=不可用；"rapidocr"=可用
 _engine = None
+# 最近一次 OCR 结果缓存：key=(图像指纹, 形状, 偏移) -> [TextBlock]
+_LAST_RESULT_KEY = None
+_LAST_RESULT_BLOCKS = None
 
 
 class TextBlock:
@@ -91,11 +94,41 @@ def _crop(image_bgr, rect):
     return image_bgr[top:bottom, left:right], (left, top)
 
 
+def _image_signature(image_bgr):
+    """图像快速指纹：缩成 32x32 灰度后取字节（约 1ms），用于复用同一画面的 OCR 结果。"""
+    try:
+        gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY) if image_bgr.ndim == 3 else image_bgr
+        small = cv2.resize(gray, (32, 32), interpolation=cv2.INTER_AREA)
+        return (image_bgr.shape, small.tobytes())
+    except cv2.error:
+        return None
+
+
+def _blocks_from_text_rec(texts, offset, scale, target_bgr):
+    """把 text_rec 的单行结果包装成 TextBlock（中心取 ROI 中心）。"""
+    height, width = target_bgr.shape[:2]
+    center_x = width / 2.0 / scale + offset[0]
+    center_y = height / 2.0 / scale + offset[1]
+    blocks = []
+    for item in texts or []:
+        if len(item) < 2:
+            continue
+        text, score = item[0], item[1]
+        blocks.append(TextBlock(text, score, (int(round(center_x)), int(round(center_y)))))
+    return blocks
+
+
 def recognize(image_bgr, rect=None):
     """识别整图或指定区域，返回 [TextBlock]（画面坐标）。
 
+    速度优化（不改步骤字段）：
+    - 大图先缩到 OCR_MAX_WIDTH，再检测/识别；
+    - 单行小 ROI 直接用 rec 模型（约 0.2s，跳过大图检测）；
+    - 同一画面 + 同一 ROI 的 OCR 结果直接复用（等待静态画面时不重复识别）。
+
     失败时抛 RuntimeError（带后端提示），由引擎包装成这一步的错误信息。
     """
+    global _LAST_RESULT_KEY, _LAST_RESULT_BLOCKS
     if image_bgr is None:
         return []
     if not available():
@@ -106,13 +139,42 @@ def recognize(image_bgr, rect=None):
         target, offset = _crop(image_bgr, rect)
         if target is None:
             return []
+
+    signature = _image_signature(target) if getattr(config, "OCR_CACHE", True) else None
+    if signature is not None:
+        cache_key = (signature, offset)
+        if cache_key == _LAST_RESULT_KEY:
+            return list(_LAST_RESULT_BLOCKS or [])
+
+    height, width = target.shape[:2]
+    # 单行小 ROI：跳过检测模型，直接 rec
+    if (getattr(config, "OCR_FAST_LINE", True)
+            and height <= int(getattr(config, "OCR_FAST_LINE_MAX_HEIGHT", 80))
+            and width >= height * float(getattr(config, "OCR_FAST_LINE_MIN_ASPECT", 2.2))):
+        try:
+            texts, _elapsed = _get_engine().text_rec([np.ascontiguousarray(target)])
+        except Exception:
+            texts = None
+        if texts:
+            blocks = _blocks_from_text_rec(texts, offset, 1.0, target)
+            if signature is not None:
+                _LAST_RESULT_KEY = (signature, offset)
+                _LAST_RESULT_BLOCKS = blocks
+            return blocks
+
+    # 大图缩放到 OCR_MAX_WIDTH，降低检测模型输入尺寸
+    max_width = int(getattr(config, "OCR_MAX_WIDTH", 1280) or 0)
     scale = 1.0
-    if getattr(config, "OCR_PREPROCESS", True):
-        # 小区域放大 2 倍：OCR 对小字/低分辨率裁剪的识别率明显更好
+    if max_width > 0 and width > max_width:
+        scale = max_width / float(width)
+        target = cv2.resize(target, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
         height, width = target.shape[:2]
+
+    # 小区域放大 2 倍：OCR 对小字/低分辨率裁剪的识别率更好
+    if getattr(config, "OCR_PREPROCESS", True):
         if width < 800 or height < 160:
-            scale = 2.0
-            target = cv2.resize(target, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+            scale *= 2.0
+            target = cv2.resize(target, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
     target = np.ascontiguousarray(target)
 
     try:
@@ -133,4 +195,7 @@ def recognize(image_bgr, rect=None):
         center_x = sum(point[0] for point in points) / len(points) / scale + offset[0]
         center_y = sum(point[1] for point in points) / len(points) / scale + offset[1]
         blocks.append(TextBlock(text, score, (int(round(center_x)), int(round(center_y))), points))
+    if signature is not None:
+        _LAST_RESULT_KEY = (signature, offset)
+        _LAST_RESULT_BLOCKS = blocks
     return blocks

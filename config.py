@@ -37,6 +37,13 @@ COLOR_CHECK_TOLERANCE = 48.0
 RECOGNITION_CONFIRM_FRAMES = 1
 # 4) OCR：区域裁剪预处理 + 编辑距离模糊匹配
 OCR_PREPROCESS = True
+
+# OCR 速度优化（2026-10-28）
+OCR_MAX_WIDTH = 1280              # 大图先缩到该宽度再识别（1920px 全屏约 4.6s→1.7s）
+OCR_FAST_LINE = True              # 单行小 ROI（高度≤80、宽高比≥2.2）直接走 rec，跳过检测
+OCR_FAST_LINE_MAX_HEIGHT = 80
+OCR_FAST_LINE_MIN_ASPECT = 2.2
+OCR_CACHE = True                  # 同一画面相同 ROI 的 OCR 结果复用（等待静态画面时不重复识别）
 OCR_FUZZY = True
 OCR_FUZZY_RATIO = 0.86
 # 5) 模板匹配失败后 ORB 特征匹配兜底（只在 execute_task 识别流程启用）
